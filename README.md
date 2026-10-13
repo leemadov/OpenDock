@@ -28,6 +28,7 @@ Run it, and the dock and menu bar appear. Quit from the logo menu in the top-lef
 - Bouncing launch animation, running-app dots and hover name bubbles
 - Drag icons to reorder them. Drag one off the dock to remove it (it disappears with a poof)
 - Drop files onto an app to open them with it, onto the Trash to delete them, or onto empty space to pin them
+- **Drag between windows**: hold anything you are dragging (files, text, links) over a running app's icon and its window comes to the front, so you can drop into it. This is macOS spring-loading, and it stands in for the Windows taskbar's drag-hover
 - Open apps that aren't pinned show up automatically (Store apps included)
 - Right-click an icon to see its open windows plus Keep in Dock, Show in Finder, Hide and Quit
 - Downloads stack: a grid of your recent downloads with thumbnails
@@ -47,7 +48,7 @@ Run it, and the dock and menu bar appear. Quit from the logo menu in the top-lef
 
 **Spotlight** (`Alt+Space`): search apps, files (through the Windows Search index) and math (`12*7+3`), or fall back to a web search. `Ctrl+Enter` shows the selected result in Finder.
 
-**Finder**: a file browser with traffic-light buttons, a sidebar (Applications, Desktop, Documents, Downloads, drives and so on), image and video thumbnails, back/forward, a filter box, drag and drop, copy/paste, Move to Trash, Get Info and New Folder.
+**Finder**: a file browser with traffic-light buttons, a sidebar (Applications, Desktop, Documents, Downloads, drives and so on), image and video thumbnails, back/forward, a filter box, drag and drop (including onto sidebar folders and Trash), copy/paste, Move to Trash, Get Info and New Folder.
 
 **Settings**: Light, Dark or follow-Windows appearance, icon size, magnification, auto-hide, the bounce animation, indicators, uniform icon tiles, hiding the Windows taskbar and launching at login.
 

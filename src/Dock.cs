@@ -122,7 +122,7 @@ namespace OpenDock
             bg.MouseEnter += enter; edge.MouseEnter += enter;
             bg.MouseRightButtonUp += (s, e) => { var cm = new ContextMenu(); DockOptions(cm); OpenMenu(cm, bg, true); e.Handled = true; };
             DragEnter += OnDragOver; DragOver += OnDragOver; Drop += OnDrop;
-            DragLeave += delegate { dropActive = false; SetDropHot(null); };
+            DragLeave += delegate { dropActive = false; SetDropHot(null); springItem = null; };
 
             SourceInitialized += delegate
             {
@@ -585,12 +585,36 @@ namespace OpenDock
             if (it != null && it.Img != null) it.Img.Opacity = 0.6;
         }
 
+        DockItem springItem;
+        DateTime springSince;
+        bool springDone;
+
+        // Spring-loading (macOS) / taskbar drag-hover (Windows): hold anything you're dragging over a running app's
+        // icon and its window comes to the front, so you can carry on and drop into it.
+        void SpringLoad(DockItem it)
+        {
+            if (it != springItem) { springItem = it; springSince = DateTime.Now; springDone = false; return; }
+            if (it == null || springDone || (DateTime.Now - springSince).TotalSeconds < 0.6) return;
+            springDone = true;
+            if (it.Kind == "finder")
+            {
+                foreach (var f in App.Finders.ToList()) { if (f.WindowState == WindowState.Minimized) f.WindowState = WindowState.Normal; f.Activate(); }
+                return;
+            }
+            if (it.Kind != "app" || it.Wins.Count == 0) return;
+            foreach (var w in it.Wins.Where(w => Native.IsIconic(w.Hwnd))) Native.ShowWindow(w.Hwnd, Native.SW_RESTORE);
+            Native.Activate(it.Wins[0].Hwnd);
+            it.Img.BeginAnimation(OpacityProperty, new DoubleAnimation(0.4, 1, TimeSpan.FromMilliseconds(300)) { FillBehavior = FillBehavior.Stop });   // blink, like macOS
+        }
+
         void OnDragOver(object s, DragEventArgs e)
         {
             e.Handled = true;
-            if (!e.Data.GetDataPresent(DataFormats.FileDrop)) { e.Effects = DragDropEffects.None; return; }
+            var at = HitItem(e.GetPosition(this));
+            SpringLoad(at != null && (at.Kind == "app" || at.Kind == "finder") ? at : null);
             dropActive = true; hovering = true; StartLoop();
-            var it = HitItem(e.GetPosition(this));
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop)) { e.Effects = DragDropEffects.None; return; }
+            var it = at;
             SetDropHot(it != null && (it.Kind == "app" || it.Kind == "trash" || it.Kind == "finder") ? it : null);
             e.Effects = it == null ? DragDropEffects.Link : it.Kind == "trash" ? DragDropEffects.Move : DragDropEffects.Copy;
         }

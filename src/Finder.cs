@@ -181,6 +181,21 @@ namespace OpenDock
             files.ItemsPanel = new ItemsPanelTemplate(new FrameworkElementFactory(typeof(WrapPanel)));
             ScrollViewer.SetHorizontalScrollBarVisibility(files, ScrollBarVisibility.Disabled);
             files.AllowDrop = true;
+            side.AllowDrop = true;
+            side.DragOver += (s, e) =>
+            {
+                var t = SideUnder(e.OriginalSource);
+                e.Effects = !e.Data.GetDataPresent(DataFormats.FileDrop) || !SideAccepts(t) ? DragDropEffects.None
+                    : t.Path == "trash" || (e.KeyStates & DragDropKeyStates.ControlKey) == 0 ? DragDropEffects.Move : DragDropEffects.Copy;
+                e.Handled = true;
+            };
+            side.Drop += (s, e) =>
+            {
+                var t = SideUnder(e.OriginalSource);
+                var dropped = e.Data.GetData(DataFormats.FileDrop) as string[];
+                if (dropped == null || !SideAccepts(t)) return;
+                if (t.Path == "trash") Launcher.Recycle(dropped); else DropInto(dropped, t.Path, e);
+            };
             files.MouseDoubleClick += (s, e) => { var en = Under(e.OriginalSource); if (en != null) Open(en); };
             files.PreviewMouseLeftButtonDown += (s, e) =>
             {
@@ -443,11 +458,30 @@ namespace OpenDock
             var dropped = e.Data.GetData(DataFormats.FileDrop) as string[];
             if (dropped == null || path == AppsLocation) return;
             var target = Under(e.OriginalSource);
+            DropInto(dropped, target != null && target.IsDir ? target.Path : path, e);   // dropping onto a folder moves into it
+        }
+
+        // Same drive moves, another drive copies; holding Ctrl always copies (like Explorer).
+        void DropInto(string[] dropped, string folder, DragEventArgs e)
+        {
             string saved = path;
-            if (target != null && target.IsDir) path = target.Path; // dropping onto a folder moves into it
-            bool sameDrive = dropped.All(f => string.Equals(System.IO.Path.GetPathRoot(f), System.IO.Path.GetPathRoot(path), StringComparison.OrdinalIgnoreCase));
+            path = folder;
+            bool sameDrive = dropped.All(f => string.Equals(System.IO.Path.GetPathRoot(f), System.IO.Path.GetPathRoot(folder), StringComparison.OrdinalIgnoreCase));
             Transfer(dropped, (e.KeyStates & DragDropKeyStates.ControlKey) != 0 || !sameDrive);
             path = saved;
+        }
+
+        static SideEntry SideUnder(object source)
+        {
+            var d = source as DependencyObject;
+            while (d != null && !(d is ListBoxItem)) d = d is Visual ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
+            return d != null ? ((ListBoxItem)d).DataContext as SideEntry : null;
+        }
+
+        // Sidebar folders (and Trash) accept drops too, like the macOS Finder sidebar.
+        static bool SideAccepts(SideEntry t)
+        {
+            return t != null && !t.IsHeader && (t.Path == "trash" || (t.Path != null && t.Path != AppsLocation && Directory.Exists(t.Path)));
         }
 
         void OnContext(object s, MouseButtonEventArgs e)
