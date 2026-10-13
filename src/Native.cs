@@ -204,11 +204,15 @@ namespace OpenDock
         public static void Activate(IntPtr h)
         {
             if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
-            if (!SetForegroundWindow(h) || GetForegroundWindow() != h)
-            {
-                keybd_event(0x12, 0, 0, UIntPtr.Zero); keybd_event(0x12, 0, 2, UIntPtr.Zero);
-                SetForegroundWindow(h);
-            }
+            // Only when Windows refuses. (Checking GetForegroundWindow() == h here was wrong: restores are async and
+            // many apps pass focus to another of their windows, so it fired after successful activations too.)
+            if (SetForegroundWindow(h)) return;
+            // Pressing Alt lifts the foreground lock, but a lone Alt tap opens the app's menu / navigation pane.
+            // An unassigned key in between (0xE8, AutoHotkey's "menu mask" key) stops that.
+            keybd_event(0x12, 0, 0, UIntPtr.Zero);
+            keybd_event(0xE8, 0, 0, UIntPtr.Zero); keybd_event(0xE8, 0, 2, UIntPtr.Zero);
+            keybd_event(0x12, 0, 2, UIntPtr.Zero);
+            SetForegroundWindow(h);
         }
     }
 }

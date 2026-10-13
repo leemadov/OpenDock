@@ -423,7 +423,7 @@ namespace OpenDock
         static void FocusApp(DockItem it)
         {
             var fg = Native.GetForegroundWindow();
-            if (it.Wins.Any(w => w.Hwnd == fg))
+            if (it.Wins.Any(w => w.Hwnd == fg && !Native.IsIconic(w.Hwnd)))   // a minimized window can still be "foreground"; that should restore, not minimize
             {
                 foreach (var w in it.Wins) Native.ShowWindow(w.Hwnd, Native.SW_MINIMIZE);
                 return;
