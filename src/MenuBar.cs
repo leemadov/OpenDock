@@ -27,7 +27,9 @@ namespace OpenDock
         readonly Rectangle batteryFill = new Rectangle { RadiusX = 1.5, RadiusY = 1.5, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(2.2, 2.2, 0, 2.2) };
         readonly Path bolt = new Path { Data = Geometry.Parse("M7,0 L2,7 L5.5,7 L4,13 L10,5 L6.5,5 Z"), Width = 8, Height = 10, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 3, 0) };
         readonly TextBlock net = new TextBlock { FontFamily = Theme.Glyphs, FontSize = 15, VerticalAlignment = VerticalAlignment.Center };
-        Border batteryButton, bgApps;
+        Border batteryButton, bgApps, stealth;
+        TextBlock stealthGlyph;
+        bool stealthBusy;
         Brush fg;
         string current = "Finder";
 
@@ -113,6 +115,10 @@ namespace OpenDock
             // status area
             bgApps = Status(Glyph(""), ShowBackgroundApps, "Background Apps");
             right.Children.Add(bgApps);
+            stealthGlyph = Glyph("");   // moon
+            stealth = Status(stealthGlyph, ToggleStealth, null);
+            right.Children.Add(stealth);
+            PaintStealth();
             right.Children.Add(Status(Glyph(""), () => Win('A'), "Sound"));
             batteryButton = Status(Battery(), () => Win('A'), "Battery");
             right.Children.Add(batteryButton);
@@ -252,6 +258,28 @@ namespace OpenDock
             appMenu.Items.Add(Cmd("Quit " + current, "Alt+F4", () => { foreach (var w in App.Wins.Where(mine)) Native.PostMessage(w.Hwnd, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero); }, exe != null));
         }
 
+        // One click: all RGB lighting off (via OpenRGB); click again to bring it back exactly as it was.
+        async void ToggleStealth()
+        {
+            if (stealthBusy) return;
+            stealthBusy = true;
+            stealthGlyph.Opacity = 0.4;
+            string error = await Stealth.Toggle();
+            stealthBusy = false;
+            stealthGlyph.Opacity = 1;
+            PaintStealth();
+            if (error != null) MessageBox.Show(error, "Stealth Mode", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        void PaintStealth()
+        {
+            bool on = Stealth.On;
+            stealth.ToolTip = on ? "Stealth Mode is on — click to bring your lights back" : "Stealth Mode — turn off all RGB lights";
+            // a filled pill while active, like an enabled macOS menu-bar toggle
+            stealth.Background = on ? Theme.B(Wallpaper.TopIsLight ? "#33000000" : "#40FFFFFF") : Brushes.Transparent;
+            stealth.Tag = on ? "on" : null;
+        }
+
         // The apps that live in the (hidden) Windows tray, listed in a menu like macOS menu extras.
         void ShowBackgroundApps()
         {
@@ -343,7 +371,7 @@ namespace OpenDock
         {
             var b = new Border { Child = content, Padding = new Thickness(8, 0, 8, 0), Margin = new Thickness(1, 3, 1, 3), CornerRadius = new CornerRadius(5), Background = Brushes.Transparent, ToolTip = tip };
             b.MouseEnter += delegate { b.Background = Theme.B("#26FFFFFF"); };
-            b.MouseLeave += delegate { b.Background = Brushes.Transparent; };
+            b.MouseLeave += delegate { if (b == stealth) PaintStealth(); else b.Background = Brushes.Transparent; };
             b.MouseLeftButtonUp += delegate { click(); };
             return b;
         }

@@ -24,6 +24,7 @@ namespace OpenDock
         public static bool Indicators = true;
         public static bool IconTiles = true;
         public static bool ShowRunning = true;
+        public static bool StealthOn = false;          // RGB lights are off (OpenRGB backup profile holds the previous look)
         public static int Appearance = 2;         // 0 = follow Windows, 1 = light, 2 = dark
         public static bool FirstRun = true;
         public static int TaskbarStateToRestore = -1; // survives a crash so the next exit can still restore it
