@@ -7,6 +7,8 @@
 
 A free, open-source macOS-style desktop for Windows 10/11, inspired by MyDockFinder. It's a single ~230 KB executable: no installer, no runtime to download and no SDK needed to build it.
 
+![OpenDock demo: dock magnification, Launchpad and Spotlight](docs/demo.gif)
+
 ### [⬇ Download OpenDock.exe](https://github.com/leemadov/OpenDock/releases/latest/download/OpenDock.exe)
 
 Run it, and the dock and menu bar appear. Quit from the logo menu in the top-left corner. The exe isn't code-signed yet, so if Windows SmartScreen warns you, click **More info → Run anyway**.
