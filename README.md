@@ -1,6 +1,23 @@
 # OpenDock
 
-A free, open-source macOS-style desktop for Windows 10/11, inspired by MyDockFinder. A single ~230 KB executable with no installer, no runtime to download and no SDK needed to build it.
+[![Latest release](https://img.shields.io/github/v/release/leemadov/OpenDock)](https://github.com/leemadov/OpenDock/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/leemadov/OpenDock/total)](https://github.com/leemadov/OpenDock/releases)
+[![License: MIT](https://img.shields.io/github/license/leemadov/OpenDock)](LICENSE)
+![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
+
+A free, open-source macOS-style desktop for Windows 10/11, inspired by MyDockFinder. It's a single ~230 KB executable: no installer, no runtime to download and no SDK needed to build it.
+
+### [⬇ Download OpenDock.exe](https://github.com/leemadov/OpenDock/releases/latest/download/OpenDock.exe)
+
+Run it, and the dock and menu bar appear. Quit from the logo menu in the top-left corner. The exe isn't code-signed yet, so if Windows SmartScreen warns you, click **More info → Run anyway**.
+
+## Why OpenDock?
+
+- **Free and open source** (MIT). There's no paid version and nothing is locked.
+- **Tiny and light.** A ~230 KB exe that uses no CPU when idle. The animation loop only runs while something is moving, and if it ever hangs, it restarts itself.
+- **The whole macOS look, not just a dock:** a menu bar, Launchpad, Spotlight, Finder and Stacks.
+- **Nothing to install.** It runs on the .NET Framework that ships with Windows, and building it only needs `build.bat`.
+- **Hackable.** Plain C#, with one file per feature. See [How it's built](#how-its-built).
 
 ## Features
 
