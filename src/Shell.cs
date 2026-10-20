@@ -220,6 +220,50 @@ namespace OpenDock
             return Render(c, w, h);
         }
 
+        // In-place blur of BGRX pixels: repeated horizontal + vertical running-sum passes, edges clamped.
+        public static void BoxBlur(byte[] px, int w, int h, int r, int passes)
+        {
+            var tmp = new byte[px.Length];
+            for (int p = 0; p < passes; p++) { BoxPass(px, tmp, w, h, r, true); BoxPass(tmp, px, w, h, r, false); }
+        }
+
+        static void BoxPass(byte[] src, byte[] dst, int w, int h, int r, bool horiz)
+        {
+            int n = horiz ? w : h, lines = horiz ? h : w, step = horiz ? 4 : w * 4, div = 2 * r + 1;
+            for (int l = 0; l < lines; l++)
+            {
+                int start = horiz ? l * w * 4 : l * 4;
+                for (int c = 0; c < 3; c++)
+                {
+                    int sum = 0;
+                    for (int k = -r; k <= r; k++) sum += src[start + Math.Max(0, Math.Min(n - 1, k)) * step + c];
+                    for (int i = 0; i < n; i++)
+                    {
+                        dst[start + i * step + c] = (byte)(sum / div);
+                        sum += src[start + Math.Min(i + r + 1, n - 1) * step + c] - src[start + Math.Max(i - r, 0) * step + c];
+                    }
+                }
+            }
+        }
+
+        // A screen area shrunk to dw x dh as BGRX pixels (GDI does the downscale, so it's cheap).
+        public static byte[] CaptureScaled(int x, int y, int w, int h, int dw, int dh)
+        {
+            IntPtr screen = Native.GetDC(IntPtr.Zero), mem = Native.CreateCompatibleDC(screen), bmp = Native.CreateCompatibleBitmap(screen, dw, dh);
+            try
+            {
+                IntPtr old = Native.SelectObject(mem, bmp);
+                Native.SetStretchBltMode(mem, 4 /* HALFTONE */);
+                bool ok = Native.StretchBlt(mem, 0, 0, dw, dh, screen, x, y, w, h, 0x00CC0020 /* SRCCOPY */);
+                Native.SelectObject(mem, old);
+                if (!ok) return null;
+                var bi = new Native.BITMAPINFOHEADER { biSize = 40, biWidth = dw, biHeight = -dh, biPlanes = 1, biBitCount = 32 };
+                var px = new byte[dw * dh * 4];
+                return Native.GetDIBits(screen, bmp, 0, (uint)dh, px, ref bi, 0) == dh ? px : null;
+            }
+            finally { Native.DeleteObject(bmp); Native.DeleteDC(mem); Native.ReleaseDC(IntPtr.Zero, screen); }
+        }
+
         public static BitmapSource CaptureScreen(int x, int y, int w, int h)
         {
             using (var bmp = new System.Drawing.Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppRgb))
@@ -535,7 +579,7 @@ namespace OpenDock
                 double lum = 0;
                 for (int i = 0; i < px.Length; i += 4) lum += 0.0722 * px[i] + 0.7152 * px[i + 1] + 0.2126 * px[i + 2];
                 bool light = lum / (px.Length / 4) > 165;
-                var blurred = Icons.Blur(flat, w, h, 6);
+                var blurred = Icons.Blur(flat, w, h, 10);   // heavy frost: shapes and colour show through, no detail
                 Icons.Ui.BeginInvoke(new Action(() => { Blurred = blurred; TopIsLight = light; if (Changed != null) Changed(); }));
             });
         }

@@ -4,6 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security;
+using System.Text;
 using System.Threading;
 using System.Windows;
 using System.Windows.Interop;
@@ -78,7 +80,37 @@ namespace OpenDock
                     if (value) k.SetValue("OpenDock", "\"" + Assembly.GetExecutingAssembly().Location + "\"");
                     else k.DeleteValue("OpenDock", false);
                 }
+                LogonTask(value);
             }
+        }
+
+        // Windows holds back "Run" entries and starts them in batches minutes after sign-in when there are many
+        // startup apps. A per-user logon task starts OpenDock right away (no admin needed when it's defined for
+        // the current user only). The Run entry stays as a fallback; the second copy just exits (single instance).
+        public static void LogonTask(bool on)
+        {
+            try
+            {
+                string args;
+                if (on)
+                {
+                    string user = SecurityElement.Escape(System.Security.Principal.WindowsIdentity.GetCurrent().Name);
+                    string xml = "<?xml version=\"1.0\" encoding=\"UTF-16\"?><Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">"
+                        + "<RegistrationInfo><Description>Starts OpenDock as soon as you sign in.</Description></RegistrationInfo>"
+                        + "<Triggers><LogonTrigger><Enabled>true</Enabled><UserId>" + user + "</UserId></LogonTrigger></Triggers>"
+                        + "<Principals><Principal id=\"Author\"><UserId>" + user + "</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>"
+                        + "<Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"
+                        + "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>4</Priority></Settings>"
+                        + "<Actions Context=\"Author\"><Exec><Command>" + SecurityElement.Escape(Assembly.GetExecutingAssembly().Location) + "</Command></Exec></Actions></Task>";
+                    string file = Path.Combine(Path.GetTempPath(), "OpenDock-logon-task.xml");
+                    File.WriteAllText(file, xml, Encoding.Unicode);
+                    args = "/create /tn OpenDock /f /xml \"" + file + "\"";
+                }
+                else args = "/delete /tn OpenDock /f";
+                var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("schtasks.exe", args) { CreateNoWindow = true, UseShellExecute = false });
+                p.WaitForExit(10000);
+            }
+            catch (Exception ex) { App.Log(ex); }
         }
     }
 
@@ -223,6 +255,7 @@ namespace OpenDock
         public static readonly List<FinderWindow> Finders = new List<FinderWindow>();
         public static IntPtr LastForeground;                 // last app window the user was in (not ours)
         public static event Action<IntPtr> ForegroundChanged;
+        public static event Action<IntPtr> WindowFlashed;     // an app asked for attention (what the taskbar shows as a flashing button)
         public static event Action<List<WinInfo>> WindowsChanged;
         public static List<WinInfo> Wins = new List<WinInfo>();
 
@@ -310,12 +343,15 @@ namespace OpenDock
         static void Start()
         {
             StartWatchdog(Dispatcher.CurrentDispatcher);
+            if (Settings.LaunchAtLogin) System.Threading.Tasks.Task.Run(() => Settings.LogonTask(true));   // upgrade older "Run"-only installs; keeps the path current
             // Hidden top-level window: receives hotkeys and the TaskbarCreated broadcast (Explorer restarts).
             msgWindow = new HwndSource(new HwndSourceParameters("OpenDockHost") { WindowStyle = unchecked((int)0x80000000), Width = 0, Height = 0 });
             uint taskbarCreated = Native.RegisterWindowMessage("TaskbarCreated");
+            uint shellHook = Native.RegisterWindowMessage("SHELLHOOK");
             msgWindow.AddHook((IntPtr h, int m, IntPtr w, IntPtr l, ref bool handled) =>
             {
                 if (m == Native.WM_HOTKEY && (int)w == 1) ToggleSpotlight();
+                if (m == shellHook && (int)w.ToInt64() == 0x8006 /* HSHELL_FLASH */ && WindowFlashed != null) WindowFlashed(l);
                 if (m == Native.WM_CLOSE) { handled = true; Quit(); }
                 if (m == taskbarCreated) Dispatcher.CurrentDispatcher.BeginInvoke(new Action(() =>
                 {
@@ -325,6 +361,7 @@ namespace OpenDock
                 }), DispatcherPriority.Background);
                 return IntPtr.Zero;
             });
+            Native.RegisterShellHookWindow(msgWindow.Handle);
             Native.RegisterHotKey(msgWindow.Handle, 1, 0x1 /* MOD_ALT */ | 0x4000 /* NOREPEAT */, 0x20 /* Space */);
 
             if (Settings.HideTaskbar || Settings.TaskbarStateToRestore >= 0) { if (Settings.HideTaskbar) Taskbar.Hide(); else Taskbar.Restore(); }

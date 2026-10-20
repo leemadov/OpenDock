@@ -11,6 +11,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 
@@ -28,6 +29,7 @@ namespace OpenDock
         // P = presence (0..1, grows/shrinks the slot), X = smoothed resting centre, CX/S = magnified centre/scale.
         public double P, PWant = 1, X = double.NaN, CX, S = 1, DotA, BounceT0 = -1, BounceStop;
         public double PFrom, PTarget = -1, PT0, GoneAt = -1;   // presence tween + grace period after the last window closes
+        public bool Attention;                                  // a window flashed for attention (red dot until you switch to it)
 
         public bool IsSep { get { return Kind == "sep"; } }
         public bool Running { get { return Kind == "finder" ? App.Finders.Count > 0 : Wins.Count > 0; } }
@@ -84,7 +86,7 @@ namespace OpenDock
         readonly Canvas canvas = new Canvas(), layer = new Canvas();
         readonly Image wall = new Image { Stretch = Stretch.Fill };
         readonly RectangleGeometry wallClip = new RectangleGeometry();
-        readonly Border bg = new Border { BorderThickness = new Thickness(1) };
+        readonly Border bg = new Border { BorderThickness = new Thickness(1) }, sheen = new Border { IsHitTestVisible = false }, outline = new Border { BorderThickness = new Thickness(1), IsHitTestVisible = false };
         readonly Border label = new Border { CornerRadius = new CornerRadius(7), Padding = new Thickness(10, 3, 10, 4), Opacity = 0, IsHitTestVisible = false };
         readonly TextBlock labelText = new TextBlock { FontSize = 13, FontFamily = Theme.Font };
         readonly Rectangle edge = new Rectangle { Fill = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)), Height = 2 };
@@ -98,7 +100,15 @@ namespace OpenDock
         Point pressAt;
         StackWindow stack;
         ContextMenu openMenu;
+        readonly PreviewWindow preview = new PreviewWindow();
+        DockItem hoverItem, lastHot;
+        double hoverSince;
         DispatcherTimer grace;
+        // Live glass: the dock is left out of screen capture, so a capture of its area shows what is behind it.
+        bool live;
+        long glassSum;
+        double wallX, wallY;   // where the backdrop image sits on the canvas
+        readonly DispatcherTimer glassTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
 
         public DockWindow()
         {
@@ -115,7 +125,10 @@ namespace OpenDock
             labelText.SetResourceReference(TextBlock.ForegroundProperty, "BubbleFg");
             bg.SetResourceReference(Border.BackgroundProperty, "DockTint");
             bg.SetResourceReference(Border.BorderBrushProperty, "DockBorder");
-            canvas.Children.Add(wall); canvas.Children.Add(bg); canvas.Children.Add(layer); canvas.Children.Add(label); canvas.Children.Add(edge);
+            sheen.SetResourceReference(Border.BackgroundProperty, "DockSheen");
+            bg.Child = sheen;
+            outline.SetResourceReference(Border.BorderBrushProperty, "DockOutline");
+            canvas.Children.Add(wall); canvas.Children.Add(outline); canvas.Children.Add(bg); canvas.Children.Add(layer); canvas.Children.Add(label); canvas.Children.Add(edge);
             Content = canvas;
 
             MouseEventHandler enter = delegate { hovering = true; StartLoop(); };
@@ -126,7 +139,10 @@ namespace OpenDock
 
             SourceInitialized += delegate
             {
-                Native.MakeToolWindow(new WindowInteropHelper(this).Handle, true);
+                var hwnd = new WindowInteropHelper(this).Handle;
+                Native.MakeToolWindow(hwnd, true);
+                live = Native.SetWindowDisplayAffinity(hwnd, 0x11 /* WDA_EXCLUDEFROMCAPTURE, Windows 10 2004+ */);
+                if (live) glassTimer.Start();
                 Bar = new AppBar(this, Native.ABE_BOTTOM);
                 Bar.Placed = rc => { bottomDip = rc.Bottom / App.Dpi; Position(); };
                 Bar.FullScreen = OnFullScreen;
@@ -142,8 +158,20 @@ namespace OpenDock
             tiles = Settings.IconTiles;
 
             App.WindowsChanged += Sync;
+            preview.StillHovered = it => it != null && it == lastHot;
+            App.WindowFlashed += OnFlash;
+            App.ForegroundChanged += h =>
+            {
+                h = Native.GetAncestor(h, 2);
+                foreach (var it in items.Where(i => i.Attention && i.Wins.Any(w => w.Hwnd == h)))
+                {
+                    it.Attention = false;
+                    it.Dot.SetResourceReference(Shape.FillProperty, "Fg");
+                }
+            };
             Apps.Changed += OnAppsLoaded;
-            Wallpaper.Changed += delegate { wall.Source = Wallpaper.Blurred; };
+            Wallpaper.Changed += delegate { if (!live) wall.Source = Wallpaper.Blurred; };
+            glassTimer.Tick += delegate { RefreshGlass(); };
             wall.Source = Wallpaper.Blurred;
             Settings.Changed += delegate
             {
@@ -179,10 +207,36 @@ namespace OpenDock
         void Position()
         {
             Width = W; Height = H; Left = 0; Top = bottomDip - H;
-            wall.Width = SystemParameters.PrimaryScreenWidth; wall.Height = SystemParameters.PrimaryScreenHeight;
-            Canvas.SetTop(wall, -Top);
+            if (!live)
+            {
+                wall.Width = SystemParameters.PrimaryScreenWidth; wall.Height = SystemParameters.PrimaryScreenHeight;
+                wallX = 0; wallY = -Top;
+                Canvas.SetLeft(wall, wallX); Canvas.SetTop(wall, wallY);
+            }
             edge.Width = W; Canvas.SetTop(edge, H - edge.Height);
             StartLoop();
+        }
+
+        // Frosts whatever is behind the dock: a 1/4-size capture around the pane (with room for it to widen while
+        // magnifying), blurred, and redone only when the picture changes.
+        void RefreshGlass()
+        {
+            if (!IsVisible || hide > 0.99 || bgR <= bgL) return;
+            double d = App.Dpi, x0 = Math.Max(0, Math.Floor(bgL - magSlot)), x1 = Math.Min(W, Math.Ceiling(bgR + magSlot)), y0 = Math.Max(0, Math.Floor(bgTop - 8));
+            int w = (int)Math.Round((x1 - x0) * d), h = (int)Math.Round((H - y0) * d), sw = Math.Max(1, w / 4), sh = Math.Max(1, h / 4);
+            var px = Icons.CaptureScaled((int)Math.Round((Left + x0) * d), (int)Math.Round((Top + y0) * d), w, h, sw, sh);
+            if (px == null) return;
+            long sum = (long)(x0 * 7919 + y0);
+            for (int i = 0; i < px.Length; i += 4) sum = sum * 31 + BitConverter.ToInt32(px, i);
+            if (sum == glassSum) return;
+            glassSum = sum;
+            Icons.BoxBlur(px, sw, sh, 1, 3);   // three box passes ~ a light gaussian
+            var shot = BitmapSource.Create(sw, sh, 96, 96, PixelFormats.Bgr32, null, px, sw * 4);
+            shot.Freeze();
+            wall.Source = shot;
+            wallX = x0; wallY = y0; wall.Width = x1 - x0; wall.Height = H - y0;
+            Canvas.SetLeft(wall, wallX); Canvas.SetTop(wall, wallY);
+            StartLoop();   // re-clip to the pane at the new spot
         }
 
         public void OnFullScreen(bool fs)
@@ -251,7 +305,8 @@ namespace OpenDock
                     it.Img.Opacity = 1;
                     if (drag == it) EndDrag(e.GetPosition(this)); else Click(it);
                 };
-                it.Root.MouseRightButtonUp += (s, e) => { ShowMenu(it); e.Handled = true; };
+                it.Root.MouseRightButtonUp += (s, e) => { preview.Close2(); ShowMenu(it); e.Handled = true; };
+                it.Root.MouseUp += (s, e) => { if (e.ChangedButton == MouseButton.Middle) { OpenNew(it); e.Handled = true; } };
                 LoadIcon(it);
             }
             it.Root.MouseEnter += delegate { hovering = true; StartLoop(); };
@@ -362,7 +417,7 @@ namespace OpenDock
                 else if (it.GoneAt < 0) it.GoneAt = now;
                 if (!it.Pinned) it.PWant = it.Wins.Count > 0 || now - it.GoneAt < 0.6 ? 1 : 0;
                 if (!it.Pinned && it.PWant == 1 && it.Wins.Count == 0) WaitThenSync();
-                if (it.BounceT0 >= 0 && it.Wins.Count > 0) it.BounceStop = Math.Min(it.BounceStop, now);
+                if (it.BounceT0 >= 0 && it.Wins.Count > 0 && !it.Attention) it.BounceStop = Math.Min(it.BounceStop, now);   // launched: stop bouncing
             }
             StartLoop();
         }
@@ -383,6 +438,9 @@ namespace OpenDock
             var e = w.IsFrameHost ? Apps.ById(w.Aumid) : (Apps.ByExe(w.Exe) ?? (w.Aumid != null ? Apps.ById(w.Aumid) : null));
             if (e != null) { it.Name = e.Name; it.Target = e.Target; it.IconPath = e.Icon; }
             else if (w.IsFrameHost && w.Aumid != null) { it.Name = w.Title; it.Target = "app:" + w.Aumid; it.IconPath = "shell:AppsFolder\\" + w.Aumid; }
+            // Packaged desktop apps (Claude, ...) live in a versioned WindowsApps folder that each update deletes;
+            // pin them by app ID so the pin survives updates.
+            else if (w.Aumid != null && w.Exe != null && w.Exe.IndexOf("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase) >= 0) { it.Name = Apps.FriendlyName(w.Exe); it.Target = "app:" + w.Aumid; it.IconPath = w.Exe; }
             else { it.Name = Apps.FriendlyName(w.Exe); it.Target = w.Exe; it.IconPath = w.Exe; }
             it.ComputeKeys();
             return it;
@@ -390,8 +448,56 @@ namespace OpenDock
 
         // ---------- clicks ----------
 
+        // An app flashing its taskbar button (new message, finished download...): bounce three times, like macOS,
+        // and turn its dot red until you switch to it.
+        void OnFlash(IntPtr h)
+        {
+            var it = items.FirstOrDefault(i => i.Wins.Any(w => w.Hwnd == h));
+            if (it == null || it.Wins.Any(w => w.Hwnd == Native.GetAncestor(Native.GetForegroundWindow(), 2))) return;
+            it.Attention = true;
+            it.Dot.Fill = Theme.B("#FF453A");
+            if (it.BounceT0 < 0) { it.BounceT0 = clock.Elapsed.TotalSeconds; it.BounceStop = it.BounceT0 + 2 * 0.68 + 0.01; }
+            StartLoop();
+        }
+
+        // Middle-click or Shift+click: a new window / instance, like the taskbar.
+        void OpenNew(DockItem it)
+        {
+            preview.Close2();
+            if (it.Kind == "finder") { App.NewFinder(); return; }
+            if (it.Kind != "app") return;
+            Launcher.Open(it.Target);
+            it.BounceT0 = clock.Elapsed.TotalSeconds; it.BounceStop = it.BounceT0;   // one bounce
+            StartLoop();
+        }
+
+        List<IntPtr> WindowsOf(DockItem it)
+        {
+            if (it.Kind == "finder") return App.Finders.Select(f => new WindowInteropHelper(f).Handle).ToList();
+            return it.Kind == "app" ? it.Wins.Select(w => w.Hwnd).ToList() : null;
+        }
+
+        // Hover a running app for a moment and its windows' live previews appear; moving to another running app
+        // switches them instantly (taskbar behaviour).
+        bool UpdatePreview(DockItem hot, double now, double iconBase)
+        {
+            var wins = hot == null || dropActive || menuOpen || drag != null ? null : WindowsOf(hot);
+            var target = wins != null && wins.Count > 0 ? hot : null;
+            if (target != hoverItem) { hoverItem = target; hoverSince = now; }
+            if (target != null)
+            {
+                if (preview.Item != target && (preview.IsVisible || now - hoverSince > 0.55))
+                    preview.ShowFor(target, wins, target.Img.Source, new Point(Left + target.CX, Top + iconBase - slot * target.S));
+                return preview.Item != target;   // keep the loop running until it's shown
+            }
+            if (preview.IsVisible && !preview.MouseInside) preview.MaybeHide();
+            return false;
+        }
+
         void Click(DockItem it)
         {
+            preview.Close2();
+            if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0 && (it.Kind == "app" || it.Kind == "finder")) { OpenNew(it); return; }
             switch (it.Kind)
             {
                 case "finder":
@@ -743,7 +849,10 @@ namespace OpenDock
             Canvas.SetLeft(bg, bgL); Canvas.SetTop(bg, bgTop);
             bg.Width = Math.Max(0, bgR - bgL); bg.Height = bgH;
             bg.CornerRadius = new CornerRadius(radius);
-            wallClip.Rect = new Rect(bgL, bgTop + Top, Math.Max(0, bgR - bgL), bgH);
+            sheen.CornerRadius = new CornerRadius(Math.Max(0, radius - 1));
+            Canvas.SetLeft(outline, bgL - 1); Canvas.SetTop(outline, bgTop - 1);
+            outline.Width = bg.Width + 2; outline.Height = bgH + 2; outline.CornerRadius = new CornerRadius(radius + 1);
+            wallClip.Rect = new Rect(bgL - wallX, bgTop - wallY, Math.Max(0, bgR - bgL), bgH);
             wallClip.RadiusX = wallClip.RadiusY = radius;
 
             foreach (var it in items)
@@ -779,6 +888,9 @@ namespace OpenDock
             if (hovering && drag == null && !menuOpen && m.Y > bgTop - slot * A - 10)
                 hot = items.FirstOrDefault(i => !i.IsSep && i.P > 0.5 && Math.Abs(i.CX - mx) <= slot * i.S / 2);
             if (dropActive) hot = dropHot;
+            lastHot = hot;
+            busy |= UpdatePreview(hot, now, iconBase);
+            if (preview.IsVisible) hot = null;   // the previews replace the name bubble
             if (hot != null && hot != labelItem) { labelItem = hot; labelText.Text = hot.Name; }
             busy |= Approach(ref labelA, hot != null ? 1 : 0, hot != null ? 30 : 18);
             label.Opacity = labelA;

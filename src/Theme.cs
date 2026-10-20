@@ -55,9 +55,20 @@ namespace OpenDock
             Dark = IsDarkMode();
             var r = Application.Current.Resources;
             string[] keys = { "MenuBg", "MenuBorder", "MenuFg", "MenuFgDim", "MenuSep", "Accent", "WinBg", "SideBg", "ToolBg", "Fg", "FgDim", "Hover", "SelBg", "Field", "Thumb", "Track", "DockTint", "DockBorder", "Bubble", "BubbleFg", "Glass" };
-            string[] dark = { "#F72B2B2D", "#33FFFFFF", "#F2FFFFFF", "#73FFFFFF", "#1FFFFFFF", "#0A84FF", "#1E1E1E", "#2A2A2C", "#262628", "#EBFFFFFF", "#8CFFFFFF", "#14FFFFFF", "#29FFFFFF", "#1AFFFFFF", "#59FFFFFF", "#45FFFFFF", "#7A141418", "#38FFFFFF", "#E62A2A2C", "#F2FFFFFF", "#C72A2A2D" };
-            string[] light = { "#F5F6F6F6", "#1F000000", "#E6000000", "#59000000", "#1A000000", "#007AFF", "#FFFFFF", "#ECECEE", "#F6F6F6", "#E6000000", "#80000000", "#0F000000", "#1A000000", "#0F000000", "#59000000", "#24000000", "#99F5F5F7", "#73FFFFFF", "#F2F4F4F4", "#E6000000", "#CCF4F4F6" };
+            string[] dark = { "#F72B2B2D", "#33FFFFFF", "#F2FFFFFF", "#73FFFFFF", "#1FFFFFFF", "#0A84FF", "#1E1E1E", "#2A2A2C", "#262628", "#EBFFFFFF", "#8CFFFFFF", "#14FFFFFF", "#29FFFFFF", "#1AFFFFFF", "#59FFFFFF", "#45FFFFFF", "#4716181C", "#38FFFFFF", "#E62A2A2C", "#F2FFFFFF", "#C72A2A2D" };
+            string[] light = { "#F5F6F6F6", "#1F000000", "#E6000000", "#59000000", "#1A000000", "#007AFF", "#FFFFFF", "#ECECEE", "#F6F6F6", "#E6000000", "#80000000", "#0F000000", "#1A000000", "#0F000000", "#59000000", "#24000000", "#40E2E3E8", "#73FFFFFF", "#F2F4F4F4", "#E6000000", "#CCF4F4F6" };
             for (int i = 0; i < keys.Length; i++) r[keys[i]] = B(Dark ? dark[i] : light[i]);
+            // Dock glass: a thin rim that catches light along the top, and a soft sheen fading down the pane.
+            r["DockBorder"] = Fade(Dark ? "#5CFFFFFF" : "#C2FFFFFF", Dark ? "#12FFFFFF" : "#2EFFFFFF", 1);
+            r["DockOutline"] = B(Dark ? "#59000000" : "#1F000000");   // hairline that separates the pane from a pale backdrop
+            r["DockSheen"] = Fade(Dark ? "#1AFFFFFF" : "#3DFFFFFF", "#00FFFFFF", 0.6);
+        }
+
+        static Brush Fade(string top, string bottom, double end)
+        {
+            var g = new LinearGradientBrush(new GradientStopCollection { new GradientStop((Color)ColorConverter.ConvertFromString(top), 0), new GradientStop((Color)ColorConverter.ConvertFromString(bottom), end) }, new Point(0, 0), new Point(0, 1));
+            g.Freeze();
+            return g;
         }
 
         const string Xaml = @"

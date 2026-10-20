@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/github/license/leemadov/OpenDock)](LICENSE)
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
 
-A free, open-source macOS-style desktop for Windows 10/11, inspired by MyDockFinder. It's a single ~230 KB executable: no installer, no runtime to download and no SDK needed to build it.
+A free, open-source macOS-style desktop for Windows 10/11, inspired by MyDockFinder. It's a single ~250 KB executable: no installer, no runtime to download and no SDK needed to build it.
 
 ![OpenDock demo: dock magnification, Launchpad and Spotlight](docs/demo.gif)
 
@@ -16,7 +16,7 @@ Run it, and the dock and menu bar appear. Quit from the logo menu in the top-lef
 ## Why OpenDock?
 
 - **Free and open source** (MIT). There's no paid version and nothing is locked.
-- **Tiny and light.** A ~230 KB exe that uses no CPU when idle. The animation loop only runs while something is moving, and if it ever hangs, it restarts itself.
+- **Tiny and light.** A ~250 KB exe that uses almost no CPU when idle. The animation loop only runs while something is moving, and if it ever hangs, it restarts itself.
 - **The whole macOS look, not just a dock:** a menu bar, Launchpad, Spotlight, Finder and Stacks.
 - **Nothing to install.** It runs on the .NET Framework that ships with Windows, and building it only needs `build.bat`.
 - **Hackable.** Plain C#, with one file per feature. See [How it's built](#how-its-built).
@@ -33,7 +33,8 @@ Run it, and the dock and menu bar appear. Quit from the logo menu in the top-lef
 - Right-click an icon to see its open windows plus Keep in Dock, Show in Finder, Hide and Quit
 - Downloads stack: a grid of your recent downloads with thumbnails
 - Trash shows when it's empty or full and can be emptied from the dock
-- Frosted-glass background, auto-hide with a slide animation, and space reserved so maximized windows stop above the dock
+- **Live frosted glass**: whatever is behind the dock (your wallpaper, or a window you drag past it) shows through, lightly blurred. Space is reserved so maximized windows stop above the dock. OpenDock keeps itself out of screen capture so it can read what is behind it, and redraws only when that changes. One side effect: screenshots and screen recordings show what is behind the dock instead of the dock
+- Auto-hide with a slide animation
 
 **Menu bar**
 - The bold name of the active app, plus File / Edit / View / Window / Help menus that send the matching shortcuts to that app
@@ -78,6 +79,7 @@ Plain WPF written in code, one file per feature, in `src/`:
 | File | What |
 |---|---|
 | `Dock.cs` | dock, drag ghost and poof, Downloads stack |
+| `Preview.cs` | live window previews above a dock icon |
 | `MenuBar.cs` | menu bar |
 | `Launchpad.cs`, `Spotlight.cs` | full-screen app grid, search panel |
 | `Finder.cs` | Finder window, the shared mac window chrome, Settings |
@@ -86,7 +88,7 @@ Plain WPF written in code, one file per feature, in `src/`:
 | `Theme.cs`, `Art.cs` | light/dark palette and control templates, built-in vector icons |
 | `Native.cs` | Win32 interop |
 
-The blur doesn't use undocumented DWM APIs. The dock draws a blurred copy of your wallpaper behind itself, and Launchpad, Spotlight and Stacks blur a snapshot of the screen taken as they open. The animation loop only runs while something is moving, so the app uses no CPU when idle.
+The blur doesn't use undocumented DWM APIs. The dock is excluded from screen capture (`SetWindowDisplayAffinity`), captures the strip behind itself at quarter size about 12 times a second and box-blurs it, only when the picture changed. On Windows older than 10 version 2004 it falls back to a blurred copy of the wallpaper. Launchpad, Spotlight and Stacks blur a snapshot of the screen taken as they open. The animation loop only runs while something is moving, so apart from the glass check the app does no work when idle.
 
 ## Not done yet
 
