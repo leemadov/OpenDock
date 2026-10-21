@@ -141,7 +141,7 @@ namespace OpenDock
             {
                 var hwnd = new WindowInteropHelper(this).Handle;
                 Native.MakeToolWindow(hwnd, true);
-                live = Native.SetWindowDisplayAffinity(hwnd, 0x11 /* WDA_EXCLUDEFROMCAPTURE, Windows 10 2004+ */);
+                live = Glass.Exclude(hwnd);
                 if (live) glassTimer.Start();
                 Bar = new AppBar(this, Native.ABE_BOTTOM);
                 Bar.Placed = rc => { bottomDip = rc.Bottom / App.Dpi; Position(); };
@@ -162,6 +162,7 @@ namespace OpenDock
             App.WindowFlashed += OnFlash;
             App.ForegroundChanged += h =>
             {
+                glassTimer.Interval = TimeSpan.FromMilliseconds(80);   // something may be moving behind the dock
                 h = Native.GetAncestor(h, 2);
                 foreach (var it in items.Where(i => i.Attention && i.Wins.Any(w => w.Hwnd == h)))
                 {
@@ -179,7 +180,7 @@ namespace OpenDock
                 Place();
             };
             Theme.Changed += ReloadIcons;
-            var trashTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+            var trashTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
             trashTimer.Tick += delegate { UpdateTrash(); };
             trashTimer.Start();
         }
@@ -223,16 +224,10 @@ namespace OpenDock
         {
             if (!IsVisible || hide > 0.99 || bgR <= bgL) return;
             double d = App.Dpi, x0 = Math.Max(0, Math.Floor(bgL - magSlot)), x1 = Math.Min(W, Math.Ceiling(bgR + magSlot)), y0 = Math.Max(0, Math.Floor(bgTop - 8));
-            int w = (int)Math.Round((x1 - x0) * d), h = (int)Math.Round((H - y0) * d), sw = Math.Max(1, w / 4), sh = Math.Max(1, h / 4);
-            var px = Icons.CaptureScaled((int)Math.Round((Left + x0) * d), (int)Math.Round((Top + y0) * d), w, h, sw, sh);
-            if (px == null) return;
-            long sum = (long)(x0 * 7919 + y0);
-            for (int i = 0; i < px.Length; i += 4) sum = sum * 31 + BitConverter.ToInt32(px, i);
-            if (sum == glassSum) return;
-            glassSum = sum;
-            Icons.BoxBlur(px, sw, sh, 1, 3);   // three box passes ~ a light gaussian
-            var shot = BitmapSource.Create(sw, sh, 96, 96, PixelFormats.Bgr32, null, px, sw * 4);
-            shot.Freeze();
+            var shot = Glass.Behind((int)Math.Round((Left + x0) * d), (int)Math.Round((Top + y0) * d), (int)Math.Round((x1 - x0) * d), (int)Math.Round((H - y0) * d), 1, ref glassSum);
+            // Nothing changed: check less and less often (down to once a second). A change brings back ~12 checks a second.
+            if (shot == null) { glassTimer.Interval = TimeSpan.FromMilliseconds(Math.Min(1000, glassTimer.Interval.TotalMilliseconds * 1.5)); return; }
+            glassTimer.Interval = TimeSpan.FromMilliseconds(80);
             wall.Source = shot;
             wallX = x0; wallY = y0; wall.Width = x1 - x0; wall.Height = H - y0;
             Canvas.SetLeft(wall, wallX); Canvas.SetTop(wall, wallY);
@@ -560,7 +555,8 @@ namespace OpenDock
             cm.Items.Add(Item(Settings.Magnify ? "Turn Magnification Off" : "Turn Magnification On", () => { Settings.Magnify = !Settings.Magnify; Settings.Apply(); }));
             cm.Items.Add(Item(Settings.AutoHide ? "Turn Hiding Off" : "Turn Hiding On", () => { Settings.AutoHide = !Settings.AutoHide; Settings.Apply(); }));
             cm.Items.Add(new Separator());
-            cm.Items.Add(Item("Dock Settings…", App.OpenSettings));
+            cm.Items.Add(Item("Task Manager", () => Launcher.Shell("taskmgr.exe")));
+            cm.Items.Add(Item("Dock Settings…", () => App.OpenSettings("Desktop & Dock")));
         }
 
         void ShowMenu(DockItem it)

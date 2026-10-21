@@ -27,9 +27,7 @@ namespace OpenDock
         readonly Rectangle batteryFill = new Rectangle { RadiusX = 1.5, RadiusY = 1.5, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(2.2, 2.2, 0, 2.2) };
         readonly Path bolt = new Path { Data = Geometry.Parse("M7,0 L2,7 L5.5,7 L4,13 L10,5 L6.5,5 Z"), Width = 8, Height = 10, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 3, 0) };
         readonly TextBlock net = new TextBlock { FontFamily = Theme.Glyphs, FontSize = 15, VerticalAlignment = VerticalAlignment.Center };
-        Border batteryButton, bgApps, stealth;
-        TextBlock stealthGlyph;
-        bool stealthBusy;
+        Border batteryButton, bgApps;
         Brush fg;
         string current = "Finder";
 
@@ -44,10 +42,9 @@ namespace OpenDock
             var logo = new Ellipse { Width = 15, Height = 15, StrokeThickness = 2.2, Margin = new Thickness(4, 0, 4, 0) };
             logo.SetBinding(Shape.StrokeProperty, new System.Windows.Data.Binding("Foreground") { Source = this });
             var logoMenu = Bar0(logo);
-            logoMenu.Items.Add(Cmd("About This PC", null, () => Launcher.Shell("ms-settings:about")));
+            logoMenu.Items.Add(Cmd("About This PC", null, AboutWindow.ShowIt));
             logoMenu.Items.Add(new Separator());
-            logoMenu.Items.Add(Cmd("System Settings…", null, () => Launcher.Shell("ms-settings:")));
-            logoMenu.Items.Add(Cmd("Dock Settings…", null, App.OpenSettings));
+            logoMenu.Items.Add(Cmd("System Settings…", null, () => App.OpenSettings("General")));
             logoMenu.Items.Add(Cmd("App Store…", null, () => Launcher.Shell("ms-windows-store:")));
             logoMenu.Items.Add(new Separator());
             logoMenu.Items.Add(Cmd("Force Quit…", "Ctrl+Shift+Esc", () => Launcher.Shell("taskmgr.exe")));
@@ -115,10 +112,6 @@ namespace OpenDock
             // status area
             bgApps = Status(Glyph(""), ShowBackgroundApps, "Background Apps");
             right.Children.Add(bgApps);
-            stealthGlyph = Glyph("");   // moon
-            stealth = Status(stealthGlyph, ToggleStealth, null);
-            right.Children.Add(stealth);
-            PaintStealth();
             right.Children.Add(Status(Glyph(""), () => Win('A'), "Sound"));
             batteryButton = Status(Battery(), () => Win('A'), "Battery");
             right.Children.Add(batteryButton);
@@ -257,30 +250,6 @@ namespace OpenDock
             appMenu.Items.Add(new Separator());
             appMenu.Items.Add(Cmd("Quit " + current, "Alt+F4", () => { foreach (var w in App.Wins.Where(mine)) Native.PostMessage(w.Hwnd, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero); }, exe != null));
         }
-
-        // One click: all RGB lighting off (via OpenRGB); click again to bring it back exactly as it was.
-        async void ToggleStealth()
-        {
-            if (stealthBusy) return;
-            stealthBusy = true;
-            stealthGlyph.Opacity = 0.4;
-            string error = await Stealth.Toggle();
-            stealthBusy = false;
-            stealthGlyph.Opacity = 1;
-            PaintStealth();
-            if (error != null) MessageBox.Show(error, "Stealth Mode", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-
-        void PaintStealth()
-        {
-            bool on = Stealth.On;
-            stealth.ToolTip = on ? "Stealth Mode is on — click to bring your lights back" : "Stealth Mode — turn off all RGB lights";
-            // a filled pill while active, like an enabled macOS menu-bar toggle
-            stealth.Background = on ? Theme.B(Wallpaper.TopIsLight ? "#33000000" : "#40FFFFFF") : Brushes.Transparent;
-            stealth.Tag = on ? "on" : null;
-        }
-
-        // The apps that live in the (hidden) Windows tray, listed in a menu like macOS menu extras.
         void ShowBackgroundApps()
         {
             var cm = new ContextMenu { PlacementTarget = bgApps, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom, HorizontalOffset = -12 };
@@ -288,28 +257,12 @@ namespace OpenDock
             cm.Items.Add(new Separator());
             var apps = Tray.Running();
             if (apps.Count == 0) cm.Items.Add(new MenuItem { Header = "No background apps running", IsEnabled = false });
-            else cm.Items.Add(new MenuItem { Header = "Right-click an app for more", IsEnabled = false, FontSize = 11 });
             foreach (var a in apps)
             {
                 var app = a;
-                // click opens the app; right-click for Quit / Force Quit / Show in Finder
-                var mi = Cmd(a.Name, null, app.Open);
+                // Opens the app's own tray menu, the same one the Windows taskbar shows on right-click.
+                var mi = Cmd(a.Name, null, app.ShowTrayMenu);
                 mi.Icon = new Image { Source = a.Icon, Width = 16, Height = 16 };
-                mi.MouseRightButtonUp += (s, e) =>
-                {
-                    e.Handled = true;
-                    cm.IsOpen = false;
-                    var more = new ContextMenu();
-                    more.Items.Add(Cmd("Open " + app.Name, null, app.Open));
-                    if (app.Exe != null && !app.Exe.Contains(@"\WindowsApps\")) more.Items.Add(Cmd("Show in Finder", null, () => App.ShowInFinder(app.Exe)));
-                    more.Items.Add(new Separator());
-                    more.Items.Add(Cmd("Quit", null, app.Quit));
-                    more.Items.Add(Cmd("Force Quit…", null, () =>
-                    {
-                        if (MessageBox.Show("Force quit " + app.Name + "? Unsaved work in it will be lost.", "OpenDock", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) app.Kill();
-                    }));
-                    more.IsOpen = true;
-                };
                 cm.Items.Add(mi);
             }
             cm.Items.Add(new Separator());
@@ -371,7 +324,7 @@ namespace OpenDock
         {
             var b = new Border { Child = content, Padding = new Thickness(8, 0, 8, 0), Margin = new Thickness(1, 3, 1, 3), CornerRadius = new CornerRadius(5), Background = Brushes.Transparent, ToolTip = tip };
             b.MouseEnter += delegate { b.Background = Theme.B("#26FFFFFF"); };
-            b.MouseLeave += delegate { if (b == stealth) PaintStealth(); else b.Background = Brushes.Transparent; };
+            b.MouseLeave += delegate { b.Background = Brushes.Transparent; };
             b.MouseLeftButtonUp += delegate { click(); };
             return b;
         }

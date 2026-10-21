@@ -26,15 +26,17 @@ namespace OpenDock
         public static bool Indicators = true;
         public static bool IconTiles = true;
         public static bool ShowRunning = true;
-        public static bool StealthOn = false;          // RGB lights are off (OpenRGB backup profile holds the previous look)
         public static int Appearance = 2;         // 0 = follow Windows, 1 = light, 2 = dark
         public static bool FirstRun = true;
         public static int TaskbarStateToRestore = -1; // survives a crash so the next exit can still restore it
         public static List<string> Pins = new List<string>(); // "Name|Target"
         public static List<string> Hidden = new List<string>(); // AppsFolder ids hidden from Launchpad
+        public static List<string> Wallpapers = new List<string>(); // the wallpaper library (image paths), newest first
+        public static bool WallpapersSeeded = false;            // the library was filled with the Windows wallpapers once
 
         public static event Action Changed;
         static readonly string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "OpenDock");
+        public static string WallpaperDir { get { return Path.Combine(dir, "Wallpapers"); } }   // copies of photos you add
         static readonly string file = Path.Combine(dir, "settings.txt");
         public static string LogFile { get { return Path.Combine(dir, "error.log"); } }
 
@@ -53,6 +55,7 @@ namespace OpenDock
                 string k = line.Substring(0, eq), v = line.Substring(eq + 1);
                 if (k == "pin") { Pins.Add(v); continue; }
                 if (k == "hide") { Hidden.Add(v); continue; }
+                if (k == "wall") { Wallpapers.Add(v); continue; }
                 var f = Fields().FirstOrDefault(x => x.Name == k);
                 try { if (f != null) f.SetValue(null, Convert.ChangeType(v, f.FieldType)); } catch { }
             }
@@ -64,6 +67,7 @@ namespace OpenDock
             var lines = Fields().Select(f => f.Name + "=" + f.GetValue(null)).ToList();
             lines.AddRange(Pins.Select(p => "pin=" + p));
             lines.AddRange(Hidden.Select(h => "hide=" + h));
+            lines.AddRange(Wallpapers.Select(w => "wall=" + w));
             File.WriteAllLines(file, lines);
         }
 
@@ -302,6 +306,8 @@ namespace OpenDock
 
                 Settings.Load();
                 Theme.Init(app);
+                Glass.Init();
+                Outside.Init();
                 Icons.Start();
                 Apps.Refresh(true);
                 Wallpaper.Load();
@@ -386,8 +392,10 @@ namespace OpenDock
 
             refresh = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
             refresh.Tick += delegate { refresh.Stop(); RefreshWindows(); };
+            // Window events above keep the list current; the full re-scan is only a safety net.
+            int ticks = 0;
             var slow = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-            slow.Tick += delegate { RefreshWindows(); Taskbar.Enforce(); };
+            slow.Tick += delegate { if (++ticks % 5 == 0) RefreshWindows(); Taskbar.Enforce(); };
             slow.Start();
             RefreshWindows();
             LastForeground = Native.GetForegroundWindow();
@@ -426,9 +434,13 @@ namespace OpenDock
         }
 
         static SettingsWindow settingsWindow;
-        public static void OpenSettings()
+        public static void OpenSettings() { OpenSettings(null); }
+
+        public static void OpenSettings(string pane)
         {
-            if (settingsWindow == null || !settingsWindow.IsLoaded) settingsWindow = new SettingsWindow();
+            if (settingsWindow == null || !settingsWindow.IsLoaded) settingsWindow = new SettingsWindow(pane);
+            else if (pane != null) settingsWindow.Show(pane, true);
+            if (settingsWindow.WindowState == WindowState.Minimized) settingsWindow.WindowState = WindowState.Normal;
             settingsWindow.Show();
             settingsWindow.Activate();
         }

@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Windows.Automation;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Microsoft.Win32;
@@ -14,6 +16,37 @@ namespace OpenDock
         public string Name, Exe, Aumid, Target;   // Target: the app's Start-menu entry, when there is one
         public uint Pid;
         public ImageSource Icon;
+
+        // The app's own tray menu, the one right-clicking its icon on the Windows taskbar shows. Windows 11 draws the
+        // tray itself, so: open the tray's hidden-icons flyout, find the app's icon (UI Automation names it after
+        // its tooltip), focus it and press the menu key, which makes Windows ask the app for its menu. If the icon
+        // isn't found the flyout stays open, so you can right-click it yourself.
+        public void ShowTrayMenu()
+        {
+            Taskbar.OpenTrayFlyout();
+            string name = Name;
+            new Thread(() =>
+            {
+                try
+                {
+                    var cond = new PropertyCondition(AutomationElement.AutomationIdProperty, "NotifyItemIcon");
+                    for (int attempt = 0; attempt < 4; attempt++)
+                    {
+                        Thread.Sleep(attempt == 0 ? 700 : 400);   // the flyout opens ~250ms after Win+B
+                        foreach (AutomationElement e in AutomationElement.RootElement.FindAll(TreeScope.Descendants, cond))
+                        {
+                            string label = (e.Current.Name ?? "").Trim().Split('\n')[0].Trim();
+                            if (label.Length == 0 || !(label.StartsWith(name, StringComparison.OrdinalIgnoreCase) || name.StartsWith(label, StringComparison.OrdinalIgnoreCase))) continue;
+                            e.SetFocus();
+                            Thread.Sleep(120);
+                            Native.SendKeys(0x5D);   // VK_APPS, the keyboard's context-menu key
+                            return;
+                        }
+                    }
+                }
+                catch (Exception ex) { App.Log(ex); }
+            }) { IsBackground = true }.Start();
+        }
 
         // Bring up the app's window; single-instance tray apps (Discord, Steam, Spotify...) show themselves when relaunched.
         public void Open()

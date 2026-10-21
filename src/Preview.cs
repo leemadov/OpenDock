@@ -35,6 +35,7 @@ namespace OpenDock
             WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize; ShowInTaskbar = false; Topmost = true;
             ShowActivated = false; SizeToContent = SizeToContent.WidthAndHeight; FontFamily = Theme.Font;
             SetResourceReference(BackgroundProperty, "WinBg");
+            Glass.Attach(this, "WinGlass");
             Content = new Border { Padding = new Thickness(8), Child = row };
             SourceInitialized += delegate
             {
