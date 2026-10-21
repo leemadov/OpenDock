@@ -22,6 +22,10 @@ namespace OpenDock
         public static bool AutoHide = false;
         public static bool HideTaskbar = true;
         public static bool ShowMenuBar = true;
+        public static int MenuBarHeight = 30;     // menu bar height (DIP)
+        public static int DockSpacing = 0;        // extra space between dock icons (DIP)
+        public static int ColorProfile = 0;       // index into ColorProfiles.Presets, or -1 = Custom
+        public static int CustomSaturation = 100, CustomContrast = 100, CustomBrightness = 0, CustomWarmth = 0;   // percent
         public static bool Bounce = true;
         public static bool Indicators = true;
         public static bool IconTiles = true;
@@ -349,6 +353,7 @@ namespace OpenDock
         static void Start()
         {
             StartWatchdog(Dispatcher.CurrentDispatcher);
+            ColorProfiles.Apply();
             if (Settings.LaunchAtLogin) System.Threading.Tasks.Task.Run(() => Settings.LogonTask(true));   // upgrade older "Run"-only installs; keeps the path current
             // Hidden top-level window: receives hotkeys and the TaskbarCreated broadcast (Explorer restarts).
             msgWindow = new HwndSource(new HwndSourceParameters("OpenDockHost") { WindowStyle = unchecked((int)0x80000000), Width = 0, Height = 0 });
@@ -457,6 +462,7 @@ namespace OpenDock
             cleaned = true;
             try
             {
+                ColorProfiles.Stop();
                 if (Dock != null) Dock.Bar.Remove();
                 if (MenuBar != null) MenuBar.Bar.Remove();
                 if (Settings.HideTaskbar) Taskbar.Release(); else Taskbar.Restore();

@@ -51,7 +51,7 @@ Run it, and the dock and menu bar appear. Quit from the logo menu in the top-lef
 
 **Finder**: a file browser with traffic-light buttons, a sidebar (Applications, Desktop, Documents, Downloads, drives and so on), image and video thumbnails, back/forward, a filter box, drag and drop (including onto sidebar folders and Trash), copy/paste, Move to Trash, Get Info and New Folder.
 
-**Settings**: Light, Dark or follow-Windows appearance, icon size, magnification, auto-hide, the bounce animation, indicators, uniform icon tiles, hiding the Windows taskbar and launching at login.
+**System Settings**: a macOS-style window with a sidebar and a real page for each category, so nothing sends you to the Windows Settings app. It covers Wi-Fi, Bluetooth, Network, Notifications, Sound, Displays, Wallpaper, Battery, Lock Screen, Privacy, Users, Keyboard, Mouse and Printers, plus OpenDock's own pages: Desktop & Dock (icon size, magnification, spacing between apps, auto-hide, animations, indicators), Appearance (Light, Dark or follow Windows) and Control Center (menu bar height). **Displays** also has **color profiles** (Standard, Vivid, OLED, Studio, Cinema, Night, Grayscale, or your own mix) that tint everything on screen while OpenDock runs. The **Wallpaper** page keeps a library: photos you add stay until you remove them. **About This PC** (logo menu) copies macOS's About This Mac.
 
 ## Build and run
 
@@ -81,7 +81,10 @@ Plain WPF written in code, one file per feature, in `src/`:
 | `Preview.cs` | live window previews above a dock icon |
 | `MenuBar.cs` | menu bar |
 | `Launchpad.cs`, `Spotlight.cs` | full-screen app grid, search panel |
-| `Finder.cs` | Finder window, the shared mac window chrome, Settings |
+| `Finder.cs` | Finder window, the shared mac window chrome, the System Settings window |
+| `Panes.cs`, `SystemInfo.cs` | the System Settings pages and About This PC; the Windows APIs behind them (audio, Wi-Fi, power, displays...) |
+| `ColorProfiles.cs` | screen color profiles |
+| `Glass.cs`, `Outside.cs` | frosted glass for windows and menus; closing menus when you click outside |
 | `Shell.cs` | icons (via `IShellItemImageFactory`, or the 256px logo inside a Store app's package), installed apps, open windows, wallpaper |
 | `App.cs` | startup, settings, taskbar hiding, reserved screen space, hotkey, window events |
 | `Theme.cs`, `Art.cs` | light/dark palette and control templates, built-in vector icons |

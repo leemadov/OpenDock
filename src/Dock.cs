@@ -825,13 +825,15 @@ namespace OpenDock
             }
 
             // resting layout, eased so inserts / removals / reorders slide
-            double x = (W - items.Sum(i => BaseW(i))) / 2, k = 1 - Math.Exp(-dt * 18);
+            // Each icon is followed by the spacing setting, which grows and shrinks with the icon's presence.
+            double sp = Settings.DockSpacing, total = items.Sum(i => BaseW(i) + sp * i.P) - (items.Count > 0 ? sp * items[items.Count - 1].P : 0);
+            double x = (W - total) / 2, k = 1 - Math.Exp(-dt * 18);
             foreach (var it in items)
             {
                 double c = x + BaseW(it) / 2;
                 if (double.IsNaN(it.X) || Math.Abs(c - it.X) < 0.2) it.X = c;
                 else { it.X += (c - it.X) * k; busy = true; }
-                x += BaseW(it);
+                x += BaseW(it) + sp * it.P;
             }
 
             A = (magSlot / slot - 1) * mag;

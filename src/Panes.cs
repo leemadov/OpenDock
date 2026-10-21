@@ -312,6 +312,36 @@ namespace OpenDock
                     else InfoRow(g, "Brightness", "Adjust it on the display");
                 }
             });
+            var colors = new StackPanel();
+            body.Children.Add(colors);
+            ColorSection(colors);
+        }
+
+        // Colour profiles: presets plus your own Custom mix. Rebuilt in place so the page doesn't jump to the top.
+        void ColorSection(StackPanel host)
+        {
+            host.Children.Clear();
+            Action<int> pick = i => { Settings.ColorProfile = i; Settings.Save(); ColorProfiles.Apply(); ColorSection(host); };
+            host.Children.Add(Heading("Color Profile"));
+            var g = Group(host);
+            for (int i = 0; i < ColorProfiles.Presets.Length; i++)
+            {
+                int idx = i;
+                var p = ColorProfiles.Presets[i];
+                Choice(g, p.Name, p.About, Settings.ColorProfile == idx, () => pick(idx));
+            }
+            Choice(g, "Custom", "Your own mix", Settings.ColorProfile == ColorProfiles.CustomIndex, () => pick(ColorProfiles.CustomIndex));
+            if (Settings.ColorProfile == ColorProfiles.CustomIndex)
+            {
+                host.Children.Add(Heading("Custom"));
+                var c = Group(host);
+                Action changed = () => { Settings.Save(); ColorProfiles.Apply(); };
+                Level(c, "Saturation", 0, 200, Settings.CustomSaturation, "Gray", "Vivid", v => { Settings.CustomSaturation = (int)Math.Round(v); changed(); });
+                Level(c, "Contrast", 50, 150, Settings.CustomContrast, "Soft", "Punchy", v => { Settings.CustomContrast = (int)Math.Round(v); changed(); });
+                Level(c, "Brightness", -20, 20, Settings.CustomBrightness, "Darker", "Brighter", v => { Settings.CustomBrightness = (int)Math.Round(v); changed(); });
+                Level(c, "Warmth", -100, 100, Settings.CustomWarmth, "Cool", "Warm", v => { Settings.CustomWarmth = (int)Math.Round(v); changed(); });
+            }
+            Note(host, "Profiles change the colour of everything on screen while OpenDock runs. Quit OpenDock and your display goes back to normal.");
         }
 
         // ----- Wallpaper -----

@@ -31,6 +31,14 @@ namespace OpenDock
             Expect(false, "Aviassembly", "steam://rungameid/2660460", "steam://rungameid/2660460");
             Expect(false, "Calculator", "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", null);
             Expect(false, "Odd|id", "a|b<c", "a|b<c");
+
+            // Colour profiles: Standard must leave colours alone; Grayscale must turn pure red into a grey.
+            var std = ColorProfiles.Matrix(ColorProfiles.Presets[0]);
+            for (int i = 0; i < 25; i++) if (Math.Abs(std[i] - (i % 6 == 0 ? 1 : 0)) > 1e-6) throw new Exception("Standard colour profile isn't the identity at " + i);
+            var gray = ColorProfiles.Matrix(new ColorProfiles.Profile { Saturation = 0, Contrast = 1 });
+            if (Math.Abs(gray[0] - gray[1]) > 1e-6 || Math.Abs(gray[1] - gray[2]) > 1e-6) throw new Exception("Grayscale should give red the same value in every channel");
+            var oled = ColorProfiles.Matrix(ColorProfiles.Presets[2]);
+            if (oled[20] >= 0) throw new Exception("OLED should push blacks deeper (negative offset)");
             Console.WriteLine("all checks passed");
             return 0;
         }

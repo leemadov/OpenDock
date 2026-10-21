@@ -828,6 +828,7 @@ namespace OpenDock
         {
             var bar = Group(body);
             AddSwitch(bar, "Show menu bar", Settings.ShowMenuBar, v => { Settings.ShowMenuBar = v; App.MenuBar.SetShown(v); });
+            AddSlider(bar, "Menu bar height", 22, 40, Settings.MenuBarHeight, v => Settings.MenuBarHeight = (int)Math.Round(v));
             InfoRow(bar, "Background Apps", "Click ^ in the menu bar");
 
             body.Children.Add(Heading("More"));
@@ -842,6 +843,7 @@ namespace OpenDock
             body.Children.Add(Heading("Dock"));
             var dock = Group(body);
             AddSlider(dock, "Size", 36, 96, Settings.IconSize, v => Settings.IconSize = (int)v);
+            AddSlider(dock, "Spacing between apps", 0, 16, Settings.DockSpacing, v => Settings.DockSpacing = (int)Math.Round(v));
             AddSwitch(dock, "Magnification", Settings.Magnify, v => Settings.Magnify = v);
             AddSlider(dock, "Magnified size", 48, 160, Settings.MagnifySize, v => Settings.MagnifySize = (int)v);
             AddSwitch(dock, "Automatically hide and show the Dock", Settings.AutoHide, v => Settings.AutoHide = v);

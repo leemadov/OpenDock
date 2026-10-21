@@ -16,7 +16,7 @@ namespace OpenDock
     class MenuBarWindow : Window
     {
         public AppBar Bar;
-        public const double H = 30;
+        public static double H { get { return Settings.MenuBarHeight; } }
         readonly Menu menu = new Menu { Background = Brushes.Transparent, VerticalAlignment = VerticalAlignment.Stretch };
         readonly MenuItem appMenu = new MenuItem();
         readonly TextBlock appName = new TextBlock { FontWeight = FontWeights.Bold };
@@ -36,6 +36,7 @@ namespace OpenDock
             Title = "OpenDock Menu Bar";
             WindowStyle = WindowStyle.None; AllowsTransparency = true; ShowInTaskbar = false; Topmost = true;
             ResizeMode = ResizeMode.NoResize; ShowActivated = false; Height = H;
+            Settings.Changed += delegate { Height = H; Place(); };
             Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)); // invisible but clickable
             FontFamily = Theme.Font; FontSize = 13.5;
 
