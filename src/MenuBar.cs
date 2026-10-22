@@ -40,8 +40,20 @@ namespace OpenDock
             Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)); // invisible but clickable
             FontFamily = Theme.Font; FontSize = 13.5;
 
-            var logo = new Ellipse { Width = 15, Height = 15, StrokeThickness = 2.2, Margin = new Thickness(4, 0, 4, 0) };
-            logo.SetBinding(Shape.StrokeProperty, new System.Windows.Data.Binding("Foreground") { Source = this });
+            // The Windows 11 logo: four blue squares (2×2), each a sky-blue to deep-blue gradient with only its outer
+            // corner rounded, drawn as glass: slightly see-through, a bright rim along the top and a sheen.
+            var logo = new Grid { Width = 15, Height = 15, Margin = new Thickness(4, 0, 4, 0) };
+            var blue = new LinearGradientBrush(Color.FromArgb(235, 0x1F, 0xB2, 0xFF), Color.FromArgb(235, 0x3B, 0x7C, 0xF4), 0);
+            var rim = new LinearGradientBrush(Color.FromArgb(150, 255, 255, 255), Color.FromArgb(25, 255, 255, 255), 90);
+            const double outer = 1.6, inner = 0.4;
+            CornerRadius[] corners = { new CornerRadius(outer, inner, inner, inner), new CornerRadius(inner, outer, inner, inner), new CornerRadius(inner, inner, inner, outer), new CornerRadius(inner, inner, outer, inner) };
+            for (int i = 0; i < 4; i++)
+            {
+                var sheen = new Border { CornerRadius = corners[i], Margin = new Thickness(0, 0, 0, 3.5), IsHitTestVisible = false,
+                    Background = new LinearGradientBrush(Color.FromArgb(120, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), 90) };
+                logo.Children.Add(new Border { Width = 7, Height = 7, CornerRadius = corners[i], Background = blue, BorderBrush = rim, BorderThickness = new Thickness(0.6), Child = sheen,
+                    HorizontalAlignment = i % 2 == 0 ? HorizontalAlignment.Left : HorizontalAlignment.Right, VerticalAlignment = i < 2 ? VerticalAlignment.Top : VerticalAlignment.Bottom });
+            }
             var logoMenu = Bar0(logo);
             logoMenu.Items.Add(Cmd("About This PC", null, AboutWindow.ShowIt));
             logoMenu.Items.Add(new Separator());
