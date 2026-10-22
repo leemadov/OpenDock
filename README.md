@@ -1,7 +1,5 @@
 # OpenDock
 
-[![Latest release](https://img.shields.io/github/v/release/leemadov/OpenDock)](https://github.com/leemadov/OpenDock/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/leemadov/OpenDock/total)](https://github.com/leemadov/OpenDock/releases)
 [![License: MIT](https://img.shields.io/github/license/leemadov/OpenDock)](LICENSE)
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
 
@@ -9,9 +7,7 @@ A free, open-source macOS-style desktop for Windows 10/11, inspired by MyDockFin
 
 ![OpenDock demo: dock magnification, Launchpad and Spotlight](docs/demo.gif)
 
-### [⬇ Download OpenDock.exe](https://github.com/leemadov/OpenDock/releases/latest/download/OpenDock.exe)
-
-Run it, and the dock and menu bar appear. Quit from the logo menu in the top-left corner. The exe isn't code-signed yet, so if Windows SmartScreen warns you, click **More info → Run anyway**.
+Run `OpenDock.exe` and the dock and menu bar appear. Quit from the logo menu in the top-left corner. You can get the ready-built exe from this repository's Releases tab, or build it yourself with `build.bat` (see Build and run below).
 
 ## Why OpenDock?
 
