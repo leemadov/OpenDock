@@ -101,4 +101,4 @@ The genie minimize effect and per-app icon themes. Pull requests are welcome.
 
 ## License
 
-MIT. OpenDock isn't affiliated with Apple or MyDockFinder, and all of its icons are original vector drawings.
+MIT. OpenDock isn't affiliated with Microsoft, Apple or MyDockFinder. The Windows mark belongs to Microsoft; the other built-in icons are original vector drawings.
