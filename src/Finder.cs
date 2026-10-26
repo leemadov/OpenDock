@@ -109,7 +109,10 @@ namespace OpenDock
     class FinderWindow : MacWindow
     {
         const string AppsLocation = "::apps";
-        readonly ListBox side = new ListBox(), files = new ListBox();
+        readonly ListBox side = new ListBox();
+        readonly ListView files = new ListView();
+        readonly Button viewButton;
+        bool listView;
         readonly ObservableCollection<Entry> entries = new ObservableCollection<Entry>();
         readonly TextBlock title = Text("", 15, "Fg", FontWeights.Bold), status = Text("", 11, "FgDim");
         readonly TextBox filter = new TextBox();
@@ -130,7 +133,10 @@ namespace OpenDock
             Width = 1000; Height = 640; MinWidth = 560; MinHeight = 340;
             int n = App.Finders.Count;
             WindowStartupLocation = WindowStartupLocation.Manual;
-            Left = (SystemParameters.WorkArea.Width - Width) / 2 + n * 28; Top = Math.Max(SystemParameters.WorkArea.Top + 40, (SystemParameters.WorkArea.Height - Height) / 2 + n * 28);
+            var area = DisplayLayout.WorkArea;
+            Width = Math.Min(Width, area.Width); Height = Math.Min(Height, area.Height);
+            var origin = DisplayLayout.Clamp(new Point(area.Left + (area.Width - Width) / 2 + n * 28, area.Top + (area.Height - Height) / 2 + n * 28), new Size(Width, Height), area);
+            Left = origin.X; Top = origin.Y;
 
             Layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(210) });
             Layout.ColumnDefinitions.Add(new ColumnDefinition());
@@ -187,6 +193,10 @@ namespace OpenDock
             searchBox.Child = sg;
             WindowChrome.SetIsHitTestVisibleInChrome(searchBox, true);
             toolbar.Children.Add(searchBox);
+            viewButton = Tool("", () => SetView(!listView, true));
+            viewButton.ToolTip = "Switch between icons (Ctrl+1) and list (Ctrl+2)";
+            DockPanel.SetDock(viewButton, Dock.Right);
+            toolbar.Children.Add(viewButton);
             toolbar.Children.Add(title);
             var toolBg = new Border { Child = toolbar, BorderThickness = new Thickness(0, 0, 0, 1) };
             toolBg.SetResourceReference(Border.BackgroundProperty, "ToolBg");
@@ -194,12 +204,10 @@ namespace OpenDock
             main.Children.Add(toolBg);
 
             files.ItemsSource = entries;
-            files.ItemTemplate = (DataTemplate)Application.Current.Resources["FinderTile"];
             files.ItemContainerStyle = (Style)Application.Current.Resources["Bare"];
             files.SelectionMode = SelectionMode.Extended;
             files.Background = Brushes.Transparent; files.BorderThickness = new Thickness(0); files.Padding = new Thickness(10, 8, 10, 8);
-            files.ItemsPanel = new ItemsPanelTemplate(new FrameworkElementFactory(typeof(WrapPanel)));
-            ScrollViewer.SetHorizontalScrollBarVisibility(files, ScrollBarVisibility.Disabled);
+            SetView(Settings.FinderListView, false);
             files.AllowDrop = true;
             side.AllowDrop = true;
             side.DragOver += (s, e) =>
@@ -243,6 +251,8 @@ namespace OpenDock
                 else if (e.SystemKey == Key.Up) { Up(); e.Handled = true; }
                 else if (e.Key == Key.W && Keyboard.Modifiers == ModifierKeys.Control) Close();
                 else if (e.Key == Key.F5) Load();
+                else if (e.Key == Key.D1 && Keyboard.Modifiers == ModifierKeys.Control) { SetView(false, true); e.Handled = true; }
+                else if (e.Key == Key.D2 && Keyboard.Modifiers == ModifierKeys.Control) { SetView(true, true); e.Handled = true; }
             };
             reloadSoon = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
             reloadSoon.Tick += delegate { reloadSoon.Stop(); Load(); };
@@ -252,6 +262,50 @@ namespace OpenDock
 
             selectAfterLoad = select;
             Go(start, false);
+        }
+
+        void SetView(bool list, bool save)
+        {
+            var selection = files.SelectedItems.Cast<Entry>().ToList();
+            listView = list;
+            if (list)
+            {
+                var view = new GridView { ColumnHeaderContainerStyle = (Style)Application.Current.Resources["FinderColumn"] };
+                files.ItemContainerStyle = (Style)Application.Current.Resources["FinderListRow"];
+                var row = new FrameworkElementFactory(typeof(DockPanel));
+                var image = new FrameworkElementFactory(typeof(Image));
+                image.SetValue(Image.WidthProperty, 24.0); image.SetValue(Image.HeightProperty, 24.0);
+                image.SetValue(Image.MarginProperty, new Thickness(0, 0, 8, 0));
+                image.SetValue(DockPanel.DockProperty, Dock.Left);
+                image.SetBinding(Image.SourceProperty, new System.Windows.Data.Binding("Icon"));
+                var name = new FrameworkElementFactory(typeof(TextBlock));
+                name.SetValue(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center);
+                name.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
+                name.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("Name"));
+                row.AppendChild(image); row.AppendChild(name);
+                view.Columns.Add(new GridViewColumn { Header = "Name", Width = 240, CellTemplate = new DataTemplate { VisualTree = row } });
+                view.Columns.Add(new GridViewColumn { Header = "Size", Width = 90, DisplayMemberBinding = new System.Windows.Data.Binding("SizeText") });
+                view.Columns.Add(new GridViewColumn { Header = "Kind", Width = 120, DisplayMemberBinding = new System.Windows.Data.Binding("Kind") });
+                view.Columns.Add(new GridViewColumn { Header = "Date Modified", Width = 160, DisplayMemberBinding = new System.Windows.Data.Binding("Modified") });
+                files.ItemTemplate = null;
+                files.View = view;
+                files.ItemsPanel = new ItemsPanelTemplate(new FrameworkElementFactory(typeof(VirtualizingStackPanel)));
+                files.SetResourceReference(Control.ForegroundProperty, "Fg");
+                ScrollViewer.SetHorizontalScrollBarVisibility(files, ScrollBarVisibility.Auto);
+            }
+            else
+            {
+                files.View = null;
+                files.ItemContainerStyle = (Style)Application.Current.Resources["Bare"];
+                files.ItemTemplate = (DataTemplate)Application.Current.Resources["FinderTile"];
+                files.ItemsPanel = new ItemsPanelTemplate(new FrameworkElementFactory(typeof(WrapPanel)));
+                ScrollViewer.SetHorizontalScrollBarVisibility(files, ScrollBarVisibility.Disabled);
+            }
+            files.SelectedItems.Clear();
+            foreach (var entry in selection) files.SelectedItems.Add(entry);
+            if (selection.Count > 0) files.ScrollIntoView(selection[0]);
+            ((TextBlock)viewButton.Content).Text = list ? "\uE8A9" : "\uE8FD";
+            if (save) { Settings.FinderListView = list; Settings.Save(); }
         }
 
         Button Tool(string glyph, Action a)
@@ -317,7 +371,7 @@ namespace OpenDock
             Watch();
             if (path == AppsLocation)
             {
-                Fill(Apps.All.Select(a => { var app = a; return new Entry { Name = a.Name, Path = a.Exe, Open = () => Launcher.Open(app.Target), Sub = a.Icon }; }).ToList(), id);
+                Fill(Apps.All.Select(a => { var app = a; return new Entry { Name = a.Name, Path = a.Exe, Open = () => Launcher.Open(app.Target), Sub = a.Icon, Kind = "Application" }; }).ToList(), id);
                 return;
             }
             string dir = path;
@@ -329,7 +383,11 @@ namespace OpenDock
                     foreach (var fi in new DirectoryInfo(dir).EnumerateFileSystemInfos())
                     {
                         if ((fi.Attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0 || fi.Name.StartsWith(".")) continue;
-                        list.Add(new Entry { Name = fi.Name, Path = fi.FullName, IsDir = (fi.Attributes & FileAttributes.Directory) != 0 });
+                        bool isDir = (fi.Attributes & FileAttributes.Directory) != 0;
+                        var entry = new Entry { Name = fi.Name, Path = fi.FullName, IsDir = isDir,
+                            Kind = isDir ? "Folder" : System.IO.Path.GetExtension(fi.Name).TrimStart('.').ToUpperInvariant() + " file" };
+                        try { entry.Modified = fi.LastWriteTime.ToString("g"); if (!isDir) entry.SizeText = Size(((FileInfo)fi).Length); } catch { }
+                        list.Add(entry);
                     }
                 }
                 catch (Exception ex) { App.Log(ex.Message); }
@@ -427,6 +485,7 @@ namespace OpenDock
         {
             var sel = files.SelectedItem as Entry;
             if (e.Key == Key.Enter && sel != null) { foreach (var x in files.SelectedItems.Cast<Entry>().ToList()) Open(x); e.Handled = true; }
+            else if (e.Key == Key.F2 && Keyboard.Modifiers == ModifierKeys.None) { RenameSelection(); e.Handled = true; }
             else if (e.Key == Key.Delete && path != AppsLocation) { Launcher.Recycle(Selected()); e.Handled = true; }
             else if (e.Key == Key.C && Keyboard.Modifiers == ModifierKeys.Control) CopySelection();
             else if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control) Paste();
@@ -522,6 +581,7 @@ namespace OpenDock
                     add("Get Info", () => SHObjectProperties(new WindowInteropHelper(this).Handle, 2, en.Path, null), true);
                     add("Show in Explorer", () => Process.Start("explorer.exe", "/select,\"" + en.Path + "\""), true);
                     add("Copy", CopySelection, en.Open == null);
+                    if (en.Open == null) add("Rename…", RenameSelection, files.SelectedItems.Count == 1);
                     add("Copy Path", () => Clipboard.SetText(en.Path), true);
                     if (en.Open == null) { cm.Items.Add(new Separator()); add("Move to Trash", () => Launcher.Recycle(Selected()), true); }
                 }
@@ -542,6 +602,62 @@ namespace OpenDock
             }
             if (cm.Items.Count > 0) cm.IsOpen = true;
             e.Handled = true;
+        }
+
+        // Accept only a single Windows filename. Move never replaces an existing destination.
+        public static string RenamePath(string source, string name)
+        {
+            if (string.IsNullOrWhiteSpace(name) || name == "." || name == ".." || name.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0 || name != name.TrimEnd(' ', '.'))
+                throw new ArgumentException("Enter a filename without path separators, invalid characters, or a trailing dot or space.");
+            string stem = name.Split('.')[0].TrimEnd(' ').ToUpperInvariant();
+            if (new[] { "CON", "PRN", "AUX", "NUL", "CLOCK$" }.Contains(stem) ||
+                (stem.Length == 4 && (stem.StartsWith("COM") || stem.StartsWith("LPT")) && stem[3] >= '1' && stem[3] <= '9'))
+                throw new ArgumentException("That filename is reserved by Windows.");
+            string full = System.IO.Path.GetFullPath(source);
+            string parent = System.IO.Path.GetDirectoryName(full);
+            if (parent == null) throw new ArgumentException("A drive cannot be renamed here.");
+            string destination = System.IO.Path.Combine(parent, name);
+            if (full == destination) return full;
+            if (string.Equals(full, destination, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!MoveFileEx(full, destination, 0)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            }
+            else if (Directory.Exists(full)) Directory.Move(full, destination);
+            else File.Move(full, destination);
+            return destination;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool MoveFileEx(string source, string destination, uint flags);
+
+        void RenameSelection()
+        {
+            var en = files.SelectedItem as Entry;
+            if (files.SelectedItems.Count != 1 || en == null || en.Open != null || en.Path == null || path == AppsLocation) return;
+            var dialog = new MacWindow(false) { Title = "Rename", Owner = this, Width = 420, Height = 180,
+                ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+            var body = new StackPanel { Margin = new Thickness(20, 12, 20, 16) };
+            body.Children.Add(Text("Rename “" + en.Name + "”", 14, "Fg", FontWeights.SemiBold));
+            var input = new TextBox { Text = en.Name, Margin = new Thickness(0, 12, 0, 14), Padding = new Thickness(6), FontSize = 14 };
+            input.SetResourceReference(Control.BackgroundProperty, "Field"); input.SetResourceReference(Control.ForegroundProperty, "Fg");
+            body.Children.Add(input);
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            var cancel = new Button { Content = "Cancel", IsCancel = true, MinWidth = 80, Margin = new Thickness(0, 0, 8, 0) };
+            var rename = new Button { Content = "Rename", IsDefault = true, MinWidth = 80 };
+            buttons.Children.Add(cancel); buttons.Children.Add(rename); body.Children.Add(buttons);
+            dialog.Content = body; WindowChrome.SetIsHitTestVisibleInChrome(body, true);
+            rename.Click += delegate
+            {
+                try
+                {
+                    selectAfterLoad = RenamePath(en.Path, input.Text);
+                    reloadSoon.Stop(); Load();
+                    dialog.DialogResult = true;
+                }
+                catch (Exception ex) { MessageBox.Show(dialog, ex.Message, "Rename", MessageBoxButton.OK, MessageBoxImage.Error); input.Focus(); }
+            };
+            dialog.Loaded += delegate { input.Focus(); input.Select(0, en.IsDir ? input.Text.Length : System.IO.Path.GetFileNameWithoutExtension(input.Text).Length); };
+            dialog.ShowDialog();
         }
 
         void NewFolder()
@@ -842,6 +958,16 @@ namespace OpenDock
         {
             body.Children.Add(Heading("Dock"));
             var dock = Group(body);
+            var positions = new ComboBox { MinWidth = 180, ItemsSource = new[] { "Bottom", "Left", "Right" }, SelectedIndex = Math.Max(0, Math.Min(2, Settings.DockPosition)) };
+            AddChoice(dock, "Position on screen", positions, () => Settings.DockPosition = positions.SelectedIndex);
+            var screens = Sys.Screens();
+            var display = new ComboBox { MinWidth = 180 };
+            display.Items.Add("Follow main display");
+            foreach (var screen in screens) display.Items.Add(screen.Device + (screen.Primary ? " (Main)" : ""));
+            int selected = screens.FindIndex(s => s.Device == Settings.DisplayDevice);
+            display.SelectedIndex = selected < 0 ? 0 : selected + 1;
+            AddChoice(dock, "Dock and menu bar display", display, () => Settings.DisplayDevice = display.SelectedIndex == 0 ? "" : screens[display.SelectedIndex - 1].Device);
+            AddSwitch(dock, "Live glass (hides windows from screen capture)", Settings.LiveGlass, v => Settings.LiveGlass = v);
             AddSlider(dock, "Size", 36, 96, Settings.IconSize, v => Settings.IconSize = (int)v);
             AddSlider(dock, "Spacing between apps", 0, 16, Settings.DockSpacing, v => Settings.DockSpacing = (int)Math.Round(v));
             AddSwitch(dock, "Magnification", Settings.Magnify, v => Settings.Magnify = v);
@@ -915,6 +1041,15 @@ namespace OpenDock
             DockPanel.SetDock(v, Dock.Right);
             d.Children.Add(v); d.Children.Add(Text(label, 13, "Fg"));
             Row(p, d);
+        }
+
+        void AddChoice(Panel p, string label, ComboBox choice, Action set)
+        {
+            var row = new DockPanel();
+            DockPanel.SetDock(choice, Dock.Right);
+            row.Children.Add(choice); row.Children.Add(Text(label, 13, "Fg"));
+            choice.SelectionChanged += delegate { set(); apply.Stop(); apply.Start(); };
+            Row(p, row);
         }
 
         void AddSwitch(Panel p, string label, bool value, Action<bool> set)

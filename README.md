@@ -29,7 +29,9 @@ Run `OpenDock.exe` and the dock and menu bar appear. Quit from the logo menu in 
 - Right-click an icon to see its open windows plus Keep in Dock, Show in Finder, Hide and Quit
 - Downloads stack: a grid of your recent downloads with thumbnails
 - Trash shows when it's empty or full and can be emptied from the dock
-- **Live frosted glass**: whatever is behind the dock (your wallpaper, or a window you drag past it) shows through, lightly blurred. Space is reserved so maximized windows stop above the dock. OpenDock keeps itself out of screen capture so it can read what is behind it, and redraws only when that changes. One side effect: screenshots and screen recordings show what is behind the dock instead of the dock
+- **Capture-safe frosted glass** by default: a blurred wallpaper backdrop keeps the dock, Finder, Settings and menus visible in screenshots and recordings. Optional **Live glass** in Desktop & Dock samples windows behind them, but hides the sampling windows from capture; its switch spells out that tradeoff
+- **Bottom, left or right** placement, with upright icons, inward magnification and bouncing, edge auto-hide, drag to reorder/remove, menus, previews and Downloads. Crowded docks shrink to fit the screen, including magnification
+- **Display selection** in Desktop & Dock: keep one dock and menu bar on any connected display, or follow the main display. Launchpad, Spotlight and new Finder windows use that display too. Disconnected displays fall back to the main display, and reserved space follows the chosen edge
 - Auto-hide with a slide animation
 
 **Menu bar**
@@ -45,7 +47,7 @@ Run `OpenDock.exe` and the dock and menu bar appear. Quit from the logo menu in 
 
 **Spotlight** (`Alt+Space`): search apps, files (through the Windows Search index) and math (`12*7+3`), or fall back to a web search. `Ctrl+Enter` shows the selected result in Finder.
 
-**Finder**: a file browser with traffic-light buttons, a sidebar (Applications, Desktop, Documents, Downloads, drives and so on), image and video thumbnails, back/forward, a filter box, drag and drop (including onto sidebar folders and Trash), copy/paste, Move to Trash, Get Info and New Folder.
+**Finder**: a file browser with traffic-light buttons, a sidebar (Applications, Desktop, Documents, Downloads, drives and so on), image and video thumbnails, back/forward, a filter box, drag and drop (including onto sidebar folders and Trash), copy/paste, Move to Trash, Get Info and New Folder. Toggle icons/list with the toolbar button or `Ctrl+1` / `Ctrl+2`; list view shows name, size, kind and modification date. Rename a selected file or folder with `F2` or **Rename…** in its context menu. Renaming validates Windows filenames and never overwrites an existing destination.
 
 **System Settings**: a macOS-style window with a sidebar and a real page for each category, so nothing sends you to the Windows Settings app. It covers Wi-Fi, Bluetooth, Network, Notifications, Sound, Displays, Wallpaper, Battery, Lock Screen, Privacy, Users, Keyboard, Mouse and Printers, plus OpenDock's own pages: Desktop & Dock (icon size, magnification, spacing between apps, auto-hide, animations, indicators), Appearance (Light, Dark or follow Windows) and Control Center (menu bar height). **Displays** also has **color profiles** (Standard, Vivid, OLED, Studio, Cinema, Night, Grayscale, or your own mix) that tint everything on screen while OpenDock runs. The **Wallpaper** page keeps a library: photos you add stay until you remove them. **About This PC** (logo menu) copies macOS's About This Mac.
 
@@ -56,7 +58,7 @@ build.bat
 bin\OpenDock.exe
 ```
 
-`build.bat` uses the C# compiler that ships with Windows (.NET Framework 4.8), so there's nothing to install. `build.bat check` runs the self-checks in `tests/`.
+`build.bat` uses the C# compiler that ships with Windows (.NET Framework 4.8), so there's nothing to install. `build.bat check` runs the self-checks in `tests/`. `build.bat check --ui` additionally runs opt-in desktop integration checks and writes UI snapshots to `bin/qa/`; `build.bat check --preview` keeps the isolated test windows open for inspection. See [Testing](docs/TESTING.md) for coverage and hardware checks.
 
 - Quit from the menu bar logo menu with **Quit OpenDock**, or run `OpenDock.exe --quit`.
 - Settings live in `%APPDATA%\OpenDock\settings.txt` and errors are written to `error.log` in the same folder.
@@ -74,7 +76,8 @@ Plain WPF written in code, one file per feature, in `src/`:
 | File | What |
 |---|---|
 | `Dock.cs` | dock, drag ghost and poof, Downloads stack |
-| `Preview.cs` | live window previews above a dock icon |
+| `Preview.cs` | live window previews beside a dock icon |
+| `DisplayLayout.cs` | selected display, coordinate conversion, edge placement and popup bounds |
 | `MenuBar.cs` | menu bar |
 | `Launchpad.cs`, `Spotlight.cs` | full-screen app grid, search panel |
 | `Finder.cs` | Finder window, the shared mac window chrome, the System Settings window |
@@ -86,11 +89,13 @@ Plain WPF written in code, one file per feature, in `src/`:
 | `Theme.cs`, `Art.cs` | light/dark palette and control templates, built-in vector icons |
 | `Native.cs` | Win32 interop |
 
-The blur doesn't use undocumented DWM APIs. The dock is excluded from screen capture (`SetWindowDisplayAffinity`), captures the strip behind itself at quarter size about 12 times a second and box-blurs it, only when the picture changed. On Windows older than 10 version 2004 it falls back to a blurred copy of the wallpaper. Launchpad, Spotlight and Stacks blur a snapshot of the screen taken as they open. The animation loop only runs while something is moving, so apart from the glass check the app does no work when idle.
+The blur doesn't use undocumented DWM APIs. Wallpaper frost is the default and does not exclude windows from capture or run a capture loop. The optional live mode uses `SetWindowDisplayAffinity` to avoid capturing itself, samples at quarter size about 12 times a second, and box-blurs only when the picture changes. If capture exclusion is unavailable it uses wallpaper frost. Launchpad, Spotlight and Stacks blur a snapshot of the screen taken as they open. The animation loop only runs while something is moving.
+
+Display geometry uses the app's existing system-DPI WPF coordinate space, including negative screen origins. One dock/menu bar pair can be placed on a selected monitor; this does not create a separate pair on every monitor or switch the app to per-monitor DPI awareness.
 
 ## Not done yet
 
-The genie minimize effect, window previews on hover, multiple monitors, a dock on the left or right edge, list view and rename in Finder, and per-app icon themes. Pull requests are welcome.
+The genie minimize effect and per-app icon themes. Pull requests are welcome.
 
 ## License
 

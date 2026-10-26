@@ -22,6 +22,9 @@ namespace OpenDock
     {
         public string Name { get; set; }
         public string Sub { get; set; }
+        public string SizeText { get; set; }
+        public string Kind { get; set; }
+        public string Modified { get; set; }
         public string Path;
         public bool IsDir;
         public Action Open;
@@ -94,8 +97,9 @@ namespace OpenDock
         public void Open()
         {
             closing = false;
-            Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
-            Top = SystemParameters.PrimaryScreenHeight * 0.2 - Pad;
+            var bounds = DisplayLayout.Bounds;
+            var at = DisplayLayout.Clamp(new Point(bounds.Left + (bounds.Width - Width) / 2, bounds.Top + bounds.Height * 0.2 - Pad), new Size(Width, MaxH + Pad * 2), bounds);
+            Left = at.X; Top = at.Y;
             // Frosted glass: blur what's behind the panel right now.
             int px = (int)Math.Round((Left + Pad) * App.Dpi), py = (int)Math.Round((Top + Pad) * App.Dpi);
             var shot = Icons.CaptureScreen(px, py, (int)Math.Round(PanelW * App.Dpi), (int)Math.Round(MaxH * App.Dpi));

@@ -61,17 +61,20 @@ namespace OpenDock
         }
 
         // anchor: screen point (DIP) at the top centre of the dock icon
-        public void ShowFor(DockItem item, List<IntPtr> windows, ImageSource icon, Point anchor)
+        public void ShowFor(DockItem item, List<IntPtr> windows, ImageSource icon, Point anchor, int position)
         {
             hideSoon.Stop();
             Unregister();
             row.Children.Clear();
             Item = item;
-            foreach (var w in windows.Take(8)) row.Children.Add(Card(w, icon));
+            var area = DisplayLayout.WorkArea;
+            row.Orientation = position == 0 ? Orientation.Horizontal : Orientation.Vertical;
+            int capacity = position == 0 ? (int)((area.Width - 16) / CardW) : (int)((area.Height - 16) / (ThumbH + 46));
+            foreach (var w in windows.Take(Math.Max(1, Math.Min(8, capacity)))) row.Children.Add(Card(w, icon));
             if (!IsVisible) Show();
             UpdateLayout();
-            Left = Math.Max(4, Math.Min(SystemParameters.PrimaryScreenWidth - ActualWidth - 4, anchor.X - ActualWidth / 2));
-            Top = anchor.Y - ActualHeight - 10;
+            var at = DisplayLayout.Beside(anchor, new Size(ActualWidth, ActualHeight), position, area);
+            Left = at.X; Top = at.Y;
             UpdateLayout();
             Native.SetWindowPos(hwnd, Native.HWND_TOPMOST, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
             foreach (Border card in row.Children) Attach(card);

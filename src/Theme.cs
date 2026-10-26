@@ -300,6 +300,32 @@ namespace OpenDock
     </Setter>
   </Style>
 
+  <Style x:Key='FinderListRow' TargetType='ListViewItem'>
+    <Setter Property='Foreground' Value='{DynamicResource Fg}'/>
+    <Setter Property='AutomationProperties.Name' Value='{Binding Name}'/>
+    <Setter Property='FocusVisualStyle' Value='{x:Null}'/>
+    <Setter Property='HorizontalContentAlignment' Value='Stretch'/>
+    <Setter Property='Template'><Setter.Value>
+      <ControlTemplate TargetType='ListViewItem'>
+        <Border x:Name='Row' Padding='4,3' CornerRadius='4' Background='Transparent'>
+          <GridViewRowPresenter Content='{TemplateBinding Content}' Columns='{Binding View.Columns, RelativeSource={RelativeSource AncestorType=ListView}}'/>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property='IsMouseOver' Value='True'><Setter TargetName='Row' Property='Background' Value='{DynamicResource Hover}'/></Trigger>
+          <Trigger Property='IsSelected' Value='True'><Setter TargetName='Row' Property='Background' Value='{DynamicResource SelBg}'/></Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value></Setter>
+  </Style>
+  <Style x:Key='FinderColumn' TargetType='GridViewColumnHeader'>
+    <Setter Property='Foreground' Value='{DynamicResource FgDim}'/>
+    <Setter Property='Background' Value='{DynamicResource ToolBg}'/>
+    <Setter Property='BorderBrush' Value='{DynamicResource MenuSep}'/>
+    <Setter Property='BorderThickness' Value='0,0,1,1'/>
+    <Setter Property='Padding' Value='6,5'/>
+    <Setter Property='HorizontalContentAlignment' Value='Left'/>
+  </Style>
+
   <DataTemplate x:Key='FinderTile'>
     <StackPanel Width='104' Margin='2,6' Background='Transparent'>
       <Border x:Name='IconBd' Width='80' Height='80' CornerRadius='8' Padding='6' HorizontalAlignment='Center'>

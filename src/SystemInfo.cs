@@ -448,7 +448,7 @@ namespace OpenDock
 
         // ---------- Displays (DDC/CI for brightness) ----------
 
-        public class Display { public IntPtr Monitor; public string Device; public int Width, Height, Hz, Brightness = -1; public bool Primary; }
+        public class Display { public IntPtr Monitor; public string Device; public int Width, Height, Hz, Brightness = -1; public bool Primary; public Native.RECT Bounds, Work; }
 
         delegate bool MonitorProc(IntPtr m, IntPtr dc, IntPtr rect, IntPtr data);
         [DllImport("user32.dll")] static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorProc cb, IntPtr data);
@@ -474,21 +474,28 @@ namespace OpenDock
         [DllImport("dxva2.dll")] static extern bool GetMonitorBrightness(IntPtr h, out uint min, out uint cur, out uint max);
         [DllImport("dxva2.dll")] static extern bool SetMonitorBrightness(IntPtr h, uint v);
 
-        public static List<Display> Displays()
+        public static List<Display> Screens()
         {
             var list = new List<Display>();
             EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (m, dc, r, data) =>
             {
                 var mi = new MONITORINFOEX { cbSize = Marshal.SizeOf(typeof(MONITORINFOEX)) };
-                GetMonitorInfo(m, ref mi);
+                if (!GetMonitorInfo(m, ref mi)) return true;
                 var dm = new DEVMODE { dmSize = (short)Marshal.SizeOf(typeof(DEVMODE)) };
                 EnumDisplaySettings(mi.szDevice, -1 /* current */, ref dm);
-                var d = new Display { Monitor = m, Device = mi.szDevice, Width = dm.dmPelsWidth, Height = dm.dmPelsHeight, Hz = dm.dmDisplayFrequency, Primary = (mi.dwFlags & 1) != 0 };
-                Physical(m, h => { uint min, cur, max; if (GetMonitorBrightness(h, out min, out cur, out max) && max > min) d.Brightness = (int)((cur - min) * 100 / (max - min)); });
+                var d = new Display { Monitor = m, Device = mi.szDevice, Width = dm.dmPelsWidth, Height = dm.dmPelsHeight, Hz = dm.dmDisplayFrequency, Primary = (mi.dwFlags & 1) != 0, Bounds = mi.rcMonitor, Work = mi.rcWork };
                 list.Add(d);
                 return true;
             }, IntPtr.Zero);
             return list.OrderByDescending(d => d.Primary).ToList();
+        }
+
+        public static List<Display> Displays()
+        {
+            var list = Screens();
+            foreach (var d in list)
+                Physical(d.Monitor, h => { uint min, cur, max; if (GetMonitorBrightness(h, out min, out cur, out max) && max > min) d.Brightness = (int)((cur - min) * 100 / (max - min)); });
+            return list;
         }
 
         public static void SetBrightness(IntPtr monitor, int percent)

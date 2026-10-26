@@ -16,6 +16,10 @@ namespace OpenDock
 {
     static class Settings
     {
+        public static int DockPosition = 0;      // 0 = bottom, 1 = left, 2 = right
+        public static string DisplayDevice = ""; // empty = follow primary, otherwise Windows' display device name
+        public static bool LiveGlass = false;    // capture exclusion is opt-in; wallpaper frost is capture-safe
+        public static bool FinderListView = false;
         public static int IconSize = 60;          // dock slot size (DIP)
         public static int MagnifySize = 100;
         public static bool Magnify = true;
@@ -46,7 +50,7 @@ namespace OpenDock
 
         static IEnumerable<FieldInfo> Fields()
         {
-            return typeof(Settings).GetFields(BindingFlags.Public | BindingFlags.Static).Where(f => f.FieldType == typeof(int) || f.FieldType == typeof(bool));
+            return typeof(Settings).GetFields(BindingFlags.Public | BindingFlags.Static).Where(f => f.FieldType == typeof(int) || f.FieldType == typeof(bool) || f.FieldType == typeof(string));
         }
 
         public static void Load()
@@ -125,7 +129,7 @@ namespace OpenDock
     // Reserves screen space like the Windows taskbar does, so maximized windows stop at the menu bar / dock.
     class AppBar
     {
-        readonly IntPtr hwnd; readonly uint edge, msg; bool registered; int thickness;
+        readonly IntPtr hwnd; readonly uint msg; uint edge; bool registered; int thickness; bool placing;
         public Action<bool> FullScreen;
         public Action<Native.RECT> Placed;
 
@@ -141,16 +145,26 @@ namespace OpenDock
 
         public void Reserve(int px)
         {
-            thickness = px;
-            var d = Data();
-            if (!registered) { Native.SHAppBarMessage(Native.ABM_NEW, ref d); registered = true; }
-            int sw = (int)Math.Round(SystemParameters.PrimaryScreenWidth * App.Dpi), sh = (int)Math.Round(SystemParameters.PrimaryScreenHeight * App.Dpi);
-            d.rc = new Native.RECT { Left = 0, Right = sw, Top = edge == Native.ABE_TOP ? 0 : sh - px, Bottom = edge == Native.ABE_TOP ? px : sh };
-            Native.SHAppBarMessage(Native.ABM_QUERYPOS, ref d);
-            if (edge == Native.ABE_TOP) d.rc.Bottom = d.rc.Top + px; else d.rc.Top = d.rc.Bottom - px;
-            Native.SHAppBarMessage(Native.ABM_SETPOS, ref d);
-            if (Placed != null) Placed(d.rc);
+            if (placing) return;
+            placing = true;
+            try
+            {
+                thickness = px;
+                var d = Data();
+                if (!registered) { Native.SHAppBarMessage(Native.ABM_NEW, ref d); registered = true; }
+                d.rc = DisplayLayout.Selected.Bounds;
+                Native.SHAppBarMessage(Native.ABM_QUERYPOS, ref d);
+                if (edge == Native.ABE_TOP) d.rc.Bottom = d.rc.Top + px;
+                else if (edge == Native.ABE_BOTTOM) d.rc.Top = d.rc.Bottom - px;
+                else if (edge == Native.ABE_LEFT) d.rc.Right = d.rc.Left + px;
+                else d.rc.Left = d.rc.Right - px;
+                Native.SHAppBarMessage(Native.ABM_SETPOS, ref d);
+                if (Placed != null) Placed(d.rc);
+            }
+            finally { placing = false; }
         }
+
+        public void SetEdge(uint value) { if (edge != value) { Remove(); edge = value; } }
 
         public void Remove()
         {
@@ -316,7 +330,17 @@ namespace OpenDock
                 Apps.Refresh(true);
                 Wallpaper.Load();
                 SystemEvents.UserPreferenceChanged += (s, e) => { if (e.Category == UserPreferenceCategory.Desktop) Wallpaper.Load(); };
-                SystemEvents.DisplaySettingsChanged += delegate { Wallpaper.Load(); if (Dock != null) Dock.Place(); if (MenuBar != null) MenuBar.Place(); };
+                SystemEvents.DisplaySettingsChanged += delegate
+                {
+                    app.Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        Wallpaper.Load();
+                        if (MenuBar != null) MenuBar.Place();
+                        if (Dock != null) Dock.Place();
+                        if (Launchpad != null && Launchpad.IsOpen) Launchpad.Close2(null);
+                        if (Spotlight != null && Spotlight.IsVisible) Spotlight.Close2();
+                    }));
+                };
 
                 app.Startup += delegate { Start(); };
                 app.Run();

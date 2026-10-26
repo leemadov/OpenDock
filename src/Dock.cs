@@ -88,13 +88,13 @@ namespace OpenDock
         readonly RectangleGeometry wallClip = new RectangleGeometry();
         readonly Border bg = new Border { BorderThickness = new Thickness(1) }, sheen = new Border { IsHitTestVisible = false }, outline = new Border { BorderThickness = new Thickness(1), IsHitTestVisible = false };
         readonly Border label = new Border { CornerRadius = new CornerRadius(7), Padding = new Thickness(10, 3, 10, 4), Opacity = 0, IsHitTestVisible = false };
-        readonly TextBlock labelText = new TextBlock { FontSize = 13, FontFamily = Theme.Font };
+        readonly TextBlock labelText = new TextBlock { FontSize = 13, FontFamily = Theme.Font, MaxWidth = 180, TextTrimming = TextTrimming.CharacterEllipsis };
         readonly Rectangle edge = new Rectangle { Fill = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)), Height = 2 };
         readonly List<DockItem> items = new List<DockItem>();
         readonly Stopwatch clock = Stopwatch.StartNew();
         readonly GhostWindow ghost = new GhostWindow();
         const double Gap = 6;   // space between dock and screen edge
-        double slot, magSlot, bgH, H, W, bottomDip, last, dt, mag, hide, labelA, hoverLeftAt, bgL, bgR, bgTop;
+        double slot, magSlot, bgH, H, W, last, dt, mag, hide, labelA, hoverLeftAt, bgL, bgR, bgTop;
         bool looping, hovering, menuOpen, dropActive, dragOut, trashFull, tiles;
         DockItem press, drag, labelItem, dropHot, trash;
         Point pressAt;
@@ -104,7 +104,9 @@ namespace OpenDock
         DockItem hoverItem, lastHot;
         double hoverSince;
         DispatcherTimer grace;
-        // Live glass: the dock is left out of screen capture, so a capture of its area shows what is behind it.
+        int position;
+        Rect monitor, reserved;
+        // Live sampling remains optional; the default wallpaper frost is visible in recordings.
         bool live;
         long glassSum;
         double wallX, wallY;   // where the backdrop image sits on the canvas
@@ -141,10 +143,8 @@ namespace OpenDock
             {
                 var hwnd = new WindowInteropHelper(this).Handle;
                 Native.MakeToolWindow(hwnd, true);
-                live = Glass.Exclude(hwnd);
-                if (live) glassTimer.Start();
                 Bar = new AppBar(this, Native.ABE_BOTTOM);
-                Bar.Placed = rc => { bottomDip = rc.Bottom / App.Dpi; Position(); };
+                Bar.Placed = rc => { reserved = DisplayLayout.Dip(rc); Position(); };
                 Bar.FullScreen = OnFullScreen;
                 Place();
             };
@@ -171,7 +171,7 @@ namespace OpenDock
                 }
             };
             Apps.Changed += OnAppsLoaded;
-            Wallpaper.Changed += delegate { if (!live) wall.Source = Wallpaper.Blurred; };
+            Wallpaper.Changed += delegate { if (!live) { wall.Source = Wallpaper.Blurred; StartLoop(); } };
             glassTimer.Tick += delegate { RefreshGlass(); };
             wall.Source = Wallpaper.Blurred;
             Settings.Changed += delegate
@@ -190,16 +190,25 @@ namespace OpenDock
         public void Place()
         {
             if (Bar == null) return;
-            slot = Settings.IconSize;
+            position = Settings.DockPosition >= 0 && Settings.DockPosition <= 2 ? Settings.DockPosition : 0;
+            monitor = DisplayLayout.Bounds;
+            preview.Close2();
+            if (stack != null && stack.IsVisible) stack.Dismiss();
+            if (openMenu != null) openMenu.IsOpen = false;
+            live = Glass.Exclude(new WindowInteropHelper(this).Handle);
+            glassSum = 0;
+            if (live) glassTimer.Start(); else { glassTimer.Stop(); wall.Source = Wallpaper.Blurred; }
+            slot = Math.Max(36, Math.Min(96, Settings.IconSize));
             magSlot = Settings.Magnify ? Math.Max(Settings.MagnifySize, slot) : slot;
             bgH = Math.Round(slot + 12);
-            H = Math.Ceiling(Math.Max(magSlot, slot * 1.65) + 72);
-            W = SystemParameters.PrimaryScreenWidth;
+            H = Math.Ceiling(Math.Max(magSlot, slot * 1.65) + (position == 0 ? 72 : 220));
+            W = position == 0 ? monitor.Width : monitor.Height;
+            Bar.SetEdge(position == 1 ? Native.ABE_LEFT : position == 2 ? Native.ABE_RIGHT : Native.ABE_BOTTOM);
             foreach (var it in items) SizeRoot(it);
             if (Settings.AutoHide)
             {
                 Bar.Remove();
-                bottomDip = SystemParameters.PrimaryScreenHeight;
+                reserved = monitor;
                 Position();
             }
             else Bar.Reserve((int)Math.Round((bgH + Gap + 4) * App.Dpi)); // calls Position via Placed
@@ -207,15 +216,34 @@ namespace OpenDock
 
         void Position()
         {
-            Width = W; Height = H; Left = 0; Top = bottomDip - H;
+            W = position == 0 ? reserved.Width : reserved.Height;
+            Width = position == 0 ? W : H; Height = position == 0 ? H : W;
+            Left = position == 1 ? reserved.Left : position == 2 ? reserved.Right - H : reserved.Left;
+            Top = position == 0 ? reserved.Bottom - H : reserved.Top;
             if (!live)
             {
-                wall.Width = SystemParameters.PrimaryScreenWidth; wall.Height = SystemParameters.PrimaryScreenHeight;
-                wallX = 0; wallY = -Top;
+                wall.Width = monitor.Width; wall.Height = monitor.Height;
+                wallX = monitor.Left - Left; wallY = monitor.Top - Top;
                 Canvas.SetLeft(wall, wallX); Canvas.SetTop(wall, wallY);
             }
-            edge.Width = W; Canvas.SetTop(edge, H - edge.Height);
+            SetRect(edge, new Rect(0, H - 2, W, 2));
+            foreach (var it in items)
+            {
+                it.X = double.NaN;
+                it.Root.RenderTransformOrigin = position == 1 ? new Point(0, 0.5) : position == 2 ? new Point(1, 0.5) : new Point(0.5, 1);
+            }
             StartLoop();
+        }
+
+        Point ToWindow(Point p) { return DisplayLayout.ToWindow(p, position, W, H); }
+        Point Logical(Point p) { return DisplayLayout.FromWindow(p, position, W, H); }
+        Point ScreenPoint(Point p) { var at = ToWindow(p); return new Point(Left + at.X, Top + at.Y); }
+        Rect Physical(Rect r) { return new Rect(ToWindow(r.TopLeft), ToWindow(r.BottomRight)); }
+        void SetRect(FrameworkElement element, Rect r)
+        {
+            r = Physical(r);
+            Canvas.SetLeft(element, r.Left); Canvas.SetTop(element, r.Top);
+            element.Width = r.Width; element.Height = r.Height;
         }
 
         // Frosts whatever is behind the dock: a 1/4-size capture around the pane (with room for it to widen while
@@ -224,12 +252,13 @@ namespace OpenDock
         {
             if (!IsVisible || hide > 0.99 || bgR <= bgL) return;
             double d = App.Dpi, x0 = Math.Max(0, Math.Floor(bgL - magSlot)), x1 = Math.Min(W, Math.Ceiling(bgR + magSlot)), y0 = Math.Max(0, Math.Floor(bgTop - 8));
-            var shot = Glass.Behind((int)Math.Round((Left + x0) * d), (int)Math.Round((Top + y0) * d), (int)Math.Round((x1 - x0) * d), (int)Math.Round((H - y0) * d), 1, ref glassSum);
+            var area = Physical(new Rect(x0, y0, Math.Max(1, x1 - x0), Math.Max(1, H - y0)));
+            var shot = Glass.Behind((int)Math.Round((Left + area.Left) * d), (int)Math.Round((Top + area.Top) * d), (int)Math.Round(area.Width * d), (int)Math.Round(area.Height * d), 1, ref glassSum);
             // Nothing changed: check less and less often (down to once a second). A change brings back ~12 checks a second.
             if (shot == null) { glassTimer.Interval = TimeSpan.FromMilliseconds(Math.Min(1000, glassTimer.Interval.TotalMilliseconds * 1.5)); return; }
             glassTimer.Interval = TimeSpan.FromMilliseconds(80);
             wall.Source = shot;
-            wallX = x0; wallY = y0; wall.Width = x1 - x0; wall.Height = H - y0;
+            wallX = area.Left; wallY = area.Top; wall.Width = area.Width; wall.Height = area.Height;
             Canvas.SetLeft(wall, wallX); Canvas.SetTop(wall, wallY);
             StartLoop();   // re-clip to the pane at the new spot
         }
@@ -240,6 +269,12 @@ namespace OpenDock
             uint pid; Native.GetWindowThreadProcessId(fg, out pid);
             string cls = Native.ClassName(fg);
             if (fs && (pid == (uint)Process.GetCurrentProcess().Id || cls == "Progman" || cls == "WorkerW")) return;
+            Native.RECT rc;
+            if (fs && Native.GetWindowRect(fg, out rc))
+            {
+                var bounds = DisplayLayout.Selected.Bounds;
+                if (rc.Left > bounds.Left || rc.Top > bounds.Top || rc.Right < bounds.Right || rc.Bottom < bounds.Bottom) return;
+            }
             Visibility = fs ? Visibility.Hidden : Visibility.Visible;
             if (App.MenuBar != null && Settings.ShowMenuBar) App.MenuBar.Visibility = Visibility;
         }
@@ -284,11 +319,11 @@ namespace OpenDock
                 it.Dot = new Ellipse { Width = 4, Height = 4, Opacity = 0, IsHitTestVisible = false };
                 it.Dot.SetResourceReference(Shape.FillProperty, "Fg");
                 layer.Children.Add(it.Dot);
-                it.Root.MouseLeftButtonDown += (s, e) => { press = it; pressAt = e.GetPosition(this); it.Root.CaptureMouse(); it.Img.Opacity = 0.65; e.Handled = true; };
+                it.Root.MouseLeftButtonDown += (s, e) => { press = it; pressAt = Logical(e.GetPosition(this)); it.Root.CaptureMouse(); it.Img.Opacity = 0.65; e.Handled = true; };
                 it.Root.MouseMove += (s, e) =>
                 {
                     if (press != it) return;
-                    var p = e.GetPosition(this);
+                    var p = Logical(e.GetPosition(this));
                     if (drag == null && (p - pressAt).Length > 6 && it.Kind == "app") BeginDrag(it);
                     if (drag == it) DragMove(p);
                 };
@@ -298,7 +333,7 @@ namespace OpenDock
                     press = null;
                     it.Root.ReleaseMouseCapture();
                     it.Img.Opacity = 1;
-                    if (drag == it) EndDrag(e.GetPosition(this)); else Click(it);
+                    if (drag == it) EndDrag(Logical(e.GetPosition(this))); else Click(it);
                 };
                 it.Root.MouseRightButtonUp += (s, e) => { preview.Close2(); ShowMenu(it); e.Handled = true; };
                 it.Root.MouseUp += (s, e) => { if (e.ChangedButton == MouseButton.Middle) { OpenNew(it); e.Handled = true; } };
@@ -482,7 +517,7 @@ namespace OpenDock
             if (target != null)
             {
                 if (preview.Item != target && (preview.IsVisible || now - hoverSince > 0.55))
-                    preview.ShowFor(target, wins, target.Img.Source, new Point(Left + target.CX, Top + iconBase - slot * target.S));
+                    preview.ShowFor(target, wins, target.Img.Source, ScreenPoint(new Point(target.CX, iconBase - slot * target.S)), position);
                 return preview.Item != target;   // keep the loop running until it's shown
             }
             if (preview.IsVisible && !preview.MouseInside) preview.MaybeHide();
@@ -538,7 +573,7 @@ namespace OpenDock
         {
             if (stack != null && stack.IsVisible) { stack.Dismiss(); return; }
             stack = new StackWindow(Launcher.Downloads, "Downloads");
-            stack.ShowAbove(new Point(Left + it.CX, Top + bgTop - 8));
+            stack.ShowAbove(ScreenPoint(new Point(it.CX, bgTop - 8)), position);
         }
 
         // ---------- menus ----------
@@ -620,7 +655,11 @@ namespace OpenDock
             else
             {
                 cm.Placement = PlacementMode.Custom;
-                cm.CustomPopupPlacementCallback = (popup, t, o) => new[] { new CustomPopupPlacement(new Point((t.Width - popup.Width) / 2, -popup.Height + 10), PopupPrimaryAxis.Horizontal) };
+                cm.CustomPopupPlacementCallback = (popup, t, o) => new[] { new CustomPopupPlacement(
+                    position == 1 ? new Point(t.Width + 6, (t.Height - popup.Height) / 2)
+                    : position == 2 ? new Point(-popup.Width - 6, (t.Height - popup.Height) / 2)
+                    : new Point((t.Width - popup.Width) / 2, -popup.Height + 10),
+                    position == 0 ? PopupPrimaryAxis.Horizontal : PopupPrimaryAxis.Vertical) };
             }
             menuOpen = true;
             openMenu = cm;
@@ -640,7 +679,7 @@ namespace OpenDock
 
         void DragMove(Point p)
         {
-            ghost.MoveTo(new Point(Left + p.X, Top + p.Y));
+            ghost.MoveTo(ScreenPoint(p));
             dragOut = p.Y < bgTop - slot * 0.9;
             ghost.ShowRemove(dragOut && drag.Pinned);
             drag.PWant = dragOut ? 0 : 1;
@@ -712,7 +751,7 @@ namespace OpenDock
         void OnDragOver(object s, DragEventArgs e)
         {
             e.Handled = true;
-            var at = HitItem(e.GetPosition(this));
+            var at = HitItem(Logical(e.GetPosition(this)));
             SpringLoad(at != null && (at.Kind == "app" || at.Kind == "finder") ? at : null);
             dropActive = true; hovering = true; StartLoop();
             if (!e.Data.GetDataPresent(DataFormats.FileDrop)) { e.Effects = DragDropEffects.None; return; }
@@ -725,7 +764,7 @@ namespace OpenDock
         {
             dropActive = false;
             var files = e.Data.GetData(DataFormats.FileDrop) as string[];
-            var p = e.GetPosition(this);
+            var p = Logical(e.GetPosition(this));
             var it = HitItem(p);
             SetDropHot(null);
             if (files == null || files.Length == 0) return;
@@ -789,7 +828,7 @@ namespace OpenDock
         Point CursorPos()
         {
             Native.POINT p; Native.GetCursorPos(out p);
-            return new Point(p.X / App.Dpi - Left, p.Y / App.Dpi - Top);
+            return Logical(new Point(p.X / App.Dpi - Left, p.Y / App.Dpi - Top));
         }
 
         void Frame(object sender, EventArgs e)
@@ -824,9 +863,15 @@ namespace OpenDock
                 }
             }
 
-            // resting layout, eased so inserts / removals / reorders slide
-            // Each icon is followed by the spacing setting, which grows and shrinks with the icon's presence.
-            double sp = Settings.DockSpacing, total = items.Sum(i => BaseW(i) + sp * i.P) - (items.Count > 0 ? sp * items[items.Count - 1].P : 0);
+            // Fit even a crowded vertical dock, including the extra room needed for magnification.
+            double requested = Math.Max(36, Math.Min(96, Settings.IconSize));
+            double requestedMag = Settings.Magnify ? Math.Max(Math.Min(160, Settings.MagnifySize), requested) : requested;
+            double units = items.Sum(i => (i.IsSep ? 0.34 : 1) * i.P);
+            double gaps = Math.Max(0, items.Sum(i => i.P) - 1);
+            double fit = DisplayLayout.FitScale(W, requested * units + Settings.DockSpacing * gaps, (requestedMag - requested) * 2.6);
+            slot = requested * fit; magSlot = requestedMag * fit;
+            // Each gap grows and shrinks with its icon's presence.
+            double sp = Settings.DockSpacing * fit, total = items.Sum(i => BaseW(i) + sp * i.P) - (items.Count > 0 ? sp * items[items.Count - 1].P : 0);
             double x = (W - total) / 2, k = 1 - Math.Exp(-dt * 18);
             foreach (var it in items)
             {
@@ -844,13 +889,14 @@ namespace OpenDock
             bgR = Rr + A * Shift(Rr - mx, R) + pad;
             bgTop = bottom - bgH;
             double radius = bgH * 0.29;
-            Canvas.SetLeft(bg, bgL); Canvas.SetTop(bg, bgTop);
-            bg.Width = Math.Max(0, bgR - bgL); bg.Height = bgH;
+            SetRect(bg, new Rect(bgL, bgTop, Math.Max(0, bgR - bgL), bgH));
             bg.CornerRadius = new CornerRadius(radius);
             sheen.CornerRadius = new CornerRadius(Math.Max(0, radius - 1));
-            Canvas.SetLeft(outline, bgL - 1); Canvas.SetTop(outline, bgTop - 1);
-            outline.Width = bg.Width + 2; outline.Height = bgH + 2; outline.CornerRadius = new CornerRadius(radius + 1);
-            wallClip.Rect = new Rect(bgL - wallX, bgTop - wallY, Math.Max(0, bgR - bgL), bgH);
+            SetRect(outline, new Rect(bgL - 1, bgTop - 1, Math.Max(0, bgR - bgL) + 2, bgH + 2));
+            outline.CornerRadius = new CornerRadius(radius + 1);
+            var paneRect = Physical(new Rect(bgL, bgTop, Math.Max(0, bgR - bgL), bgH));
+            paneRect.Offset(-wallX, -wallY);
+            wallClip.Rect = paneRect;
             wallClip.RadiusX = wallClip.RadiusY = radius;
 
             foreach (var it in items)
@@ -860,8 +906,10 @@ namespace OpenDock
                 if (it.IsSep)
                 {
                     it.Root.Opacity = it.P;
-                    Canvas.SetLeft(it.Root, it.CX - it.Root.Width / 2);
-                    Canvas.SetTop(it.Root, bgTop + (bgH - it.Root.Height) / 2);
+                    double sepW = slot * 0.34, sepH = slot * 0.62;
+                    SetRect(it.Root, new Rect(it.CX - sepW / 2, bgTop + (bgH - sepH) / 2, sepW, sepH));
+                    var line = (Rectangle)it.Root.Child;
+                    line.Width = position == 0 ? 1 : sepH; line.Height = position == 0 ? sepH : 1;
                     continue;
                 }
                 double bounce = 0;
@@ -875,11 +923,10 @@ namespace OpenDock
                 }
                 it.Scale.ScaleX = it.Scale.ScaleY = it.S * it.P;
                 it.Root.Opacity = it == drag ? 0 : 1;
-                Canvas.SetLeft(it.Root, it.CX - slot / 2);
-                Canvas.SetTop(it.Root, iconBase - slot - bounce);
+                SetRect(it.Root, new Rect(it.CX - slot / 2, iconBase - slot - bounce, slot, slot));
                 busy |= Approach(ref it.DotA, Settings.Indicators && it.Running ? 1 : 0, 6);
                 it.Dot.Opacity = it.DotA * it.P * 0.85;
-                Canvas.SetLeft(it.Dot, it.CX - 2); Canvas.SetTop(it.Dot, bottom - 6.5);
+                SetRect(it.Dot, new Rect(it.CX - 2, bottom - 6.5, 4, 4));
             }
 
             DockItem hot = null;
@@ -896,8 +943,9 @@ namespace OpenDock
             {
                 label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
                 double lw = label.DesiredSize.Width, lh = label.DesiredSize.Height;
-                Canvas.SetLeft(label, Math.Max(4, Math.Min(W - lw - 4, labelItem.CX - lw / 2)));
-                Canvas.SetTop(label, iconBase - slot * labelItem.S - lh - 4);
+                var anchor = ToWindow(new Point(labelItem.CX, iconBase - slot * labelItem.S));
+                var at = DisplayLayout.Beside(anchor, new Size(lw, lh), position, new Rect(0, 0, Width, Height));
+                Canvas.SetLeft(label, at.X); Canvas.SetTop(label, at.Y);
             }
 
             if (!busy && !hovering && drag == null && !dropActive && !menuOpen)
@@ -1034,13 +1082,12 @@ namespace OpenDock
             SourceInitialized += delegate { Native.MakeToolWindow(new WindowInteropHelper(this).Handle, false); };
         }
 
-        public void ShowAbove(Point anchor)
+        public void ShowAbove(Point anchor, int position)
         {
             Show();
             UpdateLayout();
-            Left = anchor.X - ActualWidth / 2;
-            Top = anchor.Y - ActualHeight + 30;
-            Left = Math.Max(0, Math.Min(SystemParameters.PrimaryScreenWidth - ActualWidth, Left));
+            var at = DisplayLayout.Beside(anchor, new Size(ActualWidth, ActualHeight), position, DisplayLayout.WorkArea);
+            Left = at.X; Top = at.Y;
             // frosted glass: blur what's behind the panel (the window is still fully transparent here)
             double w = panel.ActualWidth, h = panel.ActualHeight, dpi = App.Dpi;
             var shot = Icons.CaptureScreen((int)((Left + panel.Margin.Left) * dpi), (int)((Top + panel.Margin.Top) * dpi), (int)(w * dpi), (int)(h * dpi));

@@ -94,9 +94,10 @@ namespace OpenDock
         public void Open()
         {
             if (IsOpen) return;
-            W = SystemParameters.PrimaryScreenWidth; H = SystemParameters.PrimaryScreenHeight;
-            Left = 0; Top = 0; Width = W; Height = H;
-            var shot = Icons.CaptureScreen(0, 0, (int)Math.Round(W * App.Dpi), (int)Math.Round(H * App.Dpi));
+            var bounds = DisplayLayout.Bounds;
+            W = bounds.Width; H = bounds.Height;
+            Left = bounds.Left; Top = bounds.Top; Width = W; Height = H;
+            var shot = Icons.CaptureScreen((int)Math.Round(Left * App.Dpi), (int)Math.Round(Top * App.Dpi), (int)Math.Round(W * App.Dpi), (int)Math.Round(H * App.Dpi));
             sharp.Source = shot;
             blurred.Source = Icons.Blur(shot, (int)(W / 5), (int)(H / 5), 7);
             if (search.Text.Length > 0) { search.Text = ""; stale = true; }

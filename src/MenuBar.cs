@@ -142,6 +142,7 @@ namespace OpenDock
             {
                 Native.MakeToolWindow(new WindowInteropHelper(this).Handle, true);
                 Bar = new AppBar(this, Native.ABE_TOP);
+                Bar.Placed = rc => { var r = DisplayLayout.Dip(rc); Left = r.Left; Top = r.Top; Width = r.Width; };
                 Bar.FullScreen = fs => { if (App.Dock != null) App.Dock.OnFullScreen(fs); };
                 Place();
             };
@@ -163,7 +164,8 @@ namespace OpenDock
         public void Place()
         {
             if (Bar == null) return;
-            Left = 0; Top = 0; Width = SystemParameters.PrimaryScreenWidth;
+            var bounds = DisplayLayout.Bounds;
+            Left = bounds.Left; Top = bounds.Top; Width = bounds.Width;
             if (Settings.ShowMenuBar) Bar.Reserve((int)Math.Round(H * App.Dpi)); else Bar.Remove();
         }
 
