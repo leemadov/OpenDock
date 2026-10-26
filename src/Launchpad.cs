@@ -94,10 +94,11 @@ namespace OpenDock
         public void Open()
         {
             if (IsOpen) return;
-            var bounds = DisplayLayout.ActiveBounds;
+            var screen = DisplayLayout.Active; double scale = DisplayLayout.MonitorScale(screen);
+            var bounds = DisplayLayout.Dip(screen.Bounds, scale);
             W = bounds.Width; H = bounds.Height;
             Left = bounds.Left; Top = bounds.Top; Width = W; Height = H;
-            var shot = Icons.CaptureScreen((int)Math.Round(Left * App.Dpi), (int)Math.Round(Top * App.Dpi), (int)Math.Round(W * App.Dpi), (int)Math.Round(H * App.Dpi));
+            var shot = Icons.CaptureScreen(screen.Bounds.Left, screen.Bounds.Top, screen.Bounds.Right - screen.Bounds.Left, screen.Bounds.Bottom - screen.Bounds.Top);
             sharp.Source = shot;
             blurred.Source = Icons.Blur(shot, (int)(W / 5), (int)(H / 5), 7);
             if (search.Text.Length > 0) { search.Text = ""; stale = true; }
@@ -107,6 +108,7 @@ namespace OpenDock
             blurred.Opacity = 0; tint.Opacity = 0; content.Opacity = 0;
             IsOpen = true;
             Show();
+            DisplayLayout.Place(this, DisplayLayout.Pixels(screen.Bounds));
             Activate();
             search.Focus();
             App.Dock.BringToFront();
@@ -175,7 +177,7 @@ namespace OpenDock
         FrameworkElement Tile(AppEntry a, double size, double cellW)
         {
             var img = new Image { Width = size, Height = size, Opacity = 0 };
-            Icons.Get(a.Icon, true, s => { img.Source = s; img.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(180))); }, 192);
+            Icons.Get(CustomIcons.Get(a.Target) ?? a.Icon, true, s => { img.Source = s; img.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(180))); }, 192);
             var name = new TextBlock
             {
                 Text = a.Name, Foreground = Brushes.White, FontSize = 13, TextAlignment = TextAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis,

@@ -307,7 +307,7 @@ namespace OpenDock
                     var g = Group(slot);
                     InfoRow(g, "Resolution", d.Width + " × " + d.Height);
                     InfoRow(g, "Refresh rate", d.Hz + " Hz");
-                    if (d.Primary) InfoRow(g, "Scale", Math.Round(App.Dpi * 100) + "%");
+                    InfoRow(g, "Scale", Math.Round(DisplayLayout.MonitorScale(d) * 100) + "%");
                     if (d.Brightness >= 0) Level(g, "Brightness", 0, 100, d.Brightness, null, null, v => { int pct = (int)v; OffUi(() => Sys.SetBrightness(disp.Monitor, pct)); });
                     else InfoRow(g, "Brightness", "Adjust it on the display");
                 }

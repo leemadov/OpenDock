@@ -326,20 +326,44 @@ namespace OpenDock
     <Setter Property='HorizontalContentAlignment' Value='Left'/>
   </Style>
 
+  <Style x:Key='FinderRenameEditor' TargetType='TextBox'>
+    <Setter Property='Visibility' Value='Collapsed'/>
+    <Setter Property='FontSize' Value='12'/><Setter Property='Padding' Value='3,1'/>
+    <Setter Property='MinWidth' Value='56'/><Setter Property='BorderThickness' Value='1'/>
+    <Setter Property='Background' Value='{DynamicResource Field}'/><Setter Property='Foreground' Value='{DynamicResource Fg}'/>
+    <Setter Property='CaretBrush' Value='{DynamicResource Fg}'/><Setter Property='BorderBrush' Value='{DynamicResource Accent}'/>
+  </Style>
+  <DataTemplate x:Key='FinderListName'>
+    <Grid><TextBlock x:Name='NameLabel' Text='{Binding Name}' VerticalAlignment='Center' TextTrimming='CharacterEllipsis'/>
+      <TextBox x:Name='RenameEdit' Style='{StaticResource FinderRenameEditor}' Text='{Binding RenameText, UpdateSourceTrigger=PropertyChanged}'/>
+    </Grid>
+    <DataTemplate.Triggers><DataTrigger Binding='{Binding IsRenaming}' Value='True'>
+      <Setter TargetName='NameLabel' Property='Visibility' Value='Collapsed'/><Setter TargetName='RenameEdit' Property='Visibility' Value='Visible'/>
+    </DataTrigger></DataTemplate.Triggers>
+  </DataTemplate>
+  <DataTemplate x:Key='FinderTileName'>
+    <Grid><TextBlock x:Name='NameLabel' Text='{Binding Name}' TextWrapping='Wrap' TextAlignment='Center' MaxHeight='34' TextTrimming='CharacterEllipsis' FontSize='12'/>
+      <TextBox x:Name='RenameEdit' Style='{StaticResource FinderRenameEditor}' Width='90' Text='{Binding RenameText, UpdateSourceTrigger=PropertyChanged}'/>
+    </Grid>
+    <DataTemplate.Triggers><DataTrigger Binding='{Binding IsRenaming}' Value='True'>
+      <Setter TargetName='NameLabel' Property='Visibility' Value='Collapsed'/><Setter TargetName='RenameEdit' Property='Visibility' Value='Visible'/>
+    </DataTrigger></DataTemplate.Triggers>
+  </DataTemplate>
+
   <DataTemplate x:Key='FinderTile'>
     <StackPanel Width='104' Margin='2,6' Background='Transparent'>
       <Border x:Name='IconBd' Width='80' Height='80' CornerRadius='8' Padding='6' HorizontalAlignment='Center'>
         <Image Source='{Binding Icon}' RenderOptions.BitmapScalingMode='HighQuality'/>
       </Border>
       <Border x:Name='NameBd' CornerRadius='4' Padding='5,1,5,2' Margin='0,4,0,0' HorizontalAlignment='Center'>
-        <TextBlock x:Name='Label' Text='{Binding Name}' TextWrapping='Wrap' TextAlignment='Center' MaxHeight='34' TextTrimming='CharacterEllipsis' FontSize='12' Foreground='{DynamicResource Fg}'/>
+        <ContentControl x:Name='NameContent' Content='{Binding}' ContentTemplate='{StaticResource FinderTileName}' Foreground='{DynamicResource Fg}'/>
       </Border>
     </StackPanel>
     <DataTemplate.Triggers>
       <DataTrigger Binding='{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}' Value='True'>
         <Setter TargetName='IconBd' Property='Background' Value='{DynamicResource SelBg}'/>
         <Setter TargetName='NameBd' Property='Background' Value='{DynamicResource Accent}'/>
-        <Setter TargetName='Label' Property='Foreground' Value='White'/>
+        <Setter TargetName='NameContent' Property='Foreground' Value='White'/>
       </DataTrigger>
     </DataTemplate.Triggers>
   </DataTemplate>

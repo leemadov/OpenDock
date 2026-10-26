@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -13,6 +14,7 @@ namespace OpenDock
 {
     static class MultiDisplayChecks
     {
+        [DllImport("user32.dll")] static extern bool GetWindowDisplayAffinity(IntPtr window, out uint affinity);
         static readonly BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
         static List<DockItem> Items(DockWindow dock) { return (List<DockItem>)typeof(DockWindow).GetField("items", Private).GetValue(dock); }
 
@@ -33,7 +35,7 @@ namespace OpenDock
             foreach (var dock in App.Docks)
             {
                 if (!dock.IsVisible || !dock.MonitorBounds.Contains(new Rect(dock.Left, dock.Top, dock.ActualWidth, dock.ActualHeight))) throw new Exception("dock outside its own monitor: " + dock.Device);
-                if (!Settings.AutoHide)
+                if (!Settings.AutoHide && Settings.ReserveDockSpace)
                 {
                     var bounds = dock.MonitorBounds;
                     double reserve = Settings.IconSize + 12 + 6 + 4;
@@ -72,6 +74,18 @@ namespace OpenDock
                     }
                 }
                 Settings.AutoHide = false; Settings.DockPosition = 0; CheckDocks(screens.Count);
+                Settings.ReserveDockSpace = false; CheckDocks(screens.Count);
+                foreach (var dock in App.Docks)
+                    if ((bool)typeof(AppBar).GetField("registered", Private).GetValue(dock.Bar)) throw new Exception("floating dock kept its appbar reservation");
+                Settings.ReserveDockSpace = true; CheckDocks(screens.Count);
+                // Transient empty enumeration must retain HWNDs. Disconnect/reconnect recreates only removed docks.
+                var connected = App.Docks.ToList();
+                App.ReconcileDocks(new List<Sys.Display>());
+                if (!connected.SequenceEqual(App.Docks)) throw new Exception("empty reconnect snapshot removed working docks");
+                App.ReconcileDocks(screens.Take(1).ToList()); CheckDocks(1);
+                if (App.Docks[0] != connected.First(d => d.Device == screens[0].Device)) throw new Exception("disconnect recreated a surviving dock");
+                App.ReconcileDocks(screens); CheckDocks(screens.Count);
+                Console.WriteLine("display reconnect: empty snapshot, removal, restoration and floating dock verified");
                 // Exercise shared pin insertion, removal and order without persisting preferences.
                 Settings.Pins.Add("Shared fixture|" + Path.Combine(fixture, "Report.csv"));
                 Settings.Pins.Reverse(); App.SyncPins(null);
@@ -117,6 +131,37 @@ namespace OpenDock
                 var handlers = (Action<List<WinInfo>>)typeof(App).GetField("WindowsChanged", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
                 if (handlers.GetInvocationList().Count(d => d.Target is DockWindow) != screens.Count) throw new Exception("closed docks leaked event subscriptions");
 
+                // Owned temporary artwork, no settings save: verify asynchronous icon loading and cross-display reset.
+                Directory.CreateDirectory(CustomIcons.DirectoryPath);
+                string iconName = "test-" + Guid.NewGuid().ToString("N") + ".png";
+                string iconFile = Path.Combine(CustomIcons.DirectoryPath, iconName);
+                var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(BitmapSource.Create(1, 1, 96, 96, PixelFormats.Bgra32, null, new byte[] { 0, 0, 255, 255 }, 4)));
+                using (var file = File.Create(iconFile)) encoder.Save(file);
+                try
+                {
+                    CustomIcons.Map["fixed:finder"] = iconName;
+                    foreach (var dock in App.Docks) typeof(DockWindow).GetMethod("ReloadIcons", Private).Invoke(dock, null);
+                    int attempts = 0;
+                    while (App.Docks.Any(d => Items(d).First(i => i.Kind == "finder").Img.Source == Art.Finder) && attempts++ < 40) Settle();
+                    var icons = App.Docks.Select(d => Items(d).First(i => i.Kind == "finder").Img.Source).ToList();
+                    if (icons.Any(i => i == null || i == Art.Finder) || icons.Distinct().Count() != 1) throw new Exception("custom icon wasn't shared across displays");
+                }
+                finally
+                {
+                    CustomIcons.Map.Remove("fixed:finder"); File.Delete(iconFile);
+                    foreach (var dock in App.Docks) typeof(DockWindow).GetMethod("ReloadIcons", Private).Invoke(dock, null);
+                }
+                if (App.Docks.Any(d => Items(d).First(i => i.Kind == "finder").Img.Source != Art.Finder)) throw new Exception("custom icon reset failed");
+                Settings.LiveGlass = true; CheckDocks(screens.Count); Settle();
+                foreach (var dock in App.Docks)
+                {
+                    var pane = (GlassPaneWindow)typeof(DockWindow).GetField("glassPane", Private).GetValue(dock);
+                    if (!pane.Available || !pane.IsVisible) throw new Exception("native glass pane missing on " + dock.Device);
+                    Native.RECT r;
+                    if (!Native.GetWindowRect(pane.Handle, out r) || !DisplayLayout.Pixels(dock.Screen.Bounds).Contains(DisplayLayout.Pixels(r))) throw new Exception("glass pane escaped its monitor");
+                }
+                Console.WriteLine("custom icons: shared artwork/reset and native glass panes verified on every display");
+
                 // Render settled geometry on every physical display, including secondary-screen bounds.
                 int index = 0;
                 foreach (var dock in App.Docks)
@@ -135,11 +180,18 @@ namespace OpenDock
         public static int Inspect(int pid)
         {
             var windows = new List<Native.RECT>();
+            var panes = new List<Native.RECT>();
+            int excluded = 0;
             Native.EnumWindows((h, data) =>
             {
                 uint owner; Native.GetWindowThreadProcessId(h, out owner);
                 Native.RECT rc;
                 if (owner == pid && Native.WindowText(h) == "OpenDock" && Native.IsWindowVisible(h) && Native.GetWindowRect(h, out rc)) windows.Add(rc);
+                if (owner == pid && Native.WindowText(h) == "OpenDock glass pane" && Native.IsWindowVisible(h) && Native.GetWindowRect(h, out rc))
+                {
+                    panes.Add(rc); uint affinity;
+                    if (!GetWindowDisplayAffinity(h, out affinity) || affinity != 0) excluded++;
+                }
                 return true;
             }, IntPtr.Zero);
             int missing = 0;
@@ -149,9 +201,13 @@ namespace OpenDock
                 bool found = windows.Any(r => r.Left >= bounds.Left && r.Right <= bounds.Right && r.Top >= bounds.Top && r.Bottom <= bounds.Bottom);
                 Console.WriteLine(screen.Device + ": visible dock=" + found + ", bounds=" + bounds.Left + "," + bounds.Top + ".." + bounds.Right + "," + bounds.Bottom);
                 if (!found) missing++;
+                bool glass = panes.Any(r => r.Left >= bounds.Left && r.Right <= bounds.Right && r.Top >= bounds.Top && r.Bottom <= bounds.Bottom);
+                Console.WriteLine(screen.Device + ": native glass=" + glass);
+                if (!glass) missing++;
             }
             Console.WriteLine("visible dock windows: " + windows.Count);
-            return missing == 0 ? 0 : 1;
+            Console.WriteLine("capture-excluded glass panes: " + excluded);
+            return missing == 0 && excluded == 0 ? 0 : 1;
         }
     }
 }

@@ -97,6 +97,11 @@ namespace OpenDock
                         finder.UpdateLayout();
                         var container = (ListViewItem)list.ItemContainerGenerator.ContainerFromIndex(0);
                         if (container == null || VisualTreeHelper.GetChildrenCount(container) == 0 || !(VisualTreeHelper.GetChild(container, 0) is Border)) throw new Exception("Finder list row template wasn't applied");
+                        typeof(FinderWindow).GetMethod("SortBy", Private).Invoke(finder, new object[] { "Size" });
+                        if (((Entry)list.Items[1]).Name != "Report.csv") throw new Exception("ascending numeric size sort failed");
+                        typeof(FinderWindow).GetMethod("SortBy", Private).Invoke(finder, new object[] { "Size" });
+                        if (((Entry)list.Items[1]).Name != "Read me.txt") throw new Exception("descending numeric size sort failed");
+                        typeof(FinderWindow).GetMethod("SortBy", Private).Invoke(finder, new object[] { "Name" });
                         list.SelectedIndex = 1;
                         var selected = list.SelectedItem;
                         View(finder, false); View(finder, true);
@@ -116,26 +121,27 @@ namespace OpenDock
                         Capture(finder, "finder-icons-light");
                         var settings = new SettingsWindow("Desktop & Dock");
                         settings.Show(); settings.UpdateLayout(); Capture(settings, "dock-settings-light"); settings.Close();
+                        var updates = new SettingsWindow("Updates");
+                        updates.Show(); updates.UpdateLayout(); Capture(updates, "software-update-light"); updates.Close();
                         Settings.Appearance = 2; Theme.Refresh();
                     }
                     else if (step == 8)
                     {
                         var list = (ListView)typeof(FinderWindow).GetField("files", Private).GetValue(finder);
                         list.SelectedItem = list.Items.Cast<Entry>().First(e => e.Name == "Report.csv");
-                        var closeDialog = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
-                        closeDialog.Tick += delegate
-                        {
-                            closeDialog.Stop();
-                            var dialog = app.Windows.Cast<Window>().First(w => w.Title == "Rename");
-                            Capture(dialog, "rename-dialog");
-                            var body = (StackPanel)dialog.Content;
-                            ((TextBox)body.Children[1]).Text = "Renamed report.csv";
-                            ((Button)((StackPanel)body.Children[2]).Children[1]).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                        };
-                        closeDialog.Start();
+                        var entry = (Entry)list.SelectedItem;
                         typeof(FinderWindow).GetMethod("RenameSelection", Private).Invoke(finder, null);
+                        if (!entry.IsRenaming) throw new Exception("inline rename didn't start in icon view");
+                        entry.RenameText = "Cancelled report.csv";
+                        typeof(FinderWindow).GetMethod("CancelRename", Private).Invoke(finder, new object[] { false });
+                        if (entry.IsRenaming || File.Exists(Path.Combine(fixture, "Cancelled report.csv"))) throw new Exception("inline rename cancellation changed a file");
+                        View(finder, true);
+                        typeof(FinderWindow).GetMethod("RenameSelection", Private).Invoke(finder, null);
+                        finder.UpdateLayout(); Capture(finder, "finder-inline-rename");
+                        entry.RenameText = "Renamed report.csv";
+                        if (!(bool)typeof(FinderWindow).GetMethod("CommitRename", Private).Invoke(finder, null)) throw new Exception("inline rename commit failed");
                         string renamed = Path.Combine(fixture, "Renamed report.csv");
-                        if (!File.Exists(renamed) || File.ReadAllText(renamed) != "Name,Value\r\nSample,42\r\n") throw new Exception("rename dialog didn't preserve file contents");
+                        if (!File.Exists(renamed) || File.ReadAllText(renamed) != "Name,Value\r\nSample,42\r\n") throw new Exception("inline rename didn't preserve file contents");
                         File.Move(renamed, Path.Combine(fixture, "Report.csv"));
                         var changed = (Action)typeof(Settings).GetField("Changed", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
                         Settings.LiveGlass = true; changed();
@@ -149,6 +155,8 @@ namespace OpenDock
                         Capture(dock, "dock-right");
                         timer.Stop(); dock.Close(); App.Dock = null;
                         MultiDisplayChecks.Run(fixture); dock = App.Dock;
+                        GlassChecks.Run();
+                        FeatureChecks.Handoff();
                         Console.WriteLine("desktop checks passed; snapshots in bin/qa");
                         timer.Stop();
                         if (!preview) cleanup();

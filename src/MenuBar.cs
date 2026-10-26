@@ -120,6 +120,7 @@ namespace OpenDock
 
             var help = Bar0("Help");
             help.Items.Add(Cmd("Search", "Alt+Space", App.ToggleSpotlight));
+            help.Items.Add(Cmd("Check for OpenDock Updates…", null, () => App.OpenSettings("Updates")));
             help.Items.Add(Keys("App Help", "F1", 0x70));
 
             // status area
@@ -142,7 +143,7 @@ namespace OpenDock
             {
                 Native.MakeToolWindow(new WindowInteropHelper(this).Handle, true);
                 Bar = new AppBar(this, Native.ABE_TOP);
-                Bar.Placed = rc => { var r = DisplayLayout.Dip(rc); Left = r.Left; Top = r.Top; Width = r.Width; };
+                Bar.Placed = rc => DisplayLayout.Place(this, DisplayLayout.Pixels(rc));
                 Bar.FullScreen = fs => { foreach (var dock in App.Docks) dock.OnFullScreen(fs); };
                 Place();
             };
@@ -166,9 +167,15 @@ namespace OpenDock
             if (Bar == null) return;
             var selected = DisplayLayout.Selected;
             if (displayDevice != selected.Device) { Bar.Remove(); displayDevice = selected.Device; }
-            var bounds = DisplayLayout.Dip(selected.Bounds);
+            var bounds = DisplayLayout.Dip(selected.Bounds, DisplayLayout.Scale(this));
             Left = bounds.Left; Top = bounds.Top; Width = bounds.Width;
-            if (Settings.ShowMenuBar) Bar.Reserve((int)Math.Round(H * App.Dpi)); else Bar.Remove();
+            if (Settings.ShowMenuBar) Bar.Reserve((int)Math.Round(H * DisplayLayout.Scale(this))); else Bar.Remove();
+        }
+
+        protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+        {
+            base.OnDpiChanged(oldDpi, newDpi);
+            if (Bar != null) App.QueueDisplayRefresh();
         }
 
         public void SetShown(bool shown)
