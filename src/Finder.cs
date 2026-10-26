@@ -124,9 +124,6 @@ namespace OpenDock
         string path, selectAfterLoad;
         Point? dragFrom;
         int loadId;
-        string sortColumn = "Name";
-        bool sortDescending, reloadPending, committingRename;
-        Entry editingEntry;
 
         [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)] static extern int StrCmpLogicalW(string a, string b);
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern bool SHObjectProperties(IntPtr h, int type, string name, string page);
@@ -136,7 +133,10 @@ namespace OpenDock
             Width = 1000; Height = 640; MinWidth = 560; MinHeight = 340;
             int n = App.Finders.Count;
             WindowStartupLocation = WindowStartupLocation.Manual;
-            DisplayLayout.Center(this, DisplayLayout.Active, n * 28);
+            var area = DisplayLayout.ActiveWorkArea;
+            Width = Math.Min(Width, area.Width); Height = Math.Min(Height, area.Height);
+            var origin = DisplayLayout.Clamp(new Point(area.Left + (area.Width - Width) / 2 + n * 28, area.Top + (area.Height - Height) / 2 + n * 28), new Size(Width, Height), area);
+            Left = origin.X; Top = origin.Y;
 
             Layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(210) });
             Layout.ColumnDefinitions.Add(new ColumnDefinition());
@@ -231,17 +231,6 @@ namespace OpenDock
                 if (dragFrom == null) files.SelectedItems.Clear();
             };
             files.PreviewMouseMove += OnDragOut;
-            files.PreviewKeyDown += (s, e) =>
-            {
-                if (editingEntry == null) return;
-                if (e.Key == Key.Enter) { CommitRename(); e.Handled = true; }
-                else if (e.Key == Key.Escape) { CancelRename(); e.Handled = true; }
-            };
-            files.AddHandler(Keyboard.LostKeyboardFocusEvent, new KeyboardFocusChangedEventHandler((s, e) =>
-            {
-                var box = e.OldFocus as TextBox;
-                if (box != null && box.DataContext == editingEntry && editingEntry != null && !committingRename) CommitRename();
-            }), true);
             files.KeyDown += OnKey;
             files.MouseRightButtonUp += OnContext;
             files.Drop += OnDrop;
@@ -256,7 +245,6 @@ namespace OpenDock
 
             PreviewKeyDown += (s, e) =>
             {
-                if (editingEntry != null) return;
                 if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control) { filter.Focus(); e.Handled = true; }
                 else if (e.SystemKey == Key.Left || (e.Key == Key.Back && !filter.IsKeyboardFocused)) { Back(); e.Handled = true; }
                 else if (e.SystemKey == Key.Right) { Forward(); e.Handled = true; }
@@ -267,7 +255,7 @@ namespace OpenDock
                 else if (e.Key == Key.D2 && Keyboard.Modifiers == ModifierKeys.Control) { SetView(true, true); e.Handled = true; }
             };
             reloadSoon = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
-            reloadSoon.Tick += delegate { reloadSoon.Stop(); if (editingEntry == null) Load(); else reloadPending = true; };
+            reloadSoon.Tick += delegate { reloadSoon.Stop(); Load(); };
             Loaded += delegate { App.Finders.Add(this); App.QueueRefresh(); };
             Closed += delegate { App.Finders.Remove(this); if (watcher != null) watcher.Dispose(); App.QueueRefresh(); };
             Apps.Changed += delegate { if (path == AppsLocation) Load(); };
@@ -278,7 +266,6 @@ namespace OpenDock
 
         void SetView(bool list, bool save)
         {
-            CancelRename(false);
             var selection = files.SelectedItems.Cast<Entry>().ToList();
             listView = list;
             if (list)
@@ -291,17 +278,15 @@ namespace OpenDock
                 image.SetValue(Image.MarginProperty, new Thickness(0, 0, 8, 0));
                 image.SetValue(DockPanel.DockProperty, Dock.Left);
                 image.SetBinding(Image.SourceProperty, new System.Windows.Data.Binding("Icon"));
-                var name = new FrameworkElementFactory(typeof(ContentControl));
-                name.SetValue(ContentControl.VerticalAlignmentProperty, VerticalAlignment.Center);
-                name.SetValue(ContentControl.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch);
-                name.SetValue(ContentControl.ContentTemplateProperty, (DataTemplate)Application.Current.Resources["FinderListName"]);
-                name.SetResourceReference(Control.ForegroundProperty, "Fg");
-                name.SetBinding(ContentControl.ContentProperty, new System.Windows.Data.Binding());
+                var name = new FrameworkElementFactory(typeof(TextBlock));
+                name.SetValue(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center);
+                name.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
+                name.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("Name"));
                 row.AppendChild(image); row.AppendChild(name);
-                view.Columns.Add(new GridViewColumn { Header = SortHeader("Name", "Name"), Width = 240, CellTemplate = new DataTemplate { VisualTree = row } });
-                view.Columns.Add(new GridViewColumn { Header = SortHeader("Size", "Size"), Width = 90, DisplayMemberBinding = new System.Windows.Data.Binding("SizeText") });
-                view.Columns.Add(new GridViewColumn { Header = SortHeader("Kind", "Kind"), Width = 120, DisplayMemberBinding = new System.Windows.Data.Binding("Kind") });
-                view.Columns.Add(new GridViewColumn { Header = SortHeader("Date Modified", "Modified"), Width = 160, DisplayMemberBinding = new System.Windows.Data.Binding("Modified") });
+                view.Columns.Add(new GridViewColumn { Header = "Name", Width = 240, CellTemplate = new DataTemplate { VisualTree = row } });
+                view.Columns.Add(new GridViewColumn { Header = "Size", Width = 90, DisplayMemberBinding = new System.Windows.Data.Binding("SizeText") });
+                view.Columns.Add(new GridViewColumn { Header = "Kind", Width = 120, DisplayMemberBinding = new System.Windows.Data.Binding("Kind") });
+                view.Columns.Add(new GridViewColumn { Header = "Date Modified", Width = 160, DisplayMemberBinding = new System.Windows.Data.Binding("Modified") });
                 files.ItemTemplate = null;
                 files.View = view;
                 files.ItemsPanel = new ItemsPanelTemplate(new FrameworkElementFactory(typeof(VirtualizingStackPanel)));
@@ -321,40 +306,6 @@ namespace OpenDock
             if (selection.Count > 0) files.ScrollIntoView(selection[0]);
             ((TextBlock)viewButton.Content).Text = list ? "\uE8A9" : "\uE8FD";
             if (save) { Settings.FinderListView = list; Settings.Save(); }
-        }
-
-        GridViewColumnHeader SortHeader(string label, string column)
-        {
-            var header = new GridViewColumnHeader { Tag = column };
-            header.Content = label + (sortColumn == column ? (sortDescending ? " ▼" : " ▲") : "");
-            header.Click += delegate { SortBy(column); };
-            return header;
-        }
-
-        void SortBy(string column)
-        {
-            if (editingEntry != null && !CommitRename()) return;
-            sortDescending = sortColumn == column && !sortDescending; sortColumn = column;
-            var view = files.View as GridView;
-            if (view != null)
-                foreach (var col in view.Columns)
-                {
-                    var header = col.Header as GridViewColumnHeader;
-                    if (header == null) continue;
-                    string key = (string)header.Tag, label = key == "Modified" ? "Date Modified" : key;
-                    header.Content = label + (key == sortColumn ? (sortDescending ? " ▼" : " ▲") : "");
-                }
-            ApplyFilter();
-        }
-
-        int CompareEntries(Entry a, Entry b)
-        {
-            if (a.IsDir != b.IsDir) return a.IsDir ? -1 : 1;
-            int order = sortColumn == "Size" ? a.SizeBytes.CompareTo(b.SizeBytes)
-                      : sortColumn == "Modified" ? a.ModifiedTime.CompareTo(b.ModifiedTime)
-                      : sortColumn == "Kind" ? StringComparer.CurrentCultureIgnoreCase.Compare(a.Kind, b.Kind) : StrCmpLogicalW(a.Name, b.Name);
-            if (order == 0) order = StrCmpLogicalW(a.Name, b.Name);
-            return sortDescending ? -order : order;
         }
 
         Button Tool(string glyph, Action a)
@@ -400,7 +351,6 @@ namespace OpenDock
         void Go(string target, bool record = true)
         {
             if (target != AppsLocation && !Directory.Exists(target)) return;
-            CancelRename(false); reloadPending = false;
             if (record && path != null) { history.Push(path); future.Clear(); }
             path = target;
             filter.Text = "";
@@ -436,7 +386,7 @@ namespace OpenDock
                         bool isDir = (fi.Attributes & FileAttributes.Directory) != 0;
                         var entry = new Entry { Name = fi.Name, Path = fi.FullName, IsDir = isDir,
                             Kind = isDir ? "Folder" : System.IO.Path.GetExtension(fi.Name).TrimStart('.').ToUpperInvariant() + " file" };
-                        try { entry.ModifiedTime = fi.LastWriteTime; entry.Modified = entry.ModifiedTime.ToString("g"); if (!isDir) { entry.SizeBytes = ((FileInfo)fi).Length; entry.SizeText = Size(entry.SizeBytes); } } catch { }
+                        try { entry.Modified = fi.LastWriteTime.ToString("g"); if (!isDir) entry.SizeText = Size(((FileInfo)fi).Length); } catch { }
                         list.Add(entry);
                     }
                 }
@@ -475,12 +425,8 @@ namespace OpenDock
         void ApplyFilter()
         {
             string q = filter.Text.Trim();
-            var selected = files.SelectedItems.Cast<Entry>().ToList();
-            var shown = (q.Length == 0 ? all : all.Where(x => x.Name.IndexOf(q, StringComparison.CurrentCultureIgnoreCase) >= 0)).ToList();
-            shown.Sort(CompareEntries);
             entries.Clear();
-            foreach (var e in shown) entries.Add(e);
-            foreach (var e in selected.Where(shown.Contains)) files.SelectedItems.Add(e);
+            foreach (var e in q.Length == 0 ? all : all.Where(x => x.Name.IndexOf(q, StringComparison.CurrentCultureIgnoreCase) >= 0)) entries.Add(e);
             UpdateStatus();
         }
 
@@ -688,62 +634,30 @@ namespace OpenDock
         {
             var en = files.SelectedItem as Entry;
             if (files.SelectedItems.Count != 1 || en == null || en.Open != null || en.Path == null || path == AppsLocation) return;
-            CancelRename(false);
-            editingEntry = en; en.RenameText = en.Name; en.IsRenaming = true;
-            reloadSoon.Stop();
-            Dispatcher.BeginInvoke(new Action(FocusRenameEditor), DispatcherPriority.Input);
-        }
-
-        TextBox RenameEditor(DependencyObject root)
-        {
-            if (root == null) return null;
-            var box = root as TextBox;
-            if (box != null && box.DataContext == editingEntry && box.IsVisible) return box;
-            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+            var dialog = new MacWindow(false) { Title = "Rename", Owner = this, Width = 420, Height = 180,
+                ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+            var body = new StackPanel { Margin = new Thickness(20, 12, 20, 16) };
+            body.Children.Add(Text("Rename “" + en.Name + "”", 14, "Fg", FontWeights.SemiBold));
+            var input = new TextBox { Text = en.Name, Margin = new Thickness(0, 12, 0, 14), Padding = new Thickness(6), FontSize = 14 };
+            input.SetResourceReference(Control.BackgroundProperty, "Field"); input.SetResourceReference(Control.ForegroundProperty, "Fg");
+            body.Children.Add(input);
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            var cancel = new Button { Content = "Cancel", IsCancel = true, MinWidth = 80, Margin = new Thickness(0, 0, 8, 0) };
+            var rename = new Button { Content = "Rename", IsDefault = true, MinWidth = 80 };
+            buttons.Children.Add(cancel); buttons.Children.Add(rename); body.Children.Add(buttons);
+            dialog.Content = body; WindowChrome.SetIsHitTestVisibleInChrome(body, true);
+            rename.Click += delegate
             {
-                var found = RenameEditor(VisualTreeHelper.GetChild(root, i));
-                if (found != null) return found;
-            }
-            return null;
-        }
-
-        void FocusRenameEditor()
-        {
-            if (editingEntry == null) return;
-            files.ScrollIntoView(editingEntry); files.UpdateLayout();
-            var box = RenameEditor(files.ItemContainerGenerator.ContainerFromItem(editingEntry));
-            if (box == null) return;
-            box.Focus(); Keyboard.Focus(box);
-            box.Select(0, editingEntry.IsDir ? box.Text.Length : System.IO.Path.GetFileNameWithoutExtension(box.Text).Length);
-        }
-
-        bool CommitRename()
-        {
-            if (editingEntry == null || committingRename) return true;
-            committingRename = true;
-            try
-            {
-                var en = editingEntry;
-                string renamed = RenamePath(en.Path, en.RenameText);
-                editingEntry = null; en.IsRenaming = false;
-                selectAfterLoad = renamed; reloadPending = false;
-                reloadSoon.Stop(); Load();
-                return true;
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(this, ex.Message, "Rename", MessageBoxButton.OK, MessageBoxImage.Error);
-                Dispatcher.BeginInvoke(new Action(FocusRenameEditor), DispatcherPriority.Input);
-                return false;
-            }
-            finally { committingRename = false; }
-        }
-
-        void CancelRename(bool reload = true)
-        {
-            var en = editingEntry; editingEntry = null;
-            if (en != null) { en.IsRenaming = false; en.RenameText = en.Name; }
-            if (reload && reloadPending) { reloadPending = false; Load(); }
+                try
+                {
+                    selectAfterLoad = RenamePath(en.Path, input.Text);
+                    reloadSoon.Stop(); Load();
+                    dialog.DialogResult = true;
+                }
+                catch (Exception ex) { MessageBox.Show(dialog, ex.Message, "Rename", MessageBoxButton.OK, MessageBoxImage.Error); input.Focus(); }
+            };
+            dialog.Loaded += delegate { input.Focus(); input.Select(0, en.IsDir ? input.Text.Length : System.IO.Path.GetFileNameWithoutExtension(input.Text).Length); };
+            dialog.ShowDialog();
         }
 
         void NewFolder()
@@ -778,7 +692,7 @@ namespace OpenDock
         {
             Title = "System Settings";
             Width = 920; Height = 660; MinWidth = 760; MinHeight = 480;
-            DisplayLayout.Center(this, DisplayLayout.Active);
+            WindowStartupLocation = WindowStartupLocation.CenterScreen;
             apply.Tick += delegate { apply.Stop(); Settings.Apply(); };
 
             var cats = new[]
@@ -793,7 +707,11 @@ namespace OpenDock
                 new[] { C("Keyboard", "\uE765", "#8E8E93", KeyboardPane), C("Mouse", "\uE962", "#8E8E93", MousePane), C("Printers & Scanners", "\uE749", "#8E8E93", Printers) },
             };
             // Panes reached from General, like macOS.
-            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane }, { "Updates", Updates } };
+            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane } };
+            // Panes reached from General, like macOS.
+            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane } };
+            // Panes reached from General, like macOS.
+            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane } };
 
             Layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(250) });
             Layout.ColumnDefinitions.Add(new ColumnDefinition());
@@ -961,9 +879,6 @@ namespace OpenDock
 
         void General(StackPanel body)
         {
-            body.Children.Add(Heading("OpenDock"));
-            var software = Group(body);
-            NavLink(software, "Software Update", "\uE777", "#0A84FF", "Updates");
             var about = Group(body);
             var info = new StackPanel { Margin = new Thickness(0, 6, 0, 6) };
             info.Children.Add(Text("OpenDock", 20, "Fg", FontWeights.Bold));
@@ -1053,15 +968,12 @@ namespace OpenDock
             display.SelectedIndex = selected < 0 ? 0 : selected + 1;
             AddSwitch(dock, "Show Dock on every display", Settings.DockOnAllDisplays, v => Settings.DockOnAllDisplays = v);
             AddChoice(dock, "Menu bar / single Dock display", display, () => Settings.DisplayDevice = display.SelectedIndex == 0 ? "" : screens[display.SelectedIndex - 1].Device);
-            AddSwitch(dock, "Live glass — show windows behind the Dock", Settings.LiveGlass, v => Settings.LiveGlass = v);
-            AddSwitch(dock, "Compatibility capture (hidden in recordings)", Settings.GlassCompatibilityCapture, v => Settings.GlassCompatibilityCapture = v);
+            AddSwitch(dock, "Live glass (hides windows from screen capture)", Settings.LiveGlass, v => Settings.LiveGlass = v);
             AddSlider(dock, "Size", 36, 96, Settings.IconSize, v => Settings.IconSize = (int)v);
             AddSlider(dock, "Spacing between apps", 0, 16, Settings.DockSpacing, v => Settings.DockSpacing = (int)Math.Round(v));
             AddSwitch(dock, "Magnification", Settings.Magnify, v => Settings.Magnify = v);
             AddSlider(dock, "Magnified size", 48, 160, Settings.MagnifySize, v => Settings.MagnifySize = (int)v);
             AddSwitch(dock, "Automatically hide and show the Dock", Settings.AutoHide, v => Settings.AutoHide = v);
-            AddSwitch(dock, "Reserve space for Dock", Settings.ReserveDockSpace, v => Settings.ReserveDockSpace = v);
-            Note(body, "Reserved space keeps maximized windows above the Dock. Turn it off to let windows extend behind the glass.");
             AddSwitch(dock, "Animate opening applications", Settings.Bounce, v => Settings.Bounce = v);
             AddSwitch(dock, "Show indicators for open applications", Settings.Indicators, v => Settings.Indicators = v);
             AddSwitch(dock, "Show open apps that aren't in the Dock", Settings.ShowRunning, v => { Settings.ShowRunning = v; App.QueueRefresh(); });

@@ -55,12 +55,13 @@ namespace OpenDock
             {
                 if (!IsVisible) return false;
                 Native.POINT p; Native.GetCursorPos(out p);
-                return DisplayLayout.WindowPixels(this).Contains(new Point(p.X, p.Y));
+                double x = p.X / App.Dpi, y = p.Y / App.Dpi;
+                return x >= Left && x <= Left + ActualWidth && y >= Top && y <= Top + ActualHeight;
             }
         }
 
         // anchor: screen point (DIP) at the top centre of the dock icon
-        public void ShowFor(DockItem item, List<IntPtr> windows, ImageSource icon, Point anchor, int position, Rect area, double scale = 1)
+        public void ShowFor(DockItem item, List<IntPtr> windows, ImageSource icon, Point anchor, int position, Rect area)
         {
             hideSoon.Stop();
             Unregister();
@@ -72,7 +73,7 @@ namespace OpenDock
             if (!IsVisible) Show();
             UpdateLayout();
             var at = DisplayLayout.Beside(anchor, new Size(ActualWidth, ActualHeight), position, area);
-            DisplayLayout.Place(this, new Rect(at.X * scale, at.Y * scale, ActualWidth * scale, ActualHeight * scale));
+            Left = at.X; Top = at.Y;
             UpdateLayout();
             Native.SetWindowPos(hwnd, Native.HWND_TOPMOST, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
             foreach (Border card in row.Children) Attach(card);
@@ -117,7 +118,7 @@ namespace OpenDock
             thumbs.Add(thumb);
             Native.SIZE src; DwmQueryThumbnailSourceSize(thumb, out src);
             var origin = host.TransformToAncestor(this).Transform(new Point(0, 0));
-            double d = DisplayLayout.Scale(this), bw = host.Width * d, bh = host.Height * d;
+            double d = App.Dpi, bw = host.Width * d, bh = host.Height * d;
             double s = src.cx > 0 && src.cy > 0 ? Math.Min(bw / src.cx, bh / src.cy) : 1;
             double tw = src.cx * s, th = src.cy * s, x = origin.X * d + (bw - tw) / 2, y = origin.Y * d + (bh - th) / 2;
             var p = new THUMB_PROPS
@@ -127,12 +128,6 @@ namespace OpenDock
                 opacity = 255, fVisible = true
             };
             DwmUpdateThumbnailProperties(thumb, ref p);
-        }
-
-        protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
-        {
-            base.OnDpiChanged(oldDpi, newDpi);
-            Dispatcher.BeginInvoke(new Action(() => { if (IsVisible) { Unregister(); UpdateLayout(); foreach (Border card in row.Children) Attach(card); } }), DispatcherPriority.Loaded);
         }
 
         void Unregister()

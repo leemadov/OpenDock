@@ -20,13 +20,7 @@ namespace OpenDock
     // A row in Spotlight or a file in Finder.
     class Entry : INotifyPropertyChanged
     {
-        string name, renameText; bool renaming;
-        public string Name { get { return name; } set { name = value; Notify("Name"); } }
-        public string RenameText { get { return renameText; } set { renameText = value; Notify("RenameText"); } }
-        public bool IsRenaming { get { return renaming; } set { renaming = value; Notify("IsRenaming"); } }
-        public long SizeBytes { get; set; }
-        public DateTime ModifiedTime { get; set; }
-        void Notify(string property) { if (PropertyChanged != null) PropertyChanged(this, new PropertyChangedEventArgs(property)); }
+        public string Name { get; set; }
         public string Sub { get; set; }
         public string SizeText { get; set; }
         public string Kind { get; set; }
@@ -103,20 +97,18 @@ namespace OpenDock
         public void Open()
         {
             closing = false;
-            var screen = DisplayLayout.Active; double scale = DisplayLayout.MonitorScale(screen);
-            var bounds = DisplayLayout.Dip(screen.Bounds, scale);
+            var bounds = DisplayLayout.ActiveBounds;
             var at = DisplayLayout.Clamp(new Point(bounds.Left + (bounds.Width - Width) / 2, bounds.Top + bounds.Height * 0.2 - Pad), new Size(Width, MaxH + Pad * 2), bounds);
             Left = at.X; Top = at.Y;
             // Frosted glass: blur what's behind the panel right now.
-            int px = (int)Math.Round((Left + Pad) * scale), py = (int)Math.Round((Top + Pad) * scale);
-            var shot = Icons.CaptureScreen(px, py, (int)Math.Round(PanelW * scale), (int)Math.Round(MaxH * scale));
+            int px = (int)Math.Round((Left + Pad) * App.Dpi), py = (int)Math.Round((Top + Pad) * App.Dpi);
+            var shot = Icons.CaptureScreen(px, py, (int)Math.Round(PanelW * App.Dpi), (int)Math.Round(MaxH * App.Dpi));
             backdrop.ImageSource = Icons.Blur(shot, (int)(PanelW / 3), (int)(MaxH / 3), 8);
             backdrop.Viewport = new Rect(0, 0, PanelW, MaxH);
             box.Text = "";
             Apps.Refresh();
             panel.Opacity = 0;
             Show();
-            DisplayLayout.Place(this, new Rect(at.X * scale, at.Y * scale, Width * scale, Height * scale));
             Activate();
             box.Focus();
             Keyboard.Focus(box);

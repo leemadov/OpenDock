@@ -9,7 +9,8 @@ using System.Windows.Threading;
 
 namespace OpenDock
 {
-    // Native compositor blur by default, with wallpaper and opt-in capture compatibility fallbacks.
+    // Original live desktop sampling. Windows must exclude the sampling window from capture to avoid
+    // recursively capturing its own pixels. Turning Live glass off uses capture-safe wallpaper frost.
     static class Glass
     {
         const uint ExcludeFromCapture = 0x11;   // WDA_EXCLUDEFROMCAPTURE, Windows 10 2004+
@@ -34,8 +35,8 @@ namespace OpenDock
 
         public static bool Exclude(IntPtr hwnd)
         {
-            bool ok = Native.SetWindowDisplayAffinity(hwnd, Settings.LiveGlass && Settings.GlassCompatibilityCapture ? ExcludeFromCapture : 0);
-            return Settings.LiveGlass && Settings.GlassCompatibilityCapture && ok;
+            bool ok = Native.SetWindowDisplayAffinity(hwnd, Settings.LiveGlass ? ExcludeFromCapture : 0);
+            return Settings.LiveGlass && ok;
         }
 
         public static Brush WallpaperPane(Brush tint) { return Pane(Wallpaper.Blurred, tint); }
@@ -55,19 +56,12 @@ namespace OpenDock
         // and backs off while idle. Never sample our own window if capture exclusion failed.
         public static void Attach(Window w, string tintKey)
         {
-            var chrome = System.Windows.Shell.WindowChrome.GetWindowChrome(w);
-            var originalFrame = chrome == null ? new Thickness(0) : chrome.GlassFrameThickness;
             long sum = 0;
-            bool live = false, compositor = false;
+            bool live = false;
             var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
             var since = System.Diagnostics.Stopwatch.StartNew();
             Action update = delegate
             {
-                if (compositor)
-                {
-                    if (w.IsVisible && w.WindowState != WindowState.Minimized) NativeGlass.Refresh(new WindowInteropHelper(w).Handle);
-                    return;
-                }
                 if (!live) return;
                 if (!w.IsVisible || w.WindowState == WindowState.Minimized) { t.Interval = TimeSpan.FromMilliseconds(300); return; }
                 since.Restart();
@@ -84,13 +78,6 @@ namespace OpenDock
             {
                 var hwnd = new WindowInteropHelper(w).Handle;
                 if (hwnd == IntPtr.Zero) return;
-                if (Settings.LiveGlass && !Settings.GlassCompatibilityCapture && NativeGlass.Apply(hwnd, true))
-                {
-                    live = false; compositor = true; t.Interval = TimeSpan.FromMilliseconds(100); t.Start();
-                    w.Background = (Brush)w.FindResource(tintKey); NativeGlass.ConfigureClient(w); return;
-                }
-                compositor = false; NativeGlass.Apply(hwnd, false);
-                if (chrome != null) chrome.GlassFrameThickness = originalFrame;
                 live = Exclude(hwnd);
                 sum = 0;
                 if (live) { t.Start(); update(); }
@@ -98,7 +85,6 @@ namespace OpenDock
             };
             t.Tick += delegate { update(); };
             w.SourceInitialized += delegate { configure(); };
-            w.Loaded += delegate { configure(); };
             w.LocationChanged += moved;
             w.SizeChanged += delegate { moved(w, EventArgs.Empty); };
             w.IsVisibleChanged += delegate { t.Interval = TimeSpan.FromMilliseconds(80); };
@@ -131,16 +117,10 @@ namespace OpenDock
             var panel = root as Border ?? (VisualTreeHelper.GetChildrenCount(root) > 0 ? VisualTreeHelper.GetChild(root, 0) as Border : null);
             var src = PresentationSource.FromVisual(root) as HwndSource;
             if (panel == null || src == null || !panel.IsVisible) return;
-            if (Settings.LiveGlass && !Settings.GlassCompatibilityCapture && NativeGlass.Apply(src.Handle, true))
-            {
-                src.CompositionTarget.BackgroundColor = Colors.Transparent;
-                panel.SetResourceReference(Border.BackgroundProperty, "MenuGlass"); return;
-            }
-            NativeGlass.Apply(src.Handle, false);
             if (!Exclude(src.Handle)) { panel.Background = WallpaperPane((Brush)panel.FindResource("MenuGlass")); return; }
             var p = panel.PointToScreen(new Point(0, 0));
             long sum = 0;
-            var img = Behind((int)p.X, (int)p.Y, (int)(panel.ActualWidth * src.CompositionTarget.TransformToDevice.M11), (int)(panel.ActualHeight * src.CompositionTarget.TransformToDevice.M22), 2, ref sum);
+            var img = Behind((int)p.X, (int)p.Y, (int)(panel.ActualWidth * App.Dpi), (int)(panel.ActualHeight * App.Dpi), 2, ref sum);
             if (img != null) panel.Background = Pane(img, (Brush)panel.FindResource("MenuGlass"));
         }
     }

@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/github/license/leemadov/OpenDock)](LICENSE)
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
 
-A free, open-source macOS-style desktop for Windows 10/11, inspired by MyDockFinder. It's a single compact executable: no installer, no runtime to download and no SDK needed to build it.
+A free, open-source macOS-style desktop for Windows 10/11, inspired by MyDockFinder. It's a single ~250 KB executable: no installer, no runtime to download and no SDK needed to build it.
 
 ![OpenDock demo: dock magnification, Launchpad and Spotlight](docs/demo.gif)
 
@@ -12,7 +12,7 @@ Run `OpenDock.exe` and the dock and menu bar appear. Quit from the logo menu in 
 ## Why OpenDock?
 
 - **Free and open source** (MIT). There's no paid version and nothing is locked.
-- **Tiny and light.** One small executable, with animations that stop when idle. The animation loop only runs while something is moving, and if it ever hangs, it restarts itself.
+- **Tiny and light.** A ~250 KB exe that uses almost no CPU when idle. The animation loop only runs while something is moving, and if it ever hangs, it restarts itself.
 - **The whole macOS look, not just a dock:** a menu bar, Launchpad, Spotlight, Finder and Stacks.
 - **Nothing to install.** It runs on the .NET Framework that ships with Windows, and building it only needs `build.bat`.
 - **Hackable.** Plain C#, with one file per feature. See [How it's built](#how-its-built).
@@ -29,11 +29,10 @@ Run `OpenDock.exe` and the dock and menu bar appear. Quit from the logo menu in 
 - Right-click an icon to see its open windows plus Keep in Dock, Show in Finder, Hide and Quit
 - Downloads stack: a grid of your recent downloads with thumbnails
 - Trash shows when it's empty or full and can be emptied from the dock
-- **Live glass** uses Windows' compositor to blur the actual windows behind the dock, Finder, Settings and menus, while keeping them visible in screenshots and recordings. Turning Live glass off uses wallpaper frost. An explicitly labeled compatibility capture switch retains the older capture-based effect, which hides sampling windows in recordings.
-- **Custom icons**: right-click an app or a built-in Dock icon, choose **Choose Dock Icon…**, and select PNG, JPEG, BMP or ICO artwork. OpenDock stores its own normalized PNG copy and shares it across displays. **Reset Dock Icon** restores the original.
+- **Live frosted glass** by default: the original blur samples the windows behind the dock, Finder, Settings and menus. Sampling windows can disappear from screenshots and recordings. Turn **Live glass** off in Desktop & Dock to use a blurred wallpaper backdrop that remains visible in capture
 - **Bottom, left or right** placement, with upright icons, inward magnification and bouncing, edge auto-hide, drag to reorder/remove, menus, previews and Downloads. Crowded docks shrink to fit the screen, including magnification
 - **A Dock on every display** by default, with shared pinned apps and running-app indicators. Desktop & Dock can switch back to a single selected display; the menu bar uses the selected display. Previews, Downloads, Launchpad, Spotlight and new Finder windows follow the dock you use. Display changes add/remove docks and release their reserved space
-- Auto-hide with a slide animation; **Reserve space for Dock** keeps maximized windows above it. Turn that switch off to let windows extend behind the glass.
+- Auto-hide with a slide animation
 
 **Menu bar**
 - The bold name of the active app, plus File / Edit / View / Window / Help menus that send the matching shortcuts to that app
@@ -48,9 +47,7 @@ Run `OpenDock.exe` and the dock and menu bar appear. Quit from the logo menu in 
 
 **Spotlight** (`Alt+Space`): search apps, files (through the Windows Search index) and math (`12*7+3`), or fall back to a web search. `Ctrl+Enter` shows the selected result in Finder.
 
-**Finder**: a file browser with traffic-light buttons, a sidebar (Applications, Desktop, Documents, Downloads, drives and so on), image and video thumbnails, back/forward, a filter box, drag and drop (including onto sidebar folders and Trash), copy/paste, Move to Trash, Get Info and New Folder. Toggle icons/list with the toolbar button or `Ctrl+1` / `Ctrl+2`; list view shows name, size, kind and modification date. Click a column heading to sort in either direction, with folders first and numeric size/date ordering. Rename a selected file or folder with `F2` or **Rename…** in its context menu. Rename inline with Enter to save or Escape to cancel. Renaming validates Windows filenames and never overwrites an existing destination.
-
-**Updates and rollback**: **System Settings → General → Software Update** checks GitHub releases on request, optionally includes previews, verifies the executable’s size and SHA-256, and restarts using an atomic replacement. The previous executable remains available through **Restore Previous Build**. Startup failures restore the previous build; settings are retained.
+**Finder**: a file browser with traffic-light buttons, a sidebar (Applications, Desktop, Documents, Downloads, drives and so on), image and video thumbnails, back/forward, a filter box, drag and drop (including onto sidebar folders and Trash), copy/paste, Move to Trash, Get Info and New Folder. Toggle icons/list with the toolbar button or `Ctrl+1` / `Ctrl+2`; list view shows name, size, kind and modification date. Rename a selected file or folder with `F2` or **Rename…** in its context menu. Renaming validates Windows filenames and never overwrites an existing destination.
 
 **System Settings**: a macOS-style window with a sidebar and a real page for each category, so nothing sends you to the Windows Settings app. It covers Wi-Fi, Bluetooth, Network, Notifications, Sound, Displays, Wallpaper, Battery, Lock Screen, Privacy, Users, Keyboard, Mouse and Printers, plus OpenDock's own pages: Desktop & Dock (icon size, magnification, spacing between apps, auto-hide, animations, indicators), Appearance (Light, Dark or follow Windows) and Control Center (menu bar height). **Displays** also has **color profiles** (Standard, Vivid, OLED, Studio, Cinema, Night, Grayscale, or your own mix) that tint everything on screen while OpenDock runs. The **Wallpaper** page keeps a library: photos you add stay until you remove them. **About This PC** (logo menu) copies macOS's About This Mac.
 
@@ -86,21 +83,21 @@ Plain WPF written in code, one file per feature, in `src/`:
 | `Finder.cs` | Finder window, the shared mac window chrome, the System Settings window |
 | `Panes.cs`, `SystemInfo.cs` | the System Settings pages and About This PC; the Windows APIs behind them (audio, Wi-Fi, power, displays...) |
 | `ColorProfiles.cs` | screen color profiles |
-| `Glass.cs`, `NativeGlass.cs`, `Outside.cs` | frosted glass for windows and menus; closing menus when you click outside |
+| `Glass.cs`, `Outside.cs` | frosted glass for windows and menus; closing menus when you click outside |
 | `Shell.cs` | icons (via `IShellItemImageFactory`, or the 256px logo inside a Store app's package), installed apps, open windows, wallpaper |
 | `App.cs` | startup, settings, taskbar hiding, reserved screen space, hotkey, window events |
 | `Theme.cs`, `Art.cs` | light/dark palette and control templates, built-in vector icons |
 | `Native.cs` | Win32 interop |
-| `CustomIcons.cs` | managed custom icon copies and mapping |
-| `Updater.cs`, `Updates.cs` | release verification, restart/rollback helper and update settings |
 
-The live blur isolates Windows' private accent policy in `NativeGlass.cs`; this is not a stable public contract, so unsupported systems fall back to wallpaper frost. A small clipped native pane sits behind each dock's icon window. Its compositor policy refreshes at 10 Hz while visible because Windows can otherwise cache a stale backdrop beneath layered windows. No desktop sampling or capture exclusion is needed in this mode. Finder and Settings keep their native resize/snap behavior and a translucent tint for readability. The compatibility mode still samples an excluded window at quarter resolution. Launchpad, Spotlight and Stacks use opening snapshots. The icon animation loop stops when settled.
+The blur uses the original capture-based implementation, with live glass enabled by default. It uses `SetWindowDisplayAffinity` to avoid capturing itself, samples at quarter size about 12 times a second, and box-blurs only when the picture changes. Sampling windows can therefore disappear from screenshots and recordings. Turning Live glass off uses wallpaper frost without a capture loop or capture exclusion. Wallpaper frost is also the fallback when capture exclusion is unavailable. Launchpad, Spotlight and Stacks blur an opening snapshot. The animation loop only runs while something is moving.
 
-The executable declares per-monitor-v2 DPI awareness and converts physical desktop coordinates using each window's scale. A dock is created on every connected display by default. Each HWND starts on its target display before appbar registration, so Explorer reserves space on the correct monitor. Display refreshes are debounced and retried across temporary empty enumerations, DPI changes and resume. Removed docks release their appbars, timers, event subscriptions and popup windows. The menu bar stays on the selected display.
+The experimental v0.2.0-preview.1 update was withdrawn after a glass regression. This branch returns to the v0.1.2-preview.2 implementation, with the original live-glass default restored. The user confirmed the restored installed version behaves correctly. The experimental changes remain recoverable in Git history.
+
+Display geometry uses the app's existing system-DPI WPF coordinate space, including negative screen origins. A dock is created on each connected display by default. Each HWND is initially created on its target display before registering its appbar, so Explorer reserves space on the correct monitor. Closed docks release appbars, timers, event subscriptions and popup windows. The menu bar remains on the selected display; per-monitor DPI awareness is not enabled.
 
 ## Not done yet
 
-The genie minimize effect and packaged icon-theme collections. Individual custom Dock icons are supported. Pull requests are welcome.
+The genie minimize effect and per-app icon themes. Pull requests are welcome.
 
 ## License
 
