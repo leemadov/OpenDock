@@ -94,7 +94,7 @@ namespace OpenDock
         public void Open()
         {
             if (IsOpen) return;
-            var bounds = DisplayLayout.Bounds;
+            var bounds = DisplayLayout.ActiveBounds;
             W = bounds.Width; H = bounds.Height;
             Left = bounds.Left; Top = bounds.Top; Width = W; Height = H;
             var shot = Icons.CaptureScreen((int)Math.Round(Left * App.Dpi), (int)Math.Round(Top * App.Dpi), (int)Math.Round(W * App.Dpi), (int)Math.Round(H * App.Dpi));

@@ -29,7 +29,7 @@ namespace OpenDock
         readonly TextBlock net = new TextBlock { FontFamily = Theme.Glyphs, FontSize = 15, VerticalAlignment = VerticalAlignment.Center };
         Border batteryButton, bgApps;
         Brush fg;
-        string current = "Finder";
+        string current = "Finder", displayDevice;
 
         public MenuBarWindow()
         {
@@ -143,7 +143,7 @@ namespace OpenDock
                 Native.MakeToolWindow(new WindowInteropHelper(this).Handle, true);
                 Bar = new AppBar(this, Native.ABE_TOP);
                 Bar.Placed = rc => { var r = DisplayLayout.Dip(rc); Left = r.Left; Top = r.Top; Width = r.Width; };
-                Bar.FullScreen = fs => { if (App.Dock != null) App.Dock.OnFullScreen(fs); };
+                Bar.FullScreen = fs => { foreach (var dock in App.Docks) dock.OnFullScreen(fs); };
                 Place();
             };
             App.ForegroundChanged += OnForeground;
@@ -164,7 +164,9 @@ namespace OpenDock
         public void Place()
         {
             if (Bar == null) return;
-            var bounds = DisplayLayout.Bounds;
+            var selected = DisplayLayout.Selected;
+            if (displayDevice != selected.Device) { Bar.Remove(); displayDevice = selected.Device; }
+            var bounds = DisplayLayout.Dip(selected.Bounds);
             Left = bounds.Left; Top = bounds.Top; Width = bounds.Width;
             if (Settings.ShowMenuBar) Bar.Reserve((int)Math.Round(H * App.Dpi)); else Bar.Remove();
         }

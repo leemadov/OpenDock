@@ -9,7 +9,9 @@ Run `build.bat check` for app-filtering and colour-profile regressions plus:
 
 `build.bat check --ui` adds integration checks on the current Windows desktop. It briefly opens test windows, reserves/releases appbar space, and creates fixtures and screenshots inside `bin/qa/`. It does not load or save user preferences, hide the Windows taskbar, change startup entries or colour profiles, or register global shortcuts/window hooks. It checks:
 
-- Bottom/left/right placements with auto-hide on and off, and fallback for a disconnected display.
+- Bottom/left/right placements on every physically connected display with auto-hide on/off, native HWND bounds, reserved work areas and fallback for a disconnected display.
+- Shared pin insertion/removal/order, running-app indicators on every dock, and Finder/previews/Downloads on the active dock's display.
+- Repeated all-display/single-display transitions, idempotent reconciliation, and cleanup of removed docks' timers, rendering and subscriptions.
 - Capture affinity on dock and Finder windows, including returning from optional live glass.
 - Actual Finder list rows, selection across icon/list switches, and light/dark rendering.
 - The rename dialog and its operation on a generated fixture file.
@@ -17,7 +19,7 @@ Run `build.bat check` for app-filtering and colour-profile regressions plus:
 
 `build.bat check --preview` runs those checks and then leaves an isolated controller open. Close **OpenDock checks** to release appbar space and exit. Its position/view buttons change only in-memory test settings.
 
-Before release, also test on physical multi-monitor setups (these cannot be established by synthetic geometry checks):
+The desktop checks were run with two 1920×1080 displays at origins (0,0) and (1920,0). Other hardware layouts still need the following checks:
 
 1. Select each display in Desktop & Dock. Check dock/menu placement, maximized-window bounds, Launchpad, Spotlight, Finder, previews and Downloads.
 2. Arrange a display to the left/above the primary; use unequal resolutions and Windows scaling factors.
@@ -26,4 +28,6 @@ Before release, also test on physical multi-monitor setups (these cannot be esta
 5. Capture a screenshot and recording in default mode. Opt into Live glass, then turn it off and verify the dock, Finder, Settings and menus are visible in capture again.
 6. Rename from the context menu and F2; cancel, submit an invalid/existing name, and try a case-only rename. Verify multi-selection, copy/paste and drag/drop in both Finder views.
 
-The app retains system-DPI awareness and one selected dock/menu pair. Simultaneous docks on every display and per-monitor DPI awareness are outside this change.
+The app creates a dock on every display by default, with an option for one selected dock. The menu bar stays on the selected display. Per-monitor DPI awareness remains outside this change.
+
+After installing, `bin\checks.exe --inspect <OpenDock process ID>` verifies that the actual running process has a visible dock HWND inside each monitor's bounds.

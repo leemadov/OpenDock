@@ -133,7 +133,7 @@ namespace OpenDock
             Width = 1000; Height = 640; MinWidth = 560; MinHeight = 340;
             int n = App.Finders.Count;
             WindowStartupLocation = WindowStartupLocation.Manual;
-            var area = DisplayLayout.WorkArea;
+            var area = DisplayLayout.ActiveWorkArea;
             Width = Math.Min(Width, area.Width); Height = Math.Min(Height, area.Height);
             var origin = DisplayLayout.Clamp(new Point(area.Left + (area.Width - Width) / 2 + n * 28, area.Top + (area.Height - Height) / 2 + n * 28), new Size(Width, Height), area);
             Left = origin.X; Top = origin.Y;
@@ -966,7 +966,8 @@ namespace OpenDock
             foreach (var screen in screens) display.Items.Add(screen.Device + (screen.Primary ? " (Main)" : ""));
             int selected = screens.FindIndex(s => s.Device == Settings.DisplayDevice);
             display.SelectedIndex = selected < 0 ? 0 : selected + 1;
-            AddChoice(dock, "Dock and menu bar display", display, () => Settings.DisplayDevice = display.SelectedIndex == 0 ? "" : screens[display.SelectedIndex - 1].Device);
+            AddSwitch(dock, "Show Dock on every display", Settings.DockOnAllDisplays, v => Settings.DockOnAllDisplays = v);
+            AddChoice(dock, "Menu bar / single Dock display", display, () => Settings.DisplayDevice = display.SelectedIndex == 0 ? "" : screens[display.SelectedIndex - 1].Device);
             AddSwitch(dock, "Live glass (hides windows from screen capture)", Settings.LiveGlass, v => Settings.LiveGlass = v);
             AddSlider(dock, "Size", 36, 96, Settings.IconSize, v => Settings.IconSize = (int)v);
             AddSlider(dock, "Spacing between apps", 0, 16, Settings.DockSpacing, v => Settings.DockSpacing = (int)Math.Round(v));

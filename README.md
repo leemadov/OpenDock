@@ -31,7 +31,7 @@ Run `OpenDock.exe` and the dock and menu bar appear. Quit from the logo menu in 
 - Trash shows when it's empty or full and can be emptied from the dock
 - **Capture-safe frosted glass** by default: a blurred wallpaper backdrop keeps the dock, Finder, Settings and menus visible in screenshots and recordings. Optional **Live glass** in Desktop & Dock samples windows behind them, but hides the sampling windows from capture; its switch spells out that tradeoff
 - **Bottom, left or right** placement, with upright icons, inward magnification and bouncing, edge auto-hide, drag to reorder/remove, menus, previews and Downloads. Crowded docks shrink to fit the screen, including magnification
-- **Display selection** in Desktop & Dock: keep one dock and menu bar on any connected display, or follow the main display. Launchpad, Spotlight and new Finder windows use that display too. Disconnected displays fall back to the main display, and reserved space follows the chosen edge
+- **A Dock on every display** by default, with shared pinned apps and running-app indicators. Desktop & Dock can switch back to a single selected display; the menu bar uses the selected display. Previews, Downloads, Launchpad, Spotlight and new Finder windows follow the dock you use. Display changes add/remove docks and release their reserved space
 - Auto-hide with a slide animation
 
 **Menu bar**
@@ -91,7 +91,7 @@ Plain WPF written in code, one file per feature, in `src/`:
 
 The blur doesn't use undocumented DWM APIs. Wallpaper frost is the default and does not exclude windows from capture or run a capture loop. The optional live mode uses `SetWindowDisplayAffinity` to avoid capturing itself, samples at quarter size about 12 times a second, and box-blurs only when the picture changes. If capture exclusion is unavailable it uses wallpaper frost. Launchpad, Spotlight and Stacks blur a snapshot of the screen taken as they open. The animation loop only runs while something is moving.
 
-Display geometry uses the app's existing system-DPI WPF coordinate space, including negative screen origins. One dock/menu bar pair can be placed on a selected monitor; this does not create a separate pair on every monitor or switch the app to per-monitor DPI awareness.
+Display geometry uses the app's existing system-DPI WPF coordinate space, including negative screen origins. A dock is created on each connected display by default. Each HWND is initially created on its target display before registering its appbar, so Explorer reserves space on the correct monitor. Closed docks release appbars, timers, event subscriptions and popup windows. The menu bar remains on the selected display; per-monitor DPI awareness is not enabled.
 
 ## Not done yet
 

@@ -63,6 +63,8 @@ namespace OpenDock
             Action cleanup = delegate
             {
                 timer.Stop();
+                foreach (var monitorDock in App.Docks.ToList()) monitorDock.Close();
+                App.Docks.Clear();
                 if (dock.Bar != null) dock.Bar.Remove();
                 if (menu.Bar != null) menu.Bar.Remove();
                 app.Shutdown();
@@ -145,6 +147,8 @@ namespace OpenDock
                     else if (step == 11)
                     {
                         Capture(dock, "dock-right");
+                        timer.Stop(); dock.Close(); App.Dock = null;
+                        MultiDisplayChecks.Run(fixture); dock = App.Dock;
                         Console.WriteLine("desktop checks passed; snapshots in bin/qa");
                         timer.Stop();
                         if (!preview) cleanup();
@@ -155,7 +159,7 @@ namespace OpenDock
                             {
                                 int position = i;
                                 var button = new Button { Content = new[] { "Bottom", "Left", "Right" }[i], Margin = new Thickness(4) };
-                                button.Click += delegate { Settings.DockPosition = position; dock.Place(); };
+                                button.Click += delegate { Settings.DockPosition = position; foreach (var monitorDock in App.Docks) monitorDock.Place(); };
                                 panel.Children.Add(button);
                             }
                             var toggle = new Button { Content = "Toggle Finder view", Margin = new Thickness(4) };

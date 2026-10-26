@@ -17,6 +17,7 @@ namespace OpenDock
     static class Settings
     {
         public static int DockPosition = 0;      // 0 = bottom, 1 = left, 2 = right
+        public static bool DockOnAllDisplays = true;
         public static string DisplayDevice = ""; // empty = follow primary, otherwise Windows' display device name
         public static bool LiveGlass = false;    // capture exclusion is opt-in; wallpaper frost is capture-safe
         public static bool FinderListView = false;
@@ -129,14 +130,15 @@ namespace OpenDock
     // Reserves screen space like the Windows taskbar does, so maximized windows stop at the menu bar / dock.
     class AppBar
     {
-        readonly IntPtr hwnd; readonly uint msg; uint edge; bool registered; int thickness; bool placing;
+        readonly IntPtr hwnd; readonly uint msg; readonly Func<Native.RECT> bounds; uint edge; bool registered; int thickness; bool placing;
         public Action<bool> FullScreen;
         public Action<Native.RECT> Placed;
 
-        public AppBar(Window w, uint edge)
+        public AppBar(Window w, uint edge, Func<Native.RECT> bounds = null)
         {
             hwnd = new WindowInteropHelper(w).Handle;
             this.edge = edge;
+            this.bounds = bounds ?? (() => DisplayLayout.Selected.Bounds);
             msg = Native.RegisterWindowMessage("OpenDockAppBar");
             HwndSource.FromHwnd(hwnd).AddHook(Hook);
         }
@@ -151,8 +153,9 @@ namespace OpenDock
             {
                 thickness = px;
                 var d = Data();
-                if (!registered) { Native.SHAppBarMessage(Native.ABM_NEW, ref d); registered = true; }
-                d.rc = DisplayLayout.Selected.Bounds;
+                if (!registered) { registered = Native.SHAppBarMessage(Native.ABM_NEW, ref d) != IntPtr.Zero; }
+                if (!registered) { App.Log("Appbar registration failed"); return; }
+                d.rc = bounds();
                 Native.SHAppBarMessage(Native.ABM_QUERYPOS, ref d);
                 if (edge == Native.ABE_TOP) d.rc.Bottom = d.rc.Top + px;
                 else if (edge == Native.ABE_BOTTOM) d.rc.Top = d.rc.Bottom - px;
@@ -169,15 +172,20 @@ namespace OpenDock
         public void Remove()
         {
             if (!registered) return;
+            registered = false;
             var d = Data();
             Native.SHAppBarMessage(Native.ABM_REMOVE, ref d);
-            registered = false;
         }
 
         public void Reregister() { if (registered) { registered = false; Reserve(thickness); } }
 
         IntPtr Hook(IntPtr h, int m, IntPtr w, IntPtr l, ref bool handled)
         {
+            if (m == 0x0047 /* WM_WINDOWPOSCHANGED */ && registered && !placing)
+            {
+                var data = Data();
+                Native.SHAppBarMessage(Native.ABM_WINDOWPOSCHANGED, ref data);
+            }
             if (m == msg)
             {
                 if ((int)w == Native.ABN_POSCHANGED && registered) Reserve(thickness);
@@ -271,6 +279,8 @@ namespace OpenDock
     {
         public static double Dpi = 1;
         public static DockWindow Dock;
+        public static readonly List<DockWindow> Docks = new List<DockWindow>();
+        static bool reconcilingDocks;
         public static MenuBarWindow MenuBar;
         public static LaunchpadWindow Launchpad;
         public static SpotlightWindow Spotlight;
@@ -336,7 +346,8 @@ namespace OpenDock
                     {
                         Wallpaper.Load();
                         if (MenuBar != null) MenuBar.Place();
-                        if (Dock != null) Dock.Place();
+                        ReconcileDocks();
+                        foreach (var dock in Docks) dock.Place();
                         if (Launchpad != null && Launchpad.IsOpen) Launchpad.Close2(null);
                         if (Spotlight != null && Spotlight.IsVisible) Spotlight.Close2();
                     }));
@@ -392,7 +403,7 @@ namespace OpenDock
                 {
                     if (Settings.HideTaskbar) Taskbar.Hide();
                     if (MenuBar != null) MenuBar.Bar.Reregister();
-                    if (Dock != null) Dock.Bar.Reregister();
+                    foreach (var dock in Docks) dock.Bar.Reregister();
                 }), DispatcherPriority.Background);
                 return IntPtr.Zero;
             });
@@ -402,8 +413,8 @@ namespace OpenDock
             if (Settings.HideTaskbar || Settings.TaskbarStateToRestore >= 0) { if (Settings.HideTaskbar) Taskbar.Hide(); else Taskbar.Restore(); }
             MenuBar = new MenuBarWindow();
             if (Settings.ShowMenuBar) MenuBar.Show();
-            Dock = new DockWindow();
-            Dock.Show();
+            ReconcileDocks();
+            Settings.Changed += ReconcileDocks;
             Launchpad = new LaunchpadWindow();
             Spotlight = new SpotlightWindow();
 
@@ -430,6 +441,49 @@ namespace OpenDock
             LastForeground = Native.GetForegroundWindow();
         }
 
+        // Keep a window per connected monitor. Closing a removed dock also releases its appbar and timers.
+        public static void ReconcileDocks()
+        {
+            if (reconcilingDocks) return;
+            reconcilingDocks = true;
+            try
+            {
+                var screens = Sys.Screens();
+                if (screens.Count == 0) return; // transient display change; retain the last usable layout
+                var selected = screens.FirstOrDefault(s => s.Device == Settings.DisplayDevice) ?? screens.FirstOrDefault(s => s.Primary) ?? screens[0];
+                var devices = Settings.DockOnAllDisplays ? screens.Select(s => s.Device).ToList() : new List<string> { selected.Device };
+                foreach (var dock in Docks.Where(d => !devices.Contains(d.Device)).ToList())
+                {
+                    Docks.Remove(dock);
+                    if (Dock == dock) Dock = null;
+                    dock.Close();
+                }
+                foreach (var device in devices.Where(d => !Docks.Any(w => w.Device == d)))
+                {
+                    var dock = new DockWindow(device);
+                    Docks.Add(dock);
+                    if (Dock == null) Dock = dock;
+                    dock.Show();
+                    dock.Sync(Wins);
+                }
+                if (!Docks.Contains(Dock)) Dock = Docks.FirstOrDefault(d => d.Device == selected.Device) ?? Docks.FirstOrDefault();
+            }
+            finally { reconcilingDocks = false; }
+        }
+
+        public static void SyncPins(DockWindow source)
+        {
+            foreach (var dock in Docks.ToList()) if (dock != source) dock.RefreshPins();
+        }
+
+        static void SelectDockAtCursor()
+        {
+            Native.POINT p;
+            if (!Native.GetCursorPos(out p)) return;
+            var at = new Point(p.X / Dpi, p.Y / Dpi);
+            Dock = Docks.FirstOrDefault(d => d.MonitorBounds.Contains(at)) ?? Dock;
+        }
+
         static void Hook(uint min, uint max, Native.WinEventProc cb, uint flags = 2 /* OUTOFCONTEXT | SKIPOWNPROCESS */)
         {
             hooks.Add(cb);
@@ -444,11 +498,12 @@ namespace OpenDock
             if (WindowsChanged != null) WindowsChanged(Wins);
         }
 
-        public static void ToggleSpotlight() { if (Spotlight.IsVisible) Spotlight.Close2(); else Spotlight.Open(); }
-        public static void ToggleLaunchpad() { if (Launchpad.IsOpen) Launchpad.Close2(null); else Launchpad.Open(); }
+        public static void ToggleSpotlight() { SelectDockAtCursor(); if (Spotlight.IsVisible) Spotlight.Close2(); else Spotlight.Open(); }
+        public static void ToggleLaunchpad() { SelectDockAtCursor(); if (Launchpad.IsOpen) Launchpad.Close2(null); else Launchpad.Open(); }
 
         public static void NewFinder(string path = null)
         {
+            SelectDockAtCursor();
             var f = new FinderWindow(path ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
             f.Show();
             f.Activate();
@@ -487,7 +542,7 @@ namespace OpenDock
             try
             {
                 ColorProfiles.Stop();
-                if (Dock != null) Dock.Bar.Remove();
+                foreach (var dock in Docks) if (dock.Bar != null) dock.Bar.Remove();
                 if (MenuBar != null) MenuBar.Bar.Remove();
                 if (Settings.HideTaskbar) Taskbar.Release(); else Taskbar.Restore();
             }

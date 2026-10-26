@@ -97,7 +97,7 @@ namespace OpenDock
         public void Open()
         {
             closing = false;
-            var bounds = DisplayLayout.Bounds;
+            var bounds = DisplayLayout.ActiveBounds;
             var at = DisplayLayout.Clamp(new Point(bounds.Left + (bounds.Width - Width) / 2, bounds.Top + bounds.Height * 0.2 - Pad), new Size(Width, MaxH + Pad * 2), bounds);
             Left = at.X; Top = at.Y;
             // Frosted glass: blur what's behind the panel right now.

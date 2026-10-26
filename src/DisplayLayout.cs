@@ -12,7 +12,7 @@ namespace OpenDock
             get
             {
                 var screens = Sys.Screens();
-                return screens.FirstOrDefault(s => s.Device == Settings.DisplayDevice) ?? screens.First(s => s.Primary);
+                return screens.FirstOrDefault(s => s.Device == Settings.DisplayDevice) ?? screens.FirstOrDefault(s => s.Primary) ?? screens.First();
             }
         }
 
@@ -20,6 +20,15 @@ namespace OpenDock
         {
             return new Rect(r.Left / App.Dpi, r.Top / App.Dpi, (r.Right - r.Left) / App.Dpi, (r.Bottom - r.Top) / App.Dpi);
         }
+
+        public static Sys.Display ForDevice(string device)
+        {
+            return Sys.Screens().FirstOrDefault(s => s.Device == device) ?? Selected;
+        }
+
+        public static Sys.Display Active { get { return App.Dock == null ? Selected : App.Dock.Screen; } }
+        public static Rect ActiveBounds { get { return Dip(Active.Bounds); } }
+        public static Rect ActiveWorkArea { get { return Dip(Active.Work); } }
 
         public static Rect Bounds { get { return Dip(Selected.Bounds); } }
         public static Rect WorkArea { get { return Dip(Selected.Work); } }
