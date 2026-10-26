@@ -19,7 +19,7 @@ namespace OpenDock
 {
     class DockItem
     {
-        public string Kind = "app";               // app, finder, launchpad, stack, trash, sep
+        public string Kind = "app";               // app, internal, finder, launchpad, stack, trash, sep
         public string Name, Target, IconPath, RunKey;
         public bool Pinned;
         public readonly HashSet<string> Keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -389,6 +389,7 @@ namespace OpenDock
                 case "launchpad": it.Img.Source = Art.Launchpad; break;
                 case "stack": it.Img.Source = Art.Downloads; break;
                 case "trash": trashFull = Launcher.TrashFull(); it.Img.Source = Art.Trash(trashFull); break;
+                case "internal": it.Img.Source = it.RunKey == "opendock:settings" ? Art.Settings : Art.Computer; break;
                 default: Icons.Get(it.IconPath, true, img => it.Img.Source = img); break;
             }
         }
@@ -472,18 +473,18 @@ namespace OpenDock
             var loose = new List<WinInfo>();
             foreach (var w in wins)
             {
-                var it = items.FirstOrDefault(i => i.Kind == "app" && i.Pinned && i.Matches(w)) ?? items.FirstOrDefault(i => i.Kind == "app" && !i.Pinned && i.Matches(w));
+                var it = w.InternalKind != null ? items.FirstOrDefault(i => i.Kind == "internal" && i.RunKey == w.Key)
+                    : items.FirstOrDefault(i => i.Kind == "app" && i.Pinned && i.Matches(w)) ?? items.FirstOrDefault(i => i.Kind == "app" && !i.Pinned && i.Matches(w));
                 if (it != null) it.Wins.Add(w); else loose.Add(w);
             }
-            if (Settings.ShowRunning)
-                foreach (var g in loose.Where(w => w.Key != null).GroupBy(w => w.Key, StringComparer.OrdinalIgnoreCase))
-                {
-                    var it = NewRunning(g.First());
-                    it.Wins.AddRange(g);
-                    Add(it, SepIndex());
-                }
+            foreach (var g in loose.Where(w => w.Key != null && (Settings.ShowRunning || w.InternalKind != null)).GroupBy(w => w.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                var it = NewRunning(g.First());
+                it.Wins.AddRange(g);
+                Add(it, SepIndex());
+            }
             double now = clock.Elapsed.TotalSeconds;
-            foreach (var it in items.Where(i => i.Kind == "app"))
+            foreach (var it in items.Where(i => i.Kind == "app" || i.Kind == "internal"))
             {
                 if (it.Wins.Count > 0) it.GoneAt = -1;
                 else if (it.GoneAt < 0) it.GoneAt = now;
@@ -506,6 +507,8 @@ namespace OpenDock
 
         DockItem NewRunning(WinInfo w)
         {
+            if (w.InternalKind != null) return new DockItem { Kind = "internal", RunKey = w.Key,
+                Name = w.InternalKind == "settings" ? "System Settings" : w.InternalKind == "about" ? "About This PC" : "OpenDock Windows" };
             var it = new DockItem { RunKey = w.Key };
             var e = w.IsFrameHost ? Apps.ById(w.Aumid) : (Apps.ByExe(w.Exe) ?? (w.Aumid != null ? Apps.ById(w.Aumid) : null));
             if (e != null) { it.Name = e.Name; it.Target = e.Target; it.IconPath = e.Icon; }
@@ -537,6 +540,7 @@ namespace OpenDock
         {
             preview.Close2();
             if (it.Kind == "finder") { App.NewFinder(); return; }
+            if (it.Kind == "internal") { if (it.Wins.Count > 0) FocusApp(it); return; }
             if (it.Kind != "app") return;
             Launcher.Open(it.Target);
             it.BounceT0 = clock.Elapsed.TotalSeconds; it.BounceStop = it.BounceT0;   // one bounce
@@ -546,7 +550,7 @@ namespace OpenDock
         List<IntPtr> WindowsOf(DockItem it)
         {
             if (it.Kind == "finder") return App.Finders.Select(f => new WindowInteropHelper(f).Handle).ToList();
-            return it.Kind == "app" ? it.Wins.Select(w => w.Hwnd).ToList() : null;
+            return it.Kind == "app" || it.Kind == "internal" ? it.Wins.Select(w => w.Hwnd).ToList() : null;
         }
 
         // Hover a running app for a moment and its windows' live previews appear; moving to another running app
@@ -579,6 +583,7 @@ namespace OpenDock
                 case "launchpad": App.ToggleLaunchpad(); break;
                 case "stack": ToggleStack(it); break;
                 case "trash": Launcher.Shell("shell:RecycleBinFolder"); break;
+                case "internal": if (it.Wins.Count > 0) FocusApp(it); break;
                 default:
                     if (it.Wins.Count == 0) Launch(it, null);
                     else FocusApp(it);
@@ -639,7 +644,7 @@ namespace OpenDock
         void ShowMenu(DockItem it)
         {
             var cm = new ContextMenu();
-            if (it.Kind == "app" && it.Wins.Count > 0)
+            if ((it.Kind == "app" || it.Kind == "internal") && it.Wins.Count > 0)
             {
                 foreach (var w in it.Wins.Take(12))
                 {
@@ -650,6 +655,10 @@ namespace OpenDock
             }
             switch (it.Kind)
             {
+                case "internal":
+                    cm.Items.Add(Item("Hide", () => { foreach (var w in it.Wins) Native.ShowWindow(w.Hwnd, Native.SW_MINIMIZE); }));
+                    cm.Items.Add(Item("Close Windows", () => { foreach (var w in it.Wins) Native.PostMessage(w.Hwnd, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero); }));
+                    break;
                 case "app":
                     if (it.Wins.Count == 0) cm.Items.Add(Item("Open", () => Launch(it, null)));
                     var keep = Item("Keep in Dock", () =>

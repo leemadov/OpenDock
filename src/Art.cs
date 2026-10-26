@@ -29,7 +29,44 @@ namespace OpenDock
             return Icons.Render(host, 256, 256);
         }
 
-        static BitmapSource finder, launchpad, downloads, trash, trashFull;
+        static BitmapSource finder, launchpad, downloads, trash, trashFull, settings, computer;
+
+        public static BitmapSource Settings
+        {
+            get
+            {
+                if (settings != null) return settings;
+                var g = new DrawingGroup();
+                g.Children.Add(new GeometryDrawing(Grad("#E1E5EB", "#929AA7"), null, new RectangleGeometry(Tile, R, R)));
+                var metal = Grad("#626B79", "#343B48");
+                for (int i = 0; i < 12; i++)
+                {
+                    var tooth = new RectangleGeometry(new Rect(117, 43, 22, 38), 4, 4) { Transform = new RotateTransform(i * 30, 128, 128) };
+                    g.Children.Add(new GeometryDrawing(metal, null, tooth));
+                }
+                g.Children.Add(new GeometryDrawing(metal, new Pen(Solid("#D4DAE3"), 3), new EllipseGeometry(new Point(128, 128), 65, 65)));
+                g.Children.Add(new GeometryDrawing(Grad("#DCE1E9", "#9BA5B5"), new Pen(Solid("#232B38"), 5), new EllipseGeometry(new Point(128, 128), 43, 43)));
+                g.Children.Add(new GeometryDrawing(Grad("#414A58", "#687484"), null, new EllipseGeometry(new Point(128, 128), 25, 25)));
+                return settings = Bake(g);
+            }
+        }
+
+        public static BitmapSource Computer
+        {
+            get
+            {
+                if (computer != null) return computer;
+                var g = new DrawingGroup();
+                g.Children.Add(new GeometryDrawing(Grad("#62C5FF", "#146BCC"), null, new RectangleGeometry(Tile, R, R)));
+                g.Children.Add(new GeometryDrawing(Grad("#EDF4FC", "#A9BDDA"), new Pen(Solid("#284565"), 3), new RectangleGeometry(new Rect(43, 61, 170, 121), 9, 9)));
+                g.Children.Add(new GeometryDrawing(Grad("#143A67", "#061B39"), null, new RectangleGeometry(new Rect(51, 69, 154, 97), 3, 3)));
+                for (int i = 0; i < 4; i++)
+                    g.Children.Add(new GeometryDrawing(Solid("#38B5FF"), null, new RectangleGeometry(new Rect(108 + i % 2 * 23, 96 + i / 2 * 23, 19, 19))));
+                g.Children.Add(new GeometryDrawing(Grad("#A9BDDA", "#EAF0FA"), null, new RectangleGeometry(new Rect(114, 182, 28, 22), 2, 2)));
+                g.Children.Add(new GeometryDrawing(Solid("#E1EBF7"), null, new RectangleGeometry(new Rect(85, 201, 86, 10), 5, 5)));
+                return computer = Bake(g);
+            }
+        }
 
         public static BitmapSource Finder
         {

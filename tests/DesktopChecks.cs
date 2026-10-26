@@ -149,6 +149,7 @@ namespace OpenDock
                         Capture(dock, "dock-right");
                         timer.Stop(); dock.Close(); App.Dock = null;
                         MultiDisplayChecks.Run(fixture); dock = App.Dock;
+                        InternalWindowChecks.Run();
                         Console.WriteLine("desktop checks passed; snapshots in bin/qa");
                         timer.Stop();
                         if (!preview) cleanup();

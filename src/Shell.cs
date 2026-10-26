@@ -437,9 +437,9 @@ namespace OpenDock
 
     class WinInfo
     {
-        public IntPtr Hwnd; public uint Pid; public string Title, Exe, Aumid;
+        public IntPtr Hwnd; public uint Pid; public string Title, Exe, Aumid, InternalKind;
         // Store apps all live in ApplicationFrameHost, so they're told apart by AppUserModelID.
-        public string Key { get { return !string.IsNullOrEmpty(Aumid) && IsFrameHost ? Aumid : Exe; } }
+        public string Key { get { return InternalKind != null ? "opendock:" + InternalKind : !string.IsNullOrEmpty(Aumid) && IsFrameHost ? Aumid : Exe; } }
         public bool IsFrameHost { get { return Exe != null && Exe.EndsWith("ApplicationFrameHost.exe", StringComparison.OrdinalIgnoreCase); } }
     }
 
@@ -474,6 +474,11 @@ namespace OpenDock
                 list.Add(new WinInfo { Hwnd = h, Pid = pid, Title = Native.WindowText(h), Exe = exe, Aumid = aumid });
                 return true;
             }, IntPtr.Zero);
+            // Include our document/settings windows explicitly; dock canvases, menus, overlays and owned dialogs stay out.
+            if (Application.Current != null)
+                foreach (var window in Application.Current.Windows.OfType<MacWindow>().Where(w => !(w is FinderWindow) && w.Owner == null && w.IsVisible))
+                    list.Add(new WinInfo { Hwnd = new WindowInteropHelper(window).Handle, Pid = myPid, Title = window.Title,
+                        InternalKind = window is SettingsWindow ? "settings" : window is AboutWindow ? "about" : "window" });
             foreach (var h in aumidByHwnd.Keys.Where(k => !seen.Contains(k)).ToList()) aumidByHwnd.Remove(h);
             if (exeByPid.Count > 500) exeByPid.Clear();
             return list;

@@ -37,6 +37,8 @@ namespace OpenDock
             FontFamily = Theme.Font;
             SetResourceReference(BackgroundProperty, "WinBg");
             if (glass) Glass.Attach(this, "WinGlass");
+            Loaded += delegate { App.QueueRefresh(); };
+            Closed += delegate { App.QueueRefresh(); };
             // Click anywhere outside the window (another app, the desktop) and it minimizes out of the way.
             // OpenDock's own dialogs, menus and other windows don't count, and neither does dragging out of it.
             Deactivated += delegate
@@ -59,7 +61,7 @@ namespace OpenDock
                 int round = 2; Native.DwmSetWindowAttribute(h, 33, ref round, 4);
                 int dark = Theme.Dark ? 1 : 0; Native.DwmSetWindowAttribute(h, 20, ref dark, 4);
             };
-            StateChanged += delegate { Layout.Margin = WindowState == WindowState.Maximized ? new Thickness(7) : new Thickness(0); };
+            StateChanged += delegate { Layout.Margin = WindowState == WindowState.Maximized ? new Thickness(7) : new Thickness(0); App.QueueRefresh(); };
             Activated += delegate { Paint(true); };
             Deactivated += delegate { Paint(false); };
         }
@@ -691,6 +693,7 @@ namespace OpenDock
         public SettingsWindow(string start)
         {
             Title = "System Settings";
+            Icon = Art.Settings;
             Width = 920; Height = 660; MinWidth = 760; MinHeight = 480;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             apply.Tick += delegate { apply.Stop(); Settings.Apply(); };
@@ -859,6 +862,7 @@ namespace OpenDock
             }
             title.Text = current;
             Title = current;
+            App.QueueRefresh();
             back.IsEnabled = at > 0; back.Opacity = at > 0 ? 1 : 0.35;
             forward.IsEnabled = at < history.Count - 1; forward.Opacity = forward.IsEnabled ? 1 : 0.35;
             var body = new StackPanel { Margin = new Thickness(24, 0, 24, 28) };

@@ -26,6 +26,7 @@ Run `OpenDock.exe` and the dock and menu bar appear. Quit from the logo menu in 
 - Drop files onto an app to open them with it, onto the Trash to delete them, or onto empty space to pin them
 - **Drag between windows**: hold anything you are dragging (files, text, links) over a running app's icon and its window comes to the front, so you can drop into it. This is macOS spring-loading, and it stands in for the Windows taskbar's drag-hover
 - Open apps that aren't pinned show up automatically (Store apps included)
+- OpenDock's own Settings and About This PC windows appear on every dock with dedicated gear/computer icons. Click to minimize or restore; right-click to select, hide or close their windows. Finder keeps its existing icon, and transient popups/dialogs stay out of the dock
 - Right-click an icon to see its open windows plus Keep in Dock, Show in Finder, Hide and Quit
 - Downloads stack: a grid of your recent downloads with thumbnails
 - Trash shows when it's empty or full and can be emptied from the dock

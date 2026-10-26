@@ -633,6 +633,7 @@ namespace OpenDock
         AboutWindow() : base(false)
         {
             Title = "About This PC";
+            Icon = Art.Computer;
             Width = 280 * Scale; Height = 499 * Scale; ResizeMode = ResizeMode.NoResize;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             Background = C("#E0E0E0", "#2B2B2B");

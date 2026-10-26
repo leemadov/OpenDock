@@ -11,6 +11,7 @@ Run `build.bat check` for app-filtering and colour-profile regressions plus:
 
 - Bottom/left/right placements on every physically connected display with auto-hide on/off, native HWND bounds, reserved work areas and fallback for a disconnected display.
 - Shared pin insertion/removal/order, running-app indicators on every dock, and Finder/previews/Downloads on the active dock's display.
+- OpenDock Settings/About window grouping and dedicated icons on every dock, minimized-window restoration by dock click, icon fallbacks for capture-protected hover cards, exclusion of owned dialogs/overlays, and removal after the final window closes, including when unpinned external apps are hidden.
 - Repeated all-display/single-display transitions, idempotent reconciliation, and cleanup of removed docks' timers, rendering and subscriptions.
 - Capture affinity on dock and Finder windows after switching Live glass off.
 - Actual Finder list rows, selection across icon/list switches, and light/dark rendering.
