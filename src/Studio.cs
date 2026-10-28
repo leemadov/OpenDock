@@ -34,6 +34,7 @@ namespace OpenDock
             Note(body,"Scenes reopen available apps and reposition matching windows. Minimized apps are not captured; apps may require you to reopen additional windows. App documents, browser sessions and unsaved content are controlled by each app.");
             if(Workspace.Status.Length>0) Note(body,Workspace.Status);
             body.Children.Add(Heading("Shelf & Living Icons")); var shelf=Group(body);
+            AddSwitch(shelf,"Show Shelf in Dock",Workspace.Data.ShowShelf,v=> { Workspace.Data.ShowShelf=v; Workspace.Save(); });
             Row(shelf,Pill("Open Shelf",ShelfWindow.Open)); Row(shelf,Pill("Collect Clipboard",ShelfWindow.AddClipboard));
             AddSwitch(shelf,"Live window counts, download activity and timer badges",Workspace.Data.LivingIcons,v=> { Workspace.Data.LivingIcons=v; Workspace.Save(); });
             var timers=new WrapPanel(); timers.Children.Add(Pill("5 minute timer",()=>Living.StartTimer(5))); timers.Children.Add(Pill("25 minute timer",()=>Living.StartTimer(25))); timers.Children.Add(Pill("Pause / Resume",Living.PauseTimer)); Row(shelf,timers);

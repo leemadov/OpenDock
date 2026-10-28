@@ -27,8 +27,9 @@ namespace OpenDock
                 if(payload.GetFileDropList().Count!=1||payload.GetText()!="collected note") throw new Exception("Shelf drag/copy payload");
                 Workspace.Data.Layouts.Add(new MonitorLayout { Device="fixture",Role="Creative tools",Pins=new System.Collections.Generic.List<string>{"Editor|fixture.exe"} });
                 Workspace.Data.Themes.Add(DockTheme.Capture("Test"));
-                Workspace.Data.Scenes.Add(new Scene { Name="Fixture" }); Workspace.Save(); Workspace.Load();
+                Workspace.Data.Scenes.Add(new Scene { Name="Fixture" }); Workspace.Data.ShowShelf=false; Workspace.Save(); Workspace.Load();
                 if(Workspace.Data.Scenes.Single().Name!="Fixture"||Workspace.Pins("fixture").Single()!="Editor|fixture.exe"||Workspace.Data.Themes.Single().Name!="Test") throw new Exception("Workspace persistence round trip");
+                if(Workspace.Data.ShowShelf||Workspace.Data.Shelf.Count!=2) throw new Exception("Shelf visibility preference or collected items did not persist");
                 var bounds=Workspace.Bounds(new SceneWindow { X=9,Y=-2,Width=10,Height=2 },new Native.RECT { Left=-1920,Top=-1080,Right=0,Bottom=0 });
                 if(bounds.Left< -1920||bounds.Right>0||bounds.Top< -1080||bounds.Bottom>0) throw new Exception("Scene bounds escaped disconnected-monitor fallback");
                 if(!Workspace.Commands(">tile window").Any()||!Workspace.Commands("Scene:").Any()) throw new Exception("Desktop command matching");
@@ -69,7 +70,31 @@ namespace OpenDock
                 if(typeof(FinderWindow).GetField("splitPane",Private).GetValue(finder)!=null) throw new Exception("Finder split view didn't close");
                 var panel=new SettingsWindow("Workspace"); panel.Show(); Settle(); Capture(panel,"workspace-studio"); panel.Close();
                 ShelfWindow.Open(); Settle();
-                var shelf=Application.Current.Windows.OfType<ShelfWindow>().Single(w=>w.IsVisible); Capture(shelf,"shelf"); shelf.Close();
+                var shelf=Application.Current.Windows.OfType<ShelfWindow>().Single(w=>w.IsVisible); Capture(shelf,"shelf");
+                var dock=App.Docks.First();
+                Func<DockWindow,System.Collections.Generic.List<DockItem>> items=d=>(System.Collections.Generic.List<DockItem>)typeof(DockWindow).GetField("items",Private).GetValue(d);
+                Shelf.Add("text","Keep this collected note");
+                var tile=items(dock).Single(i=>i.Kind=="shelf");
+                typeof(DockWindow).GetMethod("ShowMenu",Private).Invoke(dock,new object[]{tile});
+                var menu=(ContextMenu)typeof(DockWindow).GetField("openMenu",Private).GetValue(dock);
+                menu.Items.OfType<MenuItem>().Single(i=>(string)i.Header=="Remove from Dock").RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent)); Settle();
+                var currentWindows=Windows.Enumerate(); foreach(var display in App.Docks) display.Sync(currentWindows);
+                if(App.Docks.Any(d=>items(d).Any(i=>i.Kind=="shelf"||i.RunKey=="opendock:shelf"))) throw new Exception("Hidden Shelf returned while its window was open");
+                Workspace.Load(); if(Workspace.Data.ShowShelf||Workspace.Data.Shelf.Single().Value!="Keep this collected note") throw new Exception("Removing Shelf did not preserve its saved visibility/data");
+                var restarted=new DockWindow(dock.Device);
+                try { restarted.Sync(currentWindows); if(items(restarted).Any(i=>i.Kind=="shelf"||i.RunKey=="opendock:shelf")) throw new Exception("Shelf returned on a new dock"); }
+                finally { restarted.Close(); }
+                Workspace.Data.ShowShelf=true; Workspace.Save();
+                if(App.Docks.Any(d=>items(d).Count(i=>i.Kind=="shelf")!=1||items(d)[2].Kind!="shelf")) throw new Exception("Restoring Shelf created a duplicate or wrong position");
+                tile=items(dock).Single(i=>i.Kind=="shelf");
+                typeof(DockWindow).GetMethod("BeginDrag",Private).Invoke(dock,new object[]{tile});
+                double top=(double)typeof(DockWindow).GetField("bgTop",Private).GetValue(dock),slot=(double)typeof(DockWindow).GetField("slot",Private).GetValue(dock);
+                var outside=new Point(tile.CX,top-slot*2);
+                typeof(DockWindow).GetMethod("DragMove",Private).Invoke(dock,new object[]{outside});
+                typeof(DockWindow).GetMethod("EndDrag",Private).Invoke(dock,new object[]{outside}); Settle();
+                if(Workspace.Data.ShowShelf||App.Docks.Any(d=>items(d).Any(i=>i.Kind=="shelf"))) throw new Exception("Dragging Shelf off did not hide it on all monitors");
+                Workspace.Data.ShowShelf=true; Workspace.Save(); shelf.Close();
+                Console.WriteLine("Shelf: context-menu removal, drag-off removal, restart persistence, all-monitor restore and collected-data preservation passed");
                 using(var child=Process.Start(new ProcessStartInfo(Assembly.GetExecutingAssembly().Location,"--focus-fixture") { UseShellExecute=false,CreateNoWindow=true }))
                 {
                     WinInfo live=null; int tries=0;
@@ -90,7 +115,7 @@ namespace OpenDock
                 Console.WriteLine("workspace UI: independent Finder tabs/split panes, Dock Studio and Shelf opened successfully");
                 Console.WriteLine("workspace actions: saved external-window geometry restored and desktop tile command verified");
             }
-            finally { finder.Close(); Workspace.Data=data; Workspace.StorageDirectory=storage; if(Directory.Exists(isolated)) Directory.Delete(isolated,true); }
+            finally { finder.Close(); Workspace.Data=data; Workspace.StorageDirectory=storage; Workspace.Notify(); if(Directory.Exists(isolated)) Directory.Delete(isolated,true); }
         }
     }
 }

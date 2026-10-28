@@ -16,6 +16,7 @@ namespace OpenDock
         public List<MonitorLayout> Layouts = new List<MonitorLayout>();
         public List<DockTheme> Themes = new List<DockTheme>();
         public bool LivingIcons = true;
+        public bool ShowShelf = true;
     }
     class Scene
     {
@@ -106,7 +107,7 @@ namespace OpenDock
             File.WriteAllText(stage, text, new System.Text.UTF8Encoding(false));
             if (File.Exists(path)) File.Replace(stage, path, path + ".previous"); else File.Move(stage, path);
         }
-        public static void Notify() { if (Changed != null) Changed(); foreach (var dock in App.Docks.ToList()) dock.Sync(App.Wins); }
+        public static void Notify() { if (Changed != null) Changed(); foreach (var dock in App.Docks.ToList()) { dock.RefreshShelf(); dock.Sync(App.Wins); } }
         public static List<string> Pins(string device)
         {
             var layout = Data.Layouts.FirstOrDefault(l => l.Device == device);

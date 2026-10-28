@@ -21,6 +21,7 @@ Run `build.bat check` for app-filtering and colour-profile regressions plus:
 - Desktop & Dock settings and snapshots of each dock edge.
 - Finder address-bar navigation, environment/relative paths, invalid-path handling and back/forward updates; a separate-process focus fixture verifies Finder stays open; a fullscreen fixture verifies only the fullscreen monitor's dock hides while keyboard focus moves elsewhere, and returns after leaving fullscreen.
 - Independent Finder tabs and split panes, Dock Studio and Shelf opening, plus their screenshots. A separate-process scene fixture is moved and then restored to its captured bounds, and a desktop tiling command resizes that fixture.
+- Shelf removal through its context menu and drag-off gesture, hidden-state persistence on a new dock, all-monitor restoration, preservation of collected data and suppression of replacement tiles while Shelf remains open.
 - An isolated executable update helper rejects an incorrect checksum, atomically replaces/restarts a fixture and rolls back to its previous executable. It does not update the installed OpenDock during tests.
 
 `build.bat check --preview` runs those checks and then leaves an isolated controller open. Close **OpenDock checks** to release appbar space and exit. Its position/view buttons change only in-memory test settings.

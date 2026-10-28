@@ -165,7 +165,7 @@ namespace OpenDock
 
             AddFixed("finder", "Finder");
             AddFixed("launchpad", "Launchpad");
-            AddFixed("shelf", "Shelf");
+            if(Workspace.Data.ShowShelf) AddFixed("shelf", "Shelf");
             foreach (var p in Workspace.Pins(Device)) AddPin(p, items.Count);
             AddFixed("sep", "");
             AddFixed("stack", "Downloads");
@@ -359,7 +359,7 @@ namespace OpenDock
                 {
                     if (press != it) return;
                     var p = Logical(e.GetPosition(this));
-                    if (drag == null && (p - pressAt).Length > 6 && it.Kind == "app") BeginDrag(it);
+                    if (drag == null && (p - pressAt).Length > 6 && (it.Kind == "app" || it.Kind == "shelf")) BeginDrag(it);
                     if (drag == it) DragMove(p);
                 };
                 it.Root.MouseLeftButtonUp += (s, e) =>
@@ -433,6 +433,27 @@ namespace OpenDock
         int PinIndex() { int i = items.FindIndex(x => x.Kind == "app" && !x.Pinned); return i < 0 ? SepIndex() : i; }
         int FirstMovable() { return items.FindIndex(i => i.Kind != "finder" && i.Kind != "launchpad" && i.Kind != "shelf"); }
 
+        public void RefreshShelf()
+        {
+            if(closed) return;
+            var shelf=items.FirstOrDefault(i=>i.Kind=="shelf");
+            if(Workspace.Data.ShowShelf)
+            {
+                if(shelf==null) Add(new DockItem { Kind="shelf",Name="Shelf",P=1 },Math.Min(2,items.Count));
+                return;
+            }
+            if(shelf==null) return;
+            if(press==shelf) { shelf.Root.ReleaseMouseCapture(); press=null; }
+            if(drag==shelf) { drag=null; ghost.Hide(); }
+            if(hoverItem==shelf) hoverItem=null;
+            if(lastHot==shelf) lastHot=null;
+            if(labelItem==shelf) { labelItem=null; labelA=0; label.Opacity=0; }
+            if(dropHot==shelf) SetDropHot(null);
+            if(springItem==shelf) springItem=null;
+            preview.Close2(); if(openMenu!=null) openMenu.IsOpen=false;
+            layer.Children.Remove(shelf.Root); layer.Children.Remove(shelf.Dot); items.Remove(shelf); StartLoop();
+        }
+
         void SavePins()
         {
             Workspace.SetPins(Device, items.Where(i => i.Kind == "app" && i.Pinned).Select(i => i.Name + "|" + i.Target).ToList());
@@ -496,7 +517,7 @@ namespace OpenDock
             {
                 var it = w.InternalKind == "shelf" ? items.FirstOrDefault(i=>i.Kind=="shelf") : w.InternalKind != null ? items.FirstOrDefault(i => i.Kind == "internal" && i.RunKey == w.Key)
                     : items.FirstOrDefault(i => i.Kind == "app" && i.Pinned && i.Matches(w)) ?? items.FirstOrDefault(i => i.Kind == "app" && !i.Pinned && i.Matches(w));
-                if (it != null) it.Wins.Add(w); else loose.Add(w);
+                if (it != null) it.Wins.Add(w); else if(w.InternalKind!="shelf") loose.Add(w);
             }
             foreach (var g in loose.Where(w => w.Key != null && (Settings.ShowRunning || w.InternalKind != null)).GroupBy(w => w.Key, StringComparer.OrdinalIgnoreCase))
             {
@@ -711,7 +732,9 @@ namespace OpenDock
                     cm.Items.Add(Item("Open Launchpad", App.ToggleLaunchpad));
                     break;
                 case "shelf":
-                    cm.Items.Add(Item("Open Shelf",ShelfWindow.Open)); cm.Items.Add(Item("Collect Clipboard",ShelfWindow.AddClipboard)); break;
+                    cm.Items.Add(Item("Open Shelf",ShelfWindow.Open)); cm.Items.Add(Item("Collect Clipboard",ShelfWindow.AddClipboard));
+                    cm.Items.Add(new Separator());
+                    cm.Items.Add(Item("Remove from Dock",()=> { Workspace.Data.ShowShelf=false; Workspace.Save(); })); break;
                 case "stack":
                     cm.Items.Add(Item("Open", () => ToggleStack(it)));
                     cm.Items.Add(Item("Open in Finder", () => App.NewFinder(Launcher.Downloads)));
@@ -758,9 +781,9 @@ namespace OpenDock
         {
             ghost.MoveTo(ScreenPoint(p));
             dragOut = p.Y < bgTop - slot * 0.9;
-            ghost.ShowRemove(dragOut && drag.Pinned);
+            ghost.ShowRemove(dragOut && (drag.Pinned || drag.Kind=="shelf"));
             drag.PWant = dragOut ? 0 : 1;
-            if (dragOut) return;
+            if (dragOut || drag.Kind=="shelf") return;
             items.Remove(drag);
             int lo = FirstMovable(), hi = SepIndex(), at = lo;
             for (int i = lo; i < hi; i++) if (p.X > items[i].X) at = i + 1;
@@ -771,6 +794,12 @@ namespace OpenDock
         {
             var it = drag;
             drag = null;
+            if(it.Kind=="shelf")
+            {
+                if(dragOut) { ghost.Poof(); Workspace.Data.ShowShelf=false; Workspace.Save(); }
+                else { ghost.Hide(); it.PWant=1; }
+                dragOut=false; if(pinsNeedRefresh) RefreshPins(); StartLoop(); return;
+            }
             if (dragOut && it.Pinned)
             {
                 ghost.Poof();

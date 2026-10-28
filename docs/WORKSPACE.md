@@ -12,6 +12,8 @@ Scenes do not save documents, unsaved content, browser tabs, app credentials or 
 
 The purple tray icon opens the Shelf. Drop files or text onto its window, drop files onto its dock icon, or choose **Add Clipboard** for files, text, links and clipboard images. Select several entries and drag them together into another app, or choose **Copy Selected**. Remove unlinks an entry without deleting the original file. Text entries support 16,000 characters; the Shelf retains up to 200 entries within a bounded text budget. Clipboard images are copied into OpenDock's local data folder.
 
+To hide its dock icon, right-click Shelf → **Remove from Dock**, or drag it away from the dock. This applies to every monitor, survives restarts, and keeps collected items. Restore it with **Show Shelf in Dock** under Desktop Scenes & Dock Studio. Shelf remains accessible from the logo menu and Spotlight `>open shelf` while its icon is hidden.
+
 ## Desktop commands
 
 Press **Alt+Space** and type `>` to browse commands. Examples:
