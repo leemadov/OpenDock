@@ -21,6 +21,8 @@ namespace OpenDock
         public static string DisplayDevice = ""; // empty = follow primary, otherwise Windows' display device name
         public static bool LiveGlass = true;     // original live blur; excluded from screen capture to avoid feedback
         public static bool FinderListView = false;
+        public static int IconRevision = 0;
+        public static bool IncludePreviewUpdates = true;
         public static int IconSize = 60;          // dock slot size (DIP)
         public static int MagnifySize = 100;
         public static bool Magnify = true;
@@ -45,6 +47,7 @@ namespace OpenDock
 
         public static event Action Changed;
         static readonly string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "OpenDock");
+        public static string DataDir { get { return dir; } }
         public static string WallpaperDir { get { return Path.Combine(dir, "Wallpapers"); } }   // copies of photos you add
         static readonly string file = Path.Combine(dir, "settings.txt");
         public static string LogFile { get { return Path.Combine(dir, "error.log"); } }
@@ -64,6 +67,7 @@ namespace OpenDock
                 string k = line.Substring(0, eq), v = line.Substring(eq + 1);
                 if (k == "pin") { Pins.Add(v); continue; }
                 if (k == "hide") { Hidden.Add(v); continue; }
+                if (k == "icon") { CustomIcons.Read(v); continue; }
                 if (k == "wall") { Wallpapers.Add(v); continue; }
                 var f = Fields().FirstOrDefault(x => x.Name == k);
                 try { if (f != null) f.SetValue(null, Convert.ChangeType(v, f.FieldType)); } catch { }
@@ -77,7 +81,8 @@ namespace OpenDock
             lines.AddRange(Pins.Select(p => "pin=" + p));
             lines.AddRange(Hidden.Select(h => "hide=" + h));
             lines.AddRange(Wallpapers.Select(w => "wall=" + w));
-            File.WriteAllLines(file, lines);
+            lines.AddRange(CustomIcons.SaveLines());
+            Workspace.AtomicWrite(file,string.Join(Environment.NewLine,lines)+Environment.NewLine);
         }
 
         public static void Apply() { Save(); if (Changed != null) Changed(); }
@@ -332,7 +337,7 @@ namespace OpenDock
                 SystemEvents.SessionEnding += delegate { Cleanup(); };
                 using (var g = System.Drawing.Graphics.FromHwnd(IntPtr.Zero)) Dpi = g.DpiX / 96.0;
 
-                Settings.Load();
+                Settings.Load(); Workspace.Load();
                 Theme.Init(app);
                 Glass.Init();
                 Outside.Init();
@@ -439,6 +444,7 @@ namespace OpenDock
             slow.Tick += delegate { if (++ticks % 5 == 0) RefreshWindows(); foreach (var dock in Docks) dock.OnFullScreen(true); Taskbar.Enforce(); };
             slow.Start();
             RefreshWindows();
+            Living.Start();
             LastForeground = Native.GetForegroundWindow();
         }
 

@@ -89,7 +89,7 @@ namespace OpenDock
             head.Children.Add(close); head.Children.Add(title);
             // Minimized windows have no live picture; show the app icon instead, like the taskbar does.
             var host = new Grid { Width = CardW - 16, Height = ThumbH, Tag = w };
-            if (Native.IsIconic(w) || Item.Kind == "internal") host.Children.Add(new Image { Source = icon, Width = 64, Height = 64, Opacity = 0.8 });
+            if (Native.IsIconic(w) || Item.Kind == "internal" || Item.Kind == "shelf") host.Children.Add(new Image { Source = icon, Width = 64, Height = 64, Opacity = 0.8 });
             var body = new StackPanel();
             body.Children.Add(head); body.Children.Add(host);
             var card = new Border { Width = CardW, Padding = new Thickness(8), CornerRadius = new CornerRadius(8), Background = Brushes.Transparent, Child = body, Tag = w, Cursor = Cursors.Hand };
@@ -113,7 +113,7 @@ namespace OpenDock
             var w = (IntPtr)card.Tag;
             var host = (Grid)((StackPanel)card.Child).Children[1];
             // Our live-glass windows are excluded from desktop capture; use their dedicated icon instead of a blank thumbnail.
-            if (card.Visibility != Visibility.Visible || Native.IsIconic(w) || Item.Kind == "internal") return;
+            if (card.Visibility != Visibility.Visible || Native.IsIconic(w) || Item.Kind == "internal" || Item.Kind == "shelf") return;
             IntPtr thumb;
             if (DwmRegisterThumbnail(hwnd, w, out thumb) != 0) return;
             thumbs.Add(thumb);

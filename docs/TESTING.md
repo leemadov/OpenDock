@@ -6,6 +6,8 @@ Run `build.bat check` for app-filtering and colour-profile regressions plus:
 - Left/right edge mapping and fitting a crowded dock with magnification.
 - Original live-glass default settings.
 - File and directory renames, case-only renames, invalid/reserved names, destination collisions and preservation of file contents.
+- Workspace persistence and malformed nested data, Shelf deduplication/drag payloads/source-file preservation, independent monitor pins, theme storage, scene bounds and desktop-command matching.
+- Update version/channel/asset validation, SHA-256 mismatch rejection and bounded custom icon normalization.
 
 `build.bat check --ui` adds integration checks on the current Windows desktop. It briefly opens test windows, reserves/releases appbar space, and creates fixtures and screenshots inside `bin/qa/`. It does not load or save user preferences, hide the Windows taskbar, change startup entries or colour profiles, or register global shortcuts/window hooks. It checks:
 
@@ -18,6 +20,8 @@ Run `build.bat check` for app-filtering and colour-profile regressions plus:
 - The rename dialog and its operation on a generated fixture file.
 - Desktop & Dock settings and snapshots of each dock edge.
 - Finder address-bar navigation, environment/relative paths, invalid-path handling and back/forward updates; a separate-process focus fixture verifies Finder stays open; a fullscreen fixture verifies only the fullscreen monitor's dock hides while keyboard focus moves elsewhere, and returns after leaving fullscreen.
+- Independent Finder tabs and split panes, Dock Studio and Shelf opening, plus their screenshots. A separate-process scene fixture is moved and then restored to its captured bounds, and a desktop tiling command resizes that fixture.
+- An isolated executable update helper rejects an incorrect checksum, atomically replaces/restarts a fixture and rolls back to its previous executable. It does not update the installed OpenDock during tests.
 
 `build.bat check --preview` runs those checks and then leaves an isolated controller open. Close **OpenDock checks** to release appbar space and exit. Its position/view buttons change only in-memory test settings.
 

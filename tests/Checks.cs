@@ -104,6 +104,8 @@ namespace OpenDock
             if (Math.Abs(gray[0] - gray[1]) > 1e-6 || Math.Abs(gray[1] - gray[2]) > 1e-6) throw new Exception("Grayscale should give red the same value in every channel");
             var oled = ColorProfiles.Matrix(ColorProfiles.Presets[2]);
             if (oled[20] >= 0) throw new Exception("OLED should push blacks deeper (negative offset)");
+            WorkspaceChecks.Run();
+            FeatureChecks.Run();
             LayoutChecks();
             RenameChecks();
             if (args.Contains("--ui") || args.Contains("--preview")) DesktopChecks.Run(args.Contains("--preview"));

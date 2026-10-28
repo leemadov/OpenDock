@@ -175,7 +175,7 @@ namespace OpenDock
         FrameworkElement Tile(AppEntry a, double size, double cellW)
         {
             var img = new Image { Width = size, Height = size, Opacity = 0 };
-            Icons.Get(a.Icon, true, s => { img.Source = s; img.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(180))); }, 192);
+            Icons.Get(CustomIcons.Get(a.Target) ?? a.Icon, true, s => { img.Source = s; img.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(180))); }, 192);
             var name = new TextBlock
             {
                 Text = a.Name, Foreground = Brushes.White, FontSize = 13, TextAlignment = TextAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis,

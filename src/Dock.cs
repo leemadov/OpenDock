@@ -25,12 +25,14 @@ namespace OpenDock
         public readonly HashSet<string> Keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         public readonly List<WinInfo> Wins = new List<WinInfo>();
         public Border Root; public Image Img; public Ellipse Dot;
+        public Border Badge; public TextBlock BadgeText;
         public readonly ScaleTransform Scale = new ScaleTransform(1, 1);
         // P = presence (0..1, grows/shrinks the slot), X = smoothed resting centre, CX/S = magnified centre/scale.
         public double P, PWant = 1, X = double.NaN, CX, S = 1, DotA, BounceT0 = -1, BounceStop;
         public double PFrom, PTarget = -1, PT0, GoneAt = -1;   // presence tween + grace period after the last window closes
         public bool Attention;                                  // a window flashed for attention (red dot until you switch to it)
 
+        public string IconKey { get { return Kind=="app" ? Target??RunKey : "fixed:"+Kind; } }
         public bool IsSep { get { return Kind == "sep"; } }
         public bool Running { get { return Kind == "finder" ? App.Finders.Count > 0 : Wins.Count > 0; } }
 
@@ -87,6 +89,7 @@ namespace OpenDock
         public Sys.Display Screen { get { return Device == null ? DisplayLayout.Selected : DisplayLayout.ForDevice(Device); } }
         public Rect MonitorBounds { get { return DisplayLayout.Dip(Screen.Bounds); } }
         public Rect MonitorWorkArea { get { return DisplayLayout.Dip(Screen.Work); } }
+        int iconRevision=Settings.IconRevision;
         bool closed, pinsNeedRefresh;
         readonly DispatcherTimer trashTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
         readonly Canvas canvas = new Canvas(), layer = new Canvas();
@@ -162,7 +165,8 @@ namespace OpenDock
 
             AddFixed("finder", "Finder");
             AddFixed("launchpad", "Launchpad");
-            foreach (var p in Settings.Pins) AddPin(p, items.Count);
+            AddFixed("shelf", "Shelf");
+            foreach (var p in Workspace.Pins(Device)) AddPin(p, items.Count);
             AddFixed("sep", "");
             AddFixed("stack", "Downloads");
             trash = AddFixed("trash", "Trash");
@@ -210,7 +214,7 @@ namespace OpenDock
         void OnSettings()
         {
             if (closed) return;
-            if (tiles != Settings.IconTiles) { tiles = Settings.IconTiles; ReloadIcons(); }
+            if (tiles != Settings.IconTiles || iconRevision != Settings.IconRevision) { tiles = Settings.IconTiles; iconRevision=Settings.IconRevision; ReloadIcons(); }
             Place();
         }
 
@@ -343,7 +347,10 @@ namespace OpenDock
             else
             {
                 it.Img = new Image();
-                it.Root.Child = it.Img;
+                var face=new Grid(); face.Children.Add(it.Img);
+                it.BadgeText=new TextBlock { Foreground=Brushes.White,FontSize=10,FontWeight=FontWeights.SemiBold,Margin=new Thickness(4,0,4,0) };
+                it.Badge=new Border { Child=it.BadgeText,Background=Theme.B("#E33A46"),CornerRadius=new CornerRadius(7),HorizontalAlignment=HorizontalAlignment.Right,VerticalAlignment=VerticalAlignment.Top,MinWidth=16,Visibility=Visibility.Collapsed,IsHitTestVisible=false };
+                face.Children.Add(it.Badge); it.Root.Child = face;
                 it.Dot = new Ellipse { Width = 4, Height = 4, Opacity = 0, IsHitTestVisible = false };
                 it.Dot.SetResourceReference(Shape.FillProperty, "Fg");
                 layer.Children.Add(it.Dot);
@@ -384,11 +391,14 @@ namespace OpenDock
 
         void LoadIcon(DockItem it)
         {
+            string custom=CustomIcons.Get(it.IconKey);
+            if(custom!=null) { Icons.Get(custom,true,image=>it.Img.Source=image); return; }
             switch (it.Kind)
             {
                 case "finder": it.Img.Source = Art.Finder; break;
                 case "launchpad": it.Img.Source = Art.Launchpad; break;
                 case "stack": it.Img.Source = Art.Downloads; break;
+                case "shelf": it.Img.Source = Art.Shelf; break;
                 case "trash": trashFull = Launcher.TrashFull(); it.Img.Source = Art.Trash(trashFull); break;
                 case "internal": it.Img.Source = it.RunKey == "opendock:settings" ? Art.Settings : Art.Computer; break;
                 default: Icons.Get(it.IconPath, true, img => it.Img.Source = img); break;
@@ -398,7 +408,7 @@ namespace OpenDock
         void ReloadIcons()
         {
             Icons.ClearCache();
-            foreach (var it in items.Where(i => i.Kind == "app")) LoadIcon(it);
+            foreach (var it in items.Where(i => !i.IsSep)) LoadIcon(it);
         }
 
         void UpdateTrash()
@@ -406,7 +416,7 @@ namespace OpenDock
             bool full = Launcher.TrashFull();
             if (full == trashFull) return;
             trashFull = full;
-            trash.Img.Source = Art.Trash(full);
+            LoadIcon(trash);
         }
 
         public void Pin(AppEntry a)
@@ -421,11 +431,11 @@ namespace OpenDock
 
         int SepIndex() { return items.FindIndex(i => i.IsSep); }
         int PinIndex() { int i = items.FindIndex(x => x.Kind == "app" && !x.Pinned); return i < 0 ? SepIndex() : i; }
-        int FirstMovable() { return items.FindIndex(i => i.Kind != "finder" && i.Kind != "launchpad"); }
+        int FirstMovable() { return items.FindIndex(i => i.Kind != "finder" && i.Kind != "launchpad" && i.Kind != "shelf"); }
 
         void SavePins()
         {
-            Settings.Pins = items.Where(i => i.Kind == "app" && i.Pinned).Select(i => i.Name + "|" + i.Target).ToList();
+            Workspace.SetPins(Device, items.Where(i => i.Kind == "app" && i.Pinned).Select(i => i.Name + "|" + i.Target).ToList());
             Settings.Save();
             App.SyncPins(this);
         }
@@ -439,7 +449,7 @@ namespace OpenDock
             {
                 layer.Children.Remove(it.Root); layer.Children.Remove(it.Dot); items.Remove(it);
             }
-            foreach (var pin in Settings.Pins) AddPin(pin, PinIndex());
+            foreach (var pin in Workspace.Pins(Device)) AddPin(pin, PinIndex());
             Sync(App.Wins);
         }
 
@@ -467,6 +477,16 @@ namespace OpenDock
 
         // ---------- running windows ----------
 
+        public void RefreshBadges()
+        {
+            foreach(var it in items.Where(i=>!i.IsSep))
+            {
+                string text=it.Kind=="shelf" && Workspace.Data.Shelf.Count>0 ? Workspace.Data.Shelf.Count.ToString() : it.Kind=="stack" && Living.Downloads>0 ? "↓"+Living.Downloads : it.Kind=="launchpad" ? Living.TimerText : it.Wins.Count>1 ? it.Wins.Count.ToString() : "";
+                if(Workspace.Restoring&&it.Kind=="finder") text="…";
+                it.BadgeText.Text=text; it.Badge.Visibility=Workspace.Data.LivingIcons&&text.Length>0?Visibility.Visible:Visibility.Collapsed;
+            }
+        }
+
         public void Sync(List<WinInfo> wins)
         {
             if (closed) return;
@@ -474,7 +494,7 @@ namespace OpenDock
             var loose = new List<WinInfo>();
             foreach (var w in wins)
             {
-                var it = w.InternalKind != null ? items.FirstOrDefault(i => i.Kind == "internal" && i.RunKey == w.Key)
+                var it = w.InternalKind == "shelf" ? items.FirstOrDefault(i=>i.Kind=="shelf") : w.InternalKind != null ? items.FirstOrDefault(i => i.Kind == "internal" && i.RunKey == w.Key)
                     : items.FirstOrDefault(i => i.Kind == "app" && i.Pinned && i.Matches(w)) ?? items.FirstOrDefault(i => i.Kind == "app" && !i.Pinned && i.Matches(w));
                 if (it != null) it.Wins.Add(w); else loose.Add(w);
             }
@@ -493,7 +513,7 @@ namespace OpenDock
                 if (!it.Pinned && it.PWant == 1 && it.Wins.Count == 0) WaitThenSync();
                 if (it.BounceT0 >= 0 && it.Wins.Count > 0 && !it.Attention) it.BounceStop = Math.Min(it.BounceStop, now);   // launched: stop bouncing
             }
-            StartLoop();
+            RefreshBadges(); StartLoop();
         }
 
         void WaitThenSync()
@@ -551,7 +571,7 @@ namespace OpenDock
         List<IntPtr> WindowsOf(DockItem it)
         {
             if (it.Kind == "finder") return App.Finders.Select(f => new WindowInteropHelper(f).Handle).ToList();
-            return it.Kind == "app" || it.Kind == "internal" ? it.Wins.Select(w => w.Hwnd).ToList() : null;
+            return it.Kind == "app" || it.Kind == "internal" || it.Kind == "shelf" ? it.Wins.Select(w => w.Hwnd).ToList() : null;
         }
 
         // Hover a running app for a moment and its windows' live previews appear; moving to another running app
@@ -582,6 +602,7 @@ namespace OpenDock
                     else foreach (var f in App.Finders.ToList()) { if (f.WindowState == WindowState.Minimized) f.WindowState = WindowState.Normal; f.Activate(); }
                     break;
                 case "launchpad": App.ToggleLaunchpad(); break;
+                case "shelf": ShelfWindow.Open(); break;
                 case "stack": ToggleStack(it); break;
                 case "trash": Launcher.Shell("shell:RecycleBinFolder"); break;
                 case "internal": if (it.Wins.Count > 0) FocusApp(it); break;
@@ -638,6 +659,8 @@ namespace OpenDock
             cm.Items.Add(Item(Settings.Magnify ? "Turn Magnification Off" : "Turn Magnification On", () => { Settings.Magnify = !Settings.Magnify; Settings.Apply(); }));
             cm.Items.Add(Item(Settings.AutoHide ? "Turn Hiding Off" : "Turn Hiding On", () => { Settings.AutoHide = !Settings.AutoHide; Settings.Apply(); }));
             cm.Items.Add(new Separator());
+            cm.Items.Add(Item("Shelf…", ShelfWindow.Open));
+            cm.Items.Add(Item("Desktop Scenes & Dock Studio…", ()=>App.OpenSettings("Workspace")));
             cm.Items.Add(Item("Task Manager", () => Launcher.Shell("taskmgr.exe")));
             cm.Items.Add(Item("Dock Settings…", () => App.OpenSettings("Desktop & Dock")));
         }
@@ -687,6 +710,8 @@ namespace OpenDock
                 case "launchpad":
                     cm.Items.Add(Item("Open Launchpad", App.ToggleLaunchpad));
                     break;
+                case "shelf":
+                    cm.Items.Add(Item("Open Shelf",ShelfWindow.Open)); cm.Items.Add(Item("Collect Clipboard",ShelfWindow.AddClipboard)); break;
                 case "stack":
                     cm.Items.Add(Item("Open", () => ToggleStack(it)));
                     cm.Items.Add(Item("Open in Finder", () => App.NewFinder(Launcher.Downloads)));
@@ -836,7 +861,25 @@ namespace OpenDock
                 App.QueueRefresh();
             }
             else if (it.Kind == "trash") { Launcher.Recycle(files); UpdateTrash(); }
+            else if (it.Kind == "shelf") { foreach(var file in files) Shelf.Add("file",file); ShelfWindow.Open(); }
             else if (it.Kind == "finder") foreach (var f in files) App.ShowInFinder(f);
+            else if (it.Kind == "app" && it.Wins.Count>1)
+            {
+                var menu=new ContextMenu();
+                foreach(var value in it.Wins)
+                {
+                    var target=value;
+                    menu.Items.Add(Item(((Native.GetWindowLong(target.Hwnd,Native.GWL_EXSTYLE)&0x10)!=0?"Send files to: ":"Activate & copy for: ")+(target.Title.Length>60?target.Title.Substring(0,60)+"…":target.Title),()=>
+                    {
+                        if(Shelf.Deliver(target.Hwnd,files)) return;
+                        foreach(var file in files) Shelf.Add("file",file);
+                        var paths=new System.Collections.Specialized.StringCollection(); paths.AddRange(files); Clipboard.SetFileDropList(paths);
+                        Workspace.Status="Selected window activated. Files are copied and stored in Shelf; paste or drag them into apps that do not accept Windows file-drop messages.";
+                        Native.Activate(target.Hwnd);
+                    }));
+                }
+                OpenMenu(menu,it.Root,false);
+            }
             else if (it.Kind == "app") Launch(it, Launcher.Quote(files));
         }
 

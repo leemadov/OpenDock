@@ -498,7 +498,7 @@ namespace OpenDock
             if (Application.Current != null)
                 foreach (var window in Application.Current.Windows.OfType<MacWindow>().Where(w => !(w is FinderWindow) && w.Owner == null && w.IsVisible))
                     list.Add(new WinInfo { Hwnd = new WindowInteropHelper(window).Handle, Pid = myPid, Title = window.Title,
-                        InternalKind = window is SettingsWindow ? "settings" : window is AboutWindow ? "about" : "window" });
+                        InternalKind = window is SettingsWindow ? "settings" : window is AboutWindow ? "about" : window is ShelfWindow ? "shelf" : "window" });
             foreach (var h in aumidByHwnd.Keys.Where(k => !seen.Contains(k)).ToList()) aumidByHwnd.Remove(h);
             if (exeByPid.Count > 500) exeByPid.Clear();
             return list;

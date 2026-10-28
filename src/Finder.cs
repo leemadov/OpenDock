@@ -56,7 +56,7 @@ namespace OpenDock
             var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(20, 20, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Background = Brushes.Transparent };
             WindowChrome.SetIsHitTestVisibleInChrome(row, true);
             string[] glyphs = { "×", "−", "+" };
-            Action[] acts = { Close, () => WindowState = WindowState.Minimized, () => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized };
+            Action[] acts = { CloseFromChrome, MinimizeFromChrome, ZoomFromChrome };
             for (int i = 0; i < 3; i++)
             {
                 var act = acts[i];
@@ -73,6 +73,10 @@ namespace OpenDock
             Paint(true);
             return row;
         }
+
+        protected virtual void CloseFromChrome() { Close(); }
+        protected virtual void MinimizeFromChrome() { WindowState=WindowState.Minimized; }
+        protected virtual void ZoomFromChrome() { WindowState=WindowState==WindowState.Maximized?WindowState.Normal:WindowState.Maximized; }
 
         void Paint(bool active)
         {
@@ -93,7 +97,7 @@ namespace OpenDock
 
     class SideEntry { public string Name { get; set; } public string Glyph { get; set; } public string Path; public bool IsHeader { get; set; } }
 
-    class FinderWindow : MacWindow
+    partial class FinderWindow : MacWindow
     {
         const string AppsLocation = "::apps";
         readonly ListBox side = new ListBox();
@@ -109,6 +113,7 @@ namespace OpenDock
         FileSystemWatcher watcher;
         DispatcherTimer reloadSoon;
         readonly TextBox address = new TextBox();
+        Action appsChanged;
         string path, selectAfterLoad;
         Point? dragFrom;
         int loadId;
@@ -116,8 +121,9 @@ namespace OpenDock
         [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)] static extern int StrCmpLogicalW(string a, string b);
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern bool SHObjectProperties(IntPtr h, int type, string name, string page);
 
-        public FinderWindow(string start, string select = null)
+        public FinderWindow(string start, string select = null, FinderWindow workspaceHost = null)
         {
+            host=workspaceHost; Layout.PreviewMouseDown+=delegate { PaneFocused(); };
             Width = 1000; Height = 640; MinWidth = 560; MinHeight = 340;
             int n = App.Finders.Count;
             WindowStartupLocation = WindowStartupLocation.Manual;
@@ -245,7 +251,7 @@ namespace OpenDock
             main.Children.Add(status);
             Layout.Children.Add(main);
 
-            PreviewKeyDown += (s, e) =>
+            Layout.PreviewKeyDown += (s, e) =>
             {
                 if (e.Key == Key.L && Keyboard.Modifiers == ModifierKeys.Control) { address.Focus(); address.SelectAll(); e.Handled = true; }
                 else if (address.IsKeyboardFocusWithin) return;
@@ -253,7 +259,7 @@ namespace OpenDock
                 else if (e.SystemKey == Key.Left || (e.Key == Key.Back && !filter.IsKeyboardFocused)) { Back(); e.Handled = true; }
                 else if (e.SystemKey == Key.Right) { Forward(); e.Handled = true; }
                 else if (e.SystemKey == Key.Up) { Up(); e.Handled = true; }
-                else if (e.Key == Key.W && Keyboard.Modifiers == ModifierKeys.Control) Close();
+                else if (e.Key == Key.W && Keyboard.Modifiers == ModifierKeys.Control) { (host??this).ClosePane(this); e.Handled=true; }
                 else if (e.Key == Key.F5) Load();
                 else if (e.Key == Key.D1 && Keyboard.Modifiers == ModifierKeys.Control) { SetView(false, true); e.Handled = true; }
                 else if (e.Key == Key.D2 && Keyboard.Modifiers == ModifierKeys.Control) { SetView(true, true); e.Handled = true; }
@@ -261,11 +267,12 @@ namespace OpenDock
             reloadSoon = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
             reloadSoon.Tick += delegate { reloadSoon.Stop(); Load(); };
             Loaded += delegate { App.Finders.Add(this); App.QueueRefresh(); };
-            Closed += delegate { App.Finders.Remove(this); if (watcher != null) watcher.Dispose(); App.QueueRefresh(); };
-            Apps.Changed += delegate { if (path == AppsLocation) Load(); };
+            Closed += delegate { App.Finders.Remove(this); if (watcher != null) watcher.Dispose(); reloadSoon.Stop(); loadId++; Apps.Changed-=appsChanged; App.QueueRefresh(); };
+            appsChanged=delegate { if (path == AppsLocation) Load(); }; Apps.Changed += appsChanged;
 
             selectAfterLoad = select;
             Go(start, false);
+            if(host==null) InitWorkspace();
         }
 
         void SetView(bool list, bool save)
@@ -392,6 +399,7 @@ namespace OpenDock
             var sideMatch = ((List<SideEntry>)side.ItemsSource).FirstOrDefault(s => s.Path != null && string.Equals(s.Path.TrimEnd('\\'), path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
             side.SelectedItem = sideMatch;
             Title = title.Text = path == AppsLocation ? "Applications" : sideMatch != null ? sideMatch.Name : (new DirectoryInfo(path).Name);
+            if(host!=null) host.RefreshTabs(); else if(tabs.Count>0) RefreshTabs();
             Watch();
             if (path == AppsLocation)
             {
@@ -602,7 +610,7 @@ namespace OpenDock
                 cm.Items.Add(new Separator());
                 if (en.Path != null)
                 {
-                    add("Get Info", () => SHObjectProperties(new WindowInteropHelper(this).Handle, 2, en.Path, null), true);
+                    add("Get Info", () => SHObjectProperties(new WindowInteropHelper(host??this).Handle, 2, en.Path, null), true);
                     add("Show in Explorer", () => Process.Start("explorer.exe", "/select,\"" + en.Path + "\""), true);
                     add("Copy", CopySelection, en.Open == null);
                     if (en.Open == null) add("Rename…", RenameSelection, files.SelectedItems.Count == 1);
@@ -622,7 +630,7 @@ namespace OpenDock
                 add("Paste", Paste, Clipboard.ContainsFileDropList());
                 cm.Items.Add(new Separator());
                 add("Open in Explorer", () => Process.Start("explorer.exe", "\"" + path + "\""), true);
-                add("Get Info", () => SHObjectProperties(new WindowInteropHelper(this).Handle, 2, path, null), true);
+                add("Get Info", () => SHObjectProperties(new WindowInteropHelper(host??this).Handle, 2, path, null), true);
             }
             if (cm.Items.Count > 0) cm.IsOpen = true;
             e.Handled = true;
@@ -658,7 +666,7 @@ namespace OpenDock
         {
             var en = files.SelectedItem as Entry;
             if (files.SelectedItems.Count != 1 || en == null || en.Open != null || en.Path == null || path == AppsLocation) return;
-            var dialog = new MacWindow(false) { Title = "Rename", Owner = this, Width = 420, Height = 180,
+            var dialog = new MacWindow(false) { Title = "Rename", Owner = host??this, Width = 420, Height = 180,
                 ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner };
             var body = new StackPanel { Margin = new Thickness(20, 12, 20, 16) };
             body.Children.Add(Text("Rename “" + en.Name + "”", 14, "Fg", FontWeights.SemiBold));
@@ -732,11 +740,11 @@ namespace OpenDock
                 new[] { C("Keyboard", "\uE765", "#8E8E93", KeyboardPane), C("Mouse", "\uE962", "#8E8E93", MousePane), C("Printers & Scanners", "\uE749", "#8E8E93", Printers) },
             };
             // Panes reached from General, like macOS.
-            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane } };
+            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane }, { "Workspace", WorkspacePane }, { "Updates", Updates } };
             // Panes reached from General, like macOS.
-            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane } };
+            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane }, { "Workspace", WorkspacePane }, { "Updates", Updates } };
             // Panes reached from General, like macOS.
-            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane } };
+            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane }, { "Workspace", WorkspacePane }, { "Updates", Updates } };
 
             Layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(250) });
             Layout.ColumnDefinitions.Add(new ColumnDefinition());
@@ -918,6 +926,8 @@ namespace OpenDock
 
             body.Children.Add(new Border { Height = 16 });
             var nav = Group(body);
+            NavLink(nav, "Desktop Scenes & Dock Studio", "\uE713", "#0A84FF", "Workspace");
+            NavLink(nav, "Software Update", "\uE777", "#0A84FF", "Updates");
             NavLink(nav, "About", "\uE977", "#8E8E93", "About");
             NavLink(nav, "Storage", "\uEDA2", "#8E8E93", "Storage");
             NavLink(nav, "Login Items", "\uE7E8", "#8E8E93", "Login Items");

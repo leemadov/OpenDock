@@ -51,6 +51,8 @@ namespace OpenDock
             logoMenu.Items.Add(Cmd("About This PC", null, AboutWindow.ShowIt));
             logoMenu.Items.Add(new Separator());
             logoMenu.Items.Add(Cmd("System Settings…", null, () => App.OpenSettings("General")));
+            logoMenu.Items.Add(Cmd("Shelf…", null, ShelfWindow.Open));
+            logoMenu.Items.Add(Cmd("Desktop Scenes & Dock Studio…", null, ()=>App.OpenSettings("Workspace")));
             logoMenu.Items.Add(Cmd("App Store…", null, () => Launcher.Shell("ms-windows-store:")));
             logoMenu.Items.Add(new Separator());
             logoMenu.Items.Add(Cmd("Force Quit…", "Ctrl+Shift+Esc", () => Launcher.Shell("taskmgr.exe")));

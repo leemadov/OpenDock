@@ -29,7 +29,20 @@ namespace OpenDock
             return Icons.Render(host, 256, 256);
         }
 
-        static BitmapSource finder, launchpad, downloads, trash, trashFull, settings, computer;
+        static BitmapSource finder, launchpad, downloads, trash, trashFull, settings, computer, shelf;
+        public static BitmapSource Shelf
+        {
+            get
+            {
+                if(shelf!=null) return shelf;
+                var g=new DrawingGroup();
+                g.Children.Add(new GeometryDrawing(Grad("#B69AFF","#6545BC"),null,new RectangleGeometry(Tile,R,R)));
+                g.Children.Add(new GeometryDrawing(Solid("#D9CDFF"),null,new RectangleGeometry(new Rect(59,54,105,114),8,8) { Transform=new RotateTransform(-12,110,140) }));
+                g.Children.Add(new GeometryDrawing(Solid("#F6F2FF"),null,new RectangleGeometry(new Rect(91,64,105,110),8,8) { Transform=new RotateTransform(9,140,140) }));
+                g.Children.Add(new GeometryDrawing(Grad("#A386EE","#513094"),new Pen(Solid("#D5C4FF"),3),Geometry.Parse("M43,135 L91,135 L106,154 L150,154 L166,135 L213,135 L204,208 Q203,218 192,218 L64,218 Q53,218 52,208 Z")));
+                return shelf=Bake(g);
+            }
+        }
 
         public static BitmapSource Settings
         {

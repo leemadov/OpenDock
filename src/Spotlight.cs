@@ -96,6 +96,7 @@ namespace OpenDock
 
         public void Open()
         {
+            Workspace.CommandWindow=Native.GetForegroundWindow();
             closing = false;
             var bounds = DisplayLayout.ActiveBounds;
             var at = DisplayLayout.Clamp(new Point(bounds.Left + (bounds.Width - Width) / 2, bounds.Top + bounds.Height * 0.2 - Pad), new Size(Width, MaxH + Pad * 2), bounds);
@@ -164,6 +165,8 @@ namespace OpenDock
             int id = ++query;
             results.Clear();
             if (q.Length == 0) { divider.Visibility = Visibility.Collapsed; return; }
+            foreach(var command in Workspace.Commands(q)) results.Add(command);
+            if(q.StartsWith(">")) { divider.Visibility=Visibility.Visible; list.SelectedIndex=results.Count>0?0:-1; return; }
 
             if (math.IsMatch(q) && q.Any(char.IsDigit) && q.IndexOfAny("+-*/%".ToCharArray()) > 0)
             {

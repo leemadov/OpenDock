@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/github/license/leemadov/OpenDock)](LICENSE)
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
 
-A free, open-source macOS-style desktop for Windows 10/11, inspired by MyDockFinder. It's a single ~250 KB executable: no installer, no runtime to download and no SDK needed to build it.
+A free, open-source macOS-style desktop for Windows 10/11, inspired by MyDockFinder. It's a single executable: no installer, no runtime to download and no SDK needed to build it.
 
 ![OpenDock demo: dock magnification, Launchpad and Spotlight](docs/demo.gif)
 
@@ -12,10 +12,14 @@ Run `OpenDock.exe` and the dock and menu bar appear. Quit from the logo menu in 
 ## Why OpenDock?
 
 - **Free and open source** (MIT). There's no paid version and nothing is locked.
-- **Tiny and light.** A ~250 KB exe that uses almost no CPU when idle. The animation loop only runs while something is moving, and if it ever hangs, it restarts itself.
+- **Small and self-contained.** The animation loop runs while something is moving, status badges use a lightweight timer, and download activity is checked in the background. A watchdog restarts the app if it hangs.
 - **The whole macOS look, not just a dock:** a menu bar, Launchpad, Spotlight, Finder and Stacks.
 - **Nothing to install.** It runs on the .NET Framework that ships with Windows, and building it only needs `build.bat`.
 - **Hackable.** Plain C#, with one file per feature. See [How it's built](#how-its-built).
+
+## Workspace feature preview
+
+Desktop Scenes, the Shelf, local desktop commands, independent monitor pins, living status badges, Finder tabs/split view, Dock Studio previews/custom icons, and verified update/rollback controls are available in v0.3.0-preview.1. Open **Desktop Scenes & Dock Studio** from the logo menu or dock context menu. See [Workspace guide](docs/WORKSPACE.md) for controls and limits.
 
 ## Features
 
@@ -93,13 +97,13 @@ Plain WPF written in code, one file per feature, in `src/`:
 
 The blur uses the original capture-based implementation, with live glass enabled by default. It uses `SetWindowDisplayAffinity` to avoid capturing itself, samples at quarter size about 12 times a second, and box-blurs only when the picture changes. Sampling windows can therefore disappear from screenshots and recordings. Turning Live glass off uses wallpaper frost without a capture loop or capture exclusion. Wallpaper frost is also the fallback when capture exclusion is unavailable. Launchpad, Spotlight and Stacks blur an opening snapshot. The animation loop only runs while something is moving.
 
-The experimental v0.2.0-preview.1 update was withdrawn after a glass regression. This branch returns to the v0.1.2-preview.2 implementation, with the original live-glass default restored. The user confirmed the restored installed version behaves correctly. The experimental changes remain recoverable in Git history.
+The experimental v0.2.0-preview.1 update was withdrawn after a glass regression. The glass renderer uses the v0.1.2-preview.2 implementation, with its original live-glass default. The restored installed version was confirmed working before the Workspace features were added. The withdrawn implementation remains recoverable in Git history.
 
 Display geometry uses the app's existing system-DPI WPF coordinate space, including negative screen origins. A dock is created on each connected display by default. Each HWND is initially created on its target display before registering its appbar, so Explorer reserves space on the correct monitor. Closed docks release appbars, timers, event subscriptions and popup windows. The menu bar remains on the selected display; per-monitor DPI awareness is not enabled.
 
 ## Not done yet
 
-The genie minimize effect and per-app icon themes. Pull requests are welcome.
+The genie minimize effect and packaged icon-theme collections. Individual managed custom icons are available in Dock Studio. Pull requests are welcome.
 
 ## License
 
