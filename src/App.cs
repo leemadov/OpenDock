@@ -429,13 +429,14 @@ namespace OpenDock
             Hook(0x8001, 0x8003, onWindow);  // destroy / show / hide
             Hook(0x8017, 0x8018, onWindow);  // cloaked / uncloaked (Store apps)
             Hook(0x800C, 0x800C, onWindow);  // title change
+            Hook(0x800B, 0x800B, onWindow);  // location/size changes, including browser fullscreen transitions
 
             refresh = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
             refresh.Tick += delegate { refresh.Stop(); RefreshWindows(); };
             // Window events above keep the list current; the full re-scan is only a safety net.
             int ticks = 0;
             var slow = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-            slow.Tick += delegate { if (++ticks % 5 == 0) RefreshWindows(); Taskbar.Enforce(); };
+            slow.Tick += delegate { if (++ticks % 5 == 0) RefreshWindows(); foreach (var dock in Docks) dock.OnFullScreen(true); Taskbar.Enforce(); };
             slow.Start();
             RefreshWindows();
             LastForeground = Native.GetForegroundWindow();
@@ -496,6 +497,7 @@ namespace OpenDock
         {
             Wins = Windows.Enumerate();
             if (WindowsChanged != null) WindowsChanged(Wins);
+            foreach (var dock in Docks) dock.OnFullScreen(true);
         }
 
         public static void ToggleSpotlight() { SelectDockAtCursor(); if (Spotlight.IsVisible) Spotlight.Close2(); else Spotlight.Open(); }

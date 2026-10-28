@@ -39,21 +39,6 @@ namespace OpenDock
             if (glass) Glass.Attach(this, "WinGlass");
             Loaded += delegate { App.QueueRefresh(); };
             Closed += delegate { App.QueueRefresh(); };
-            // Click anywhere outside the window (another app, the desktop) and it minimizes out of the way.
-            // OpenDock's own dialogs, menus and other windows don't count, and neither does dragging out of it.
-            Deactivated += delegate
-            {
-                var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
-                t.Tick += delegate
-                {
-                    t.Stop();
-                    if (IsActive || Dragging || !IsVisible || WindowState == WindowState.Minimized) return;
-                    uint pid;
-                    Native.GetWindowThreadProcessId(Native.GetForegroundWindow(), out pid);
-                    if (pid != (uint)Process.GetCurrentProcess().Id) WindowState = WindowState.Minimized;
-                };
-                t.Start();
-            };
             Content = Layout;
             SourceInitialized += delegate
             {
@@ -123,6 +108,7 @@ namespace OpenDock
         List<Entry> all = new List<Entry>();
         FileSystemWatcher watcher;
         DispatcherTimer reloadSoon;
+        readonly TextBox address = new TextBox();
         string path, selectAfterLoad;
         Point? dragFrom;
         int loadId;
@@ -171,6 +157,7 @@ namespace OpenDock
             var main = new Grid();
             Grid.SetColumn(main, 1);
             main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(52) });
+            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(36) });
             main.RowDefinitions.Add(new RowDefinition());
             main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(26) });
             var toolbar = new DockPanel { LastChildFill = true, Margin = new Thickness(10, 0, 14, 0) };
@@ -205,6 +192,19 @@ namespace OpenDock
             toolBg.SetResourceReference(Border.BorderBrushProperty, "MenuSep");
             main.Children.Add(toolBg);
 
+            address.FontSize = 12; address.Padding = new Thickness(8, 3, 8, 3); address.VerticalContentAlignment = VerticalAlignment.Center;
+            address.ToolTip = "Folder path — Ctrl+L to edit, Enter to open, Escape to cancel";
+            address.SetResourceReference(BackgroundProperty, "Field"); address.SetResourceReference(ForegroundProperty, "Fg");
+            address.SetResourceReference(TextBox.CaretBrushProperty, "Fg"); address.SetResourceReference(TextBox.BorderBrushProperty, "MenuSep");
+            address.KeyDown += (s, e) =>
+            {
+                if (e.Key == Key.Enter) { NavigateAddress(); e.Handled = true; }
+                else if (e.Key == Key.Escape) { address.Text = path == AppsLocation ? "Applications" : path; files.Focus(); e.Handled = true; }
+            };
+            var location = new Border { Child = address, Padding = new Thickness(10, 4, 14, 4) };
+            Grid.SetRow(location, 1); main.Children.Add(location);
+
+
             files.ItemsSource = entries;
             files.ItemContainerStyle = (Style)Application.Current.Resources["Bare"];
             files.SelectionMode = SelectionMode.Extended;
@@ -238,16 +238,18 @@ namespace OpenDock
             files.Drop += OnDrop;
             files.DragOver += (s, e) => { e.Effects = path == AppsLocation ? DragDropEffects.None : (e.KeyStates & DragDropKeyStates.ControlKey) != 0 ? DragDropEffects.Copy : DragDropEffects.Move; e.Handled = true; };
             files.SelectionChanged += delegate { UpdateStatus(); };
-            Grid.SetRow(files, 1);
+            Grid.SetRow(files, 2);
             main.Children.Add(files);
             status.HorizontalAlignment = HorizontalAlignment.Center;
-            Grid.SetRow(status, 2);
+            Grid.SetRow(status, 3);
             main.Children.Add(status);
             Layout.Children.Add(main);
 
             PreviewKeyDown += (s, e) =>
             {
-                if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control) { filter.Focus(); e.Handled = true; }
+                if (e.Key == Key.L && Keyboard.Modifiers == ModifierKeys.Control) { address.Focus(); address.SelectAll(); e.Handled = true; }
+                else if (address.IsKeyboardFocusWithin) return;
+                else if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control) { filter.Focus(); e.Handled = true; }
                 else if (e.SystemKey == Key.Left || (e.Key == Key.Back && !filter.IsKeyboardFocused)) { Back(); e.Handled = true; }
                 else if (e.SystemKey == Key.Right) { Forward(); e.Handled = true; }
                 else if (e.SystemKey == Key.Up) { Up(); e.Handled = true; }
@@ -350,6 +352,24 @@ namespace OpenDock
 
         // ---------- navigation ----------
 
+        bool NavigateAddress()
+        {
+            string target = Environment.ExpandEnvironmentVariables(address.Text.Trim().Trim('"'));
+            if (target.Equals("Applications", StringComparison.OrdinalIgnoreCase) || target == AppsLocation) target = AppsLocation;
+            else
+            {
+                try
+                {
+                    if (target == "~") target = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                    if (!System.IO.Path.IsPathRooted(target) && path != AppsLocation) target = System.IO.Path.Combine(path, target);
+                    target = System.IO.Path.GetFullPath(target);
+                    if (!Directory.Exists(target)) { address.ToolTip = "Folder not found. Enter an existing folder path."; return false; }
+                }
+                catch (Exception ex) { address.ToolTip = ex.Message; return false; }
+            }
+            Go(target); files.Focus(); return true;
+        }
+
         void Go(string target, bool record = true)
         {
             if (target != AppsLocation && !Directory.Exists(target)) return;
@@ -366,6 +386,8 @@ namespace OpenDock
         void Load()
         {
             int id = ++loadId;
+            address.Text = path == AppsLocation ? "Applications" : path;
+            address.ToolTip = path == AppsLocation ? "Applications — enter a folder path to navigate" : path;
             back.IsEnabled = history.Count > 0; forward.IsEnabled = future.Count > 0;
             var sideMatch = ((List<SideEntry>)side.ItemsSource).FirstOrDefault(s => s.Path != null && string.Equals(s.Path.TrimEnd('\\'), path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
             side.SelectedItem = sideMatch;

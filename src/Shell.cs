@@ -450,6 +450,26 @@ namespace OpenDock
         static readonly HashSet<string> shellClasses = new HashSet<string> { "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow" };
         static readonly uint myPid = (uint)Process.GetCurrentProcess().Id;
 
+        public static bool FullscreenOn(Sys.Display screen)
+        {
+            bool fullscreen = false;
+            // EnumWindows walks front to back. Only the front application on this monitor matters,
+            // even when keyboard focus is on a different monitor.
+            Native.EnumWindows((h, l) =>
+            {
+                if (!Native.IsWindowVisible(h) || Native.IsIconic(h) || Native.IsCloaked(h) || Native.GetWindowTextLength(h) == 0) return true;
+                int ex = Native.GetWindowLong(h, Native.GWL_EXSTYLE);
+                if ((ex & (Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE)) != 0 || shellClasses.Contains(Native.ClassName(h))) return true;
+                if (Native.MonitorFromWindow(h, 2) != screen.Monitor) return true;
+                Native.RECT r; var b = screen.Bounds;
+                if (!Native.GetWindowRect(h, out r)) return true;
+                bool caption = (Native.GetWindowLong(h, Native.GWL_STYLE) & 0x00C00000) != 0;
+                fullscreen = !(caption && Native.IsZoomed(h)) && r.Left <= b.Left && r.Top <= b.Top && r.Right >= b.Right && r.Bottom >= b.Bottom;
+                return false;
+            }, IntPtr.Zero);
+            return fullscreen;
+        }
+
         // Same rules Alt+Tab uses: visible, unowned, not a tool window, not cloaked.
         public static List<WinInfo> Enumerate()
         {

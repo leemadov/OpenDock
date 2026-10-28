@@ -150,6 +150,7 @@ namespace OpenDock
                         timer.Stop(); dock.Close(); App.Dock = null;
                         MultiDisplayChecks.Run(fixture); dock = App.Dock;
                         InternalWindowChecks.Run();
+                        DesktopRegressionChecks.Run(fixture);
                         Console.WriteLine("desktop checks passed; snapshots in bin/qa");
                         timer.Stop();
                         if (!preview) cleanup();

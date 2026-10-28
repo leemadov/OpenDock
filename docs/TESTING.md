@@ -17,6 +17,7 @@ Run `build.bat check` for app-filtering and colour-profile regressions plus:
 - Actual Finder list rows, selection across icon/list switches, and light/dark rendering.
 - The rename dialog and its operation on a generated fixture file.
 - Desktop & Dock settings and snapshots of each dock edge.
+- Finder address-bar navigation, environment/relative paths, invalid-path handling and back/forward updates; a separate-process focus fixture verifies Finder stays open; a fullscreen fixture verifies only the fullscreen monitor's dock hides while keyboard focus moves elsewhere, and returns after leaving fullscreen.
 
 `build.bat check --preview` runs those checks and then leaves an isolated controller open. Close **OpenDock checks** to release appbar space and exit. Its position/view buttons change only in-memory test settings.
 

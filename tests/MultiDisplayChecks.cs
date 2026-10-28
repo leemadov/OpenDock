@@ -135,11 +135,15 @@ namespace OpenDock
         public static int Inspect(int pid)
         {
             var windows = new List<Native.RECT>();
+            var all = new List<Native.RECT>();
             Native.EnumWindows((h, data) =>
             {
                 uint owner; Native.GetWindowThreadProcessId(h, out owner);
                 Native.RECT rc;
-                if (owner == pid && Native.WindowText(h) == "OpenDock" && Native.IsWindowVisible(h) && Native.GetWindowRect(h, out rc)) windows.Add(rc);
+                if (owner == pid && Native.WindowText(h) == "OpenDock" && Native.GetWindowRect(h, out rc))
+                {
+                    all.Add(rc); if (Native.IsWindowVisible(h)) windows.Add(rc);
+                }
                 return true;
             }, IntPtr.Zero);
             int missing = 0;
@@ -147,8 +151,10 @@ namespace OpenDock
             {
                 var bounds = screen.Bounds;
                 bool found = windows.Any(r => r.Left >= bounds.Left && r.Right <= bounds.Right && r.Top >= bounds.Top && r.Bottom <= bounds.Bottom);
-                Console.WriteLine(screen.Device + ": visible dock=" + found + ", bounds=" + bounds.Left + "," + bounds.Top + ".." + bounds.Right + "," + bounds.Bottom);
-                if (!found) missing++;
+                bool present = all.Any(r => r.Left >= bounds.Left && r.Right <= bounds.Right && r.Top >= bounds.Top && r.Bottom <= bounds.Bottom);
+                bool fullscreen = Windows.FullscreenOn(screen);
+                Console.WriteLine(screen.Device + ": visible dock=" + found + ", fullscreen=" + fullscreen + ", dock present=" + present);
+                if (!present || (fullscreen ? found : !found)) missing++;
             }
             Console.WriteLine("visible dock windows: " + windows.Count);
             return missing == 0 ? 0 : 1;

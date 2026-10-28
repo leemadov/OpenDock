@@ -295,14 +295,15 @@ namespace OpenDock
         public void OnFullScreen(bool fs)
         {
             if (closed) return;
-            var fg = Native.GetForegroundWindow();
-            uint pid; Native.GetWindowThreadProcessId(fg, out pid);
-            string cls = Native.ClassName(fg);
-            if (fs && (pid == (uint)Process.GetCurrentProcess().Id || cls == "Progman" || cls == "WorkerW")) return;
-            Native.RECT rc;
-            var bounds = Screen.Bounds;
-            bool covered = fs && Native.GetWindowRect(fg, out rc) && rc.Left <= bounds.Left && rc.Top <= bounds.Top && rc.Right >= bounds.Right && rc.Bottom >= bounds.Bottom;
+            bool covered = Windows.FullscreenOn(Screen);
+            if (covered && IsVisible)
+            {
+                preview.Close2();
+                if (stack != null && stack.IsVisible) stack.Dismiss();
+                if (openMenu != null) openMenu.IsOpen = false;
+            }
             Visibility = covered ? Visibility.Hidden : Visibility.Visible;
+            if (!covered) StartLoop();
             if (App.MenuBar != null && Settings.ShowMenuBar && Screen.Device == DisplayLayout.Selected.Device) App.MenuBar.Visibility = Visibility;
         }
 
