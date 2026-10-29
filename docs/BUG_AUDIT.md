@@ -1,4 +1,4 @@
-# Bug audit — v0.3.0-preview.4
+# Bug audit — v0.3.0-preview.5
 
 This pass reviewed the dock, monitor/appbar lifecycle, Finder navigation and file operations, tabs/split panes, Shelf and workspace storage, icons/process identification, menus, wallpaper library, update helpers and settings backends. It preserves the original glass renderer and the previous monitor/Shelf fixes. The custom desktop experiment remains reverted.
 
@@ -26,8 +26,21 @@ This pass reviewed the dock, monitor/appbar lifecycle, Finder navigation and fil
 | Update failure handling | A result-log write failure could try to undo a successfully running update. Logging is now best effort; immediate startup failure still restores the previous executable. Staging files are cleaned up on failure. Changing update channels during a check discards the stale result. | Isolated executable checksum, update, rollback, immediate-exit and unavailable-log checks; channel filtering tests and UI guard review. |
 | Settings helpers | The timeout ran after a blocking stdout read, so a hung command could wait indefinitely. Output is now drained asynchronously with a bounded process wait. | Sleeping helper timeout and a 64 KiB output fixture. |
 
+## Follow-up corrections
+
+| Area | Problem and correction | Verification |
+|---|---|---|
+| Window previews | Closing a card registered duplicate DWM thumbnails and retained old images. Previews now unregister, reflow and attach each remaining card once; queued work ignores dismissed previews. | Actual native thumbnails: two cards become one, then dismissal leaves no registrations. |
+| Launchpad and search | Interrupted gestures retained pressed/drag state or left Launchpad between pages. Completed fade callbacks could hide an already closed window. Gesture reset/snap-back, subscription cleanup and window-lifetime guards prevent this. | Canceled gesture state/opacity and page-position checks; close-during-fade dispatcher checks. |
+| Dock Studio | Draft controls scheduled live settings refreshes before Apply Preview. Draft controls now update only the preview until explicitly applied. | Draft slider leaves live settings and change notifications untouched; Apply Preview commits. |
+| Closing Settings | Closing during the deferred-save interval could lose the latest edit. Closing now flushes pending changes and stops the timer; a failed save keeps the window open. | Change a real setting and immediately close; verify persisted value and stopped timer. |
+| Finder folders | New Folder handled existing directories but failed when a regular file had the same name. Naming now considers both. | Preserve a file named `untitled folder` while creating `untitled folder 2`. |
+| Shelf actions | Copy with no selection could clear the clipboard; empty Remove still saved. Empty-selection actions are disabled and empty payloads are not copied. | Empty actions disabled; selecting a saved item enables them. |
+| Pin and Shelf visibility saves | Failed writes left unsaved pins or Shelf visibility active in memory. These changes now restore the saved state on failure, including dock visuals after a failed pin edit. | Locked shared-pins and workspace files preserve the previous collections and visibility. |
+| Previous versions | Re-saving identical content replaced useful preference backups, and rollback could offer a copy of the current executable. Identical writes now preserve backups; rollback skips identical executables. | Repeated and locked identical saves preserve the previous content; rollback selects a different build or remains disabled. |
+
 ## Coverage
 
-Run `build.bat check` for deterministic checks, `build.bat check --audit-ui` for focused Finder/icon checks, `build.bat check --updater` for isolated executable handoff, or `build.bat check --ui` for the complete desktop suite. Test settings, logs and workspace data use temporary storage instead of the user's profile.
+Run `build.bat check` for deterministic checks, `build.bat check --audit-ui` for focused Finder/icon/preview/settings checks, `build.bat check --updater` for isolated executable handoff, or `build.bat check --ui` for the complete desktop suite. Test settings, logs and workspace data use temporary storage instead of the user's profile.
 
 Windows reported one connected 1920×1080 display for the final complete audit run. The existing two-display regressions remain in the suite, but the full updated batch still needs a run after reconnecting the second display. Mixed-DPI monitors, physical unplug/replug, alternate shells and individual third-party application protocols require the hardware/manual checks in [TESTING.md](TESTING.md). This report records verified fixes and reviewed guards; it is not a claim that every possible defect has been eliminated.

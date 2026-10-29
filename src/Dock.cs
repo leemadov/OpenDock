@@ -467,9 +467,12 @@ namespace OpenDock
 
         void SavePins()
         {
-            Workspace.SetPins(Device, items.Where(i => i.Kind == "app" && i.Pinned).Select(i => i.Name + "|" + i.Target).ToList());
-            Settings.Save();
-            App.SyncPins(this);
+            try
+            {
+                Workspace.SetPins(Device, items.Where(i => i.Kind == "app" && i.Pinned).Select(i => i.Name + "|" + i.Target).ToList());
+                Settings.Save(); App.SyncPins(this);
+            }
+            catch { RefreshPins(); App.SyncPins(this); throw; }
         }
 
         public void RefreshPins()
@@ -745,7 +748,7 @@ namespace OpenDock
                 case "shelf":
                     cm.Items.Add(Item("Open Shelf",ShelfWindow.Open)); cm.Items.Add(Item("Collect Clipboard",ShelfWindow.AddClipboard));
                     cm.Items.Add(new Separator());
-                    cm.Items.Add(Item("Remove from Dock",()=> { Workspace.Data.ShowShelf=false; Workspace.Save(); })); break;
+                    cm.Items.Add(Item("Remove from Dock",()=>Workspace.SetShelfShown(false))); break;
                 case "stack":
                     cm.Items.Add(Item("Open", () => ToggleStack(it)));
                     cm.Items.Add(Item("Open in Finder", () => App.NewFinder(Launcher.Downloads)));
@@ -807,7 +810,11 @@ namespace OpenDock
             drag = null;
             if(it.Kind=="shelf")
             {
-                if(dragOut) { ghost.Poof(); Workspace.Data.ShowShelf=false; Workspace.Save(); }
+                if(dragOut)
+                {
+                    try { Workspace.SetShelfShown(false); ghost.Poof(); }
+                    catch { ghost.Hide(); it.PWant=1; dragOut=false; StartLoop(); throw; }
+                }
                 else { ghost.Hide(); it.PWant=1; }
                 dragOut=false; if(pinsNeedRefresh) RefreshPins(); StartLoop(); return;
             }

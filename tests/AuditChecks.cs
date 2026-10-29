@@ -171,7 +171,7 @@ namespace OpenDock
             app.Startup+=delegate
             {
                 App.MenuBar=new MenuBarWindow(); App.MenuBar.Show(); App.ReconcileDocks();
-                app.Dispatcher.BeginInvoke(new Action(()=> { try { Desktop(fixture); } catch(Exception ex) { failure=ex; } finally { finish(); } }));
+                app.Dispatcher.BeginInvoke(new Action(()=> { try { Desktop(fixture); FollowupChecks.Desktop(); } catch(Exception ex) { failure=ex; } finally { finish(); } }));
             };
             app.Run(); if(failure!=null) throw new Exception("Audit UI failed",failure);
         }

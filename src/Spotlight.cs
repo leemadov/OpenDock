@@ -126,7 +126,7 @@ namespace OpenDock
             closing = true;
             if (refocus && App.LastForeground != IntPtr.Zero && Native.IsWindow(App.LastForeground)) Native.Activate(App.LastForeground);
             var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(120));
-            fade.Completed += delegate { if (closing) Hide(); };
+            fade.Completed += delegate { if (closing&&PresentationSource.FromVisual(this)!=null) Hide(); };
             panel.BeginAnimation(OpacityProperty, fade);
         }
 

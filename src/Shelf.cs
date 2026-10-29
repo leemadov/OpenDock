@@ -30,7 +30,7 @@ namespace OpenDock
             var previous=Workspace.Data.Shelf; var next=previous.ToList(); edit(next); Workspace.Data.Shelf=next;
             try { Workspace.Save(); } catch { Workspace.Data.Shelf=previous; throw; }
         }
-        public static void Remove(ShelfEntry[] entries) { Change(items=>items.RemoveAll(entries.Contains)); }
+        public static void Remove(ShelfEntry[] entries) { if(entries.Length>0) Change(items=>items.RemoveAll(entries.Contains)); }
         public static DataObject Payload(ShelfEntry[] entries)
         {
             var data=new DataObject(); var paths=new StringCollection();
@@ -91,11 +91,13 @@ namespace OpenDock
             var title=new TextBlock { Text="Shelf",Margin=new Thickness(110,0,0,0),VerticalAlignment=VerticalAlignment.Center,FontSize=16 }; title.SetResourceReference(ForegroundProperty,"Fg"); head.Children.Add(title);
             DockPanel.SetDock(head,Dock.Top); root.Children.Add(head);
             var buttons=new WrapPanel { Margin=new Thickness(12,4,12,4) };
-            Action<string,Action> add=(name,action)=> { var b=new Button { Content=name,Margin=new Thickness(3),Padding=new Thickness(10,5,10,5) }; b.SetResourceReference(FrameworkElement.StyleProperty,"Flat"); b.SetResourceReference(Control.ForegroundProperty,"Fg"); b.Click+=delegate { try { action(); } catch(Exception ex) { MessageBox.Show(ex.Message,"Shelf"); } }; buttons.Children.Add(b); };
+            Func<string,Action,Button> add=(name,action)=> { var b=new Button { Content=name,Margin=new Thickness(3),Padding=new Thickness(10,5,10,5) }; b.SetResourceReference(FrameworkElement.StyleProperty,"Flat"); b.SetResourceReference(Control.ForegroundProperty,"Fg"); b.Click+=delegate { try { action(); } catch(Exception ex) { MessageBox.Show(ex.Message,"Shelf"); } }; buttons.Children.Add(b); return b; };
             add("Add Clipboard",AddClipboard);
-            add("Copy Selected",()=>Clipboard.SetDataObject(Shelf.Payload(list.SelectedItems.Cast<ShelfEntry>().ToArray()),true));
-            add("Open",()=> { foreach(var e in list.SelectedItems.Cast<ShelfEntry>()) { if(e.Kind=="file") Launcher.Open(e.Value); else { Uri uri; if(Uri.TryCreate(e.Value,UriKind.Absolute,out uri)&&(uri.Scheme=="https"||uri.Scheme=="http")) Launcher.Shell(uri.AbsoluteUri); } } });
-            add("Remove",()=>Shelf.Remove(list.SelectedItems.Cast<ShelfEntry>().ToArray()));
+            var copy=add("Copy Selected",()=> { var payload=Shelf.Payload(list.SelectedItems.Cast<ShelfEntry>().ToArray()); if(payload.GetFormats().Length>0) Clipboard.SetDataObject(payload,true); });
+            var openSelected=add("Open",()=> { foreach(var e in list.SelectedItems.Cast<ShelfEntry>()) { if(e.Kind=="file") Launcher.Open(e.Value); else { Uri uri; if(Uri.TryCreate(e.Value,UriKind.Absolute,out uri)&&(uri.Scheme=="https"||uri.Scheme=="http")) Launcher.Shell(uri.AbsoluteUri); } } });
+            var remove=add("Remove",()=>Shelf.Remove(list.SelectedItems.Cast<ShelfEntry>().ToArray()));
+            Action selection=()=> { foreach(var button in new[]{copy,openSelected,remove}) button.IsEnabled=list.SelectedItems.Count>0; };
+            list.SelectionChanged+=delegate { selection(); }; selection();
             DockPanel.SetDock(buttons,Dock.Top); root.Children.Add(buttons);
             var tip=new TextBlock { Text="Drop files or text here. Drag selected items into another app. Removing an item keeps its original file.",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(16,4,16,8) }; tip.SetResourceReference(ForegroundProperty,"FgDim"); DockPanel.SetDock(tip,Dock.Bottom); root.Children.Add(tip);
             list.SetResourceReference(BackgroundProperty,"Field"); list.SetResourceReference(ForegroundProperty,"Fg"); root.Children.Add(list); Layout.Children.Add(root);

@@ -15,7 +15,7 @@ namespace OpenDock
 {
     static class Updater
     {
-        public const string CurrentTag = "v0.3.0-preview.4";
+        public const string CurrentTag = "v0.3.0-preview.5";
         public const string ReleasesPage = "https://github.com/leemadov/OpenDock/releases";
         const int MaximumBuild = 32 * 1024 * 1024;
         const string AssetPrefix = "https://github.com/leemadov/OpenDock/releases/download/";
@@ -140,8 +140,9 @@ namespace OpenDock
         static string Location { get { return Assembly.GetExecutingAssembly().Location; } }
         public static string Previous(string target)
         {
+            string current=File.Exists(target)?Hash(File.ReadAllBytes(target)):null;
             return Directory.GetFiles(Path.GetDirectoryName(target), Path.GetFileName(target) + ".backup-*").Concat(File.Exists(target+".previous")?new[]{target+".previous"}:new string[0])
-                .OrderByDescending(BackupTime).FirstOrDefault();
+                .OrderByDescending(BackupTime).FirstOrDefault(path=>new FileInfo(path).Length<=MaximumBuild&&(current==null||Hash(File.ReadAllBytes(path))!=current));
         }
         static DateTime BackupTime(string path)
         {

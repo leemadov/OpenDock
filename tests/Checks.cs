@@ -115,6 +115,7 @@ namespace OpenDock
             WorkspaceChecks.Run();
             FeatureChecks.Run();
             AuditChecks.Run();
+            FollowupChecks.Run();
             LayoutChecks();
             RenameChecks();
             if(args.Contains("--updater")) FeatureChecks.Handoff();

@@ -153,6 +153,7 @@ namespace OpenDock
                         DesktopRegressionChecks.Run(fixture);
                         WorkspaceChecks.Desktop(fixture);
                         AuditChecks.Desktop(fixture);
+                        FollowupChecks.Desktop();
                         FeatureChecks.Handoff();
                         Console.WriteLine("desktop checks passed; snapshots in bin/qa");
                         timer.Stop();

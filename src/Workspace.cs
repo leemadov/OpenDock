@@ -113,6 +113,7 @@ namespace OpenDock
         }
         public static void AtomicWrite(string path, string text)
         {
+            if(File.Exists(path)&&File.ReadAllText(path)==text) return;
             string stage = path + ".tmp-" + Guid.NewGuid().ToString("N");
             try
             {
@@ -134,7 +135,14 @@ namespace OpenDock
         public static void SetPins(string device, List<string> pins)
         {
             var layout = Data.Layouts.FirstOrDefault(l => l.Device == device);
-            if (layout == null) { Settings.Pins = pins; Settings.Save(); } else { layout.Pins = pins; Save(); }
+            var previous=layout==null?Settings.Pins:layout.Pins;
+            try { if (layout == null) { Settings.Pins = pins; Settings.Save(); } else { layout.Pins = pins; Save(); } }
+            catch { if(layout==null) Settings.Pins=previous; else layout.Pins=previous; throw; }
+        }
+        public static void SetShelfShown(bool value)
+        {
+            bool previous=Data.ShowShelf; Data.ShowShelf=value;
+            try { Save(); } catch { Data.ShowShelf=previous; throw; }
         }
         public static Scene Capture(string name, IEnumerable<WinInfo> windows)
         {

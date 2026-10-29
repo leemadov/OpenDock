@@ -743,7 +743,7 @@ namespace OpenDock
         void NewFolder()
         {
             string name = "untitled folder";
-            for (int i = 2; Directory.Exists(System.IO.Path.Combine(path, name)); i++) name = "untitled folder " + i;
+            for (int i = 2; Directory.Exists(System.IO.Path.Combine(path, name))||File.Exists(System.IO.Path.Combine(path,name)); i++) name = "untitled folder " + i;
             try { Directory.CreateDirectory(System.IO.Path.Combine(path, name)); selectAfterLoad = System.IO.Path.Combine(path, name); }
             catch (Exception ex) { MessageBox.Show(ex.Message, "Finder"); }
         }
@@ -775,6 +775,14 @@ namespace OpenDock
             Width = 920; Height = 660; MinWidth = 760; MinHeight = 480;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             apply.Tick += delegate { apply.Stop(); Settings.Apply(); };
+            Closing+=(s,e)=>
+            {
+                if(!apply.IsEnabled) return;
+                apply.Stop();
+                try { Settings.Apply(); }
+                catch(Exception ex) { e.Cancel=true; apply.Start(); MessageBox.Show(this,ex.Message,"Couldn't save settings"); }
+            };
+            Closed+=delegate { apply.Stop(); };
 
             var cats = new[]
             {
@@ -1137,21 +1145,21 @@ namespace OpenDock
             Row(p, row);
         }
 
-        void AddSwitch(Panel p, string label, bool value, Action<bool> set)
+        void AddSwitch(Panel p, string label, bool value, Action<bool> set, bool applySettings=true)
         {
             var cb = new CheckBox { Content = Text(label, 13, "Fg"), IsChecked = value, Style = (Style)Application.Current.Resources["Switch"], Cursor = Cursors.Hand };
-            cb.Click += delegate { set(cb.IsChecked == true); apply.Stop(); apply.Start(); };
+            cb.Click += delegate { set(cb.IsChecked == true); if(applySettings) { apply.Stop(); apply.Start(); } };
             Row(p, cb);
         }
 
-        void AddSlider(Panel p, string label, double min, double max, double value, Action<double> set)
+        void AddSlider(Panel p, string label, double min, double max, double value, Action<double> set, bool applySettings=true)
         {
             var g = new Grid();
             g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
             g.ColumnDefinitions.Add(new ColumnDefinition());
             g.Children.Add(Text(label, 13, "Fg"));
             var s = new Slider { Minimum = min, Maximum = max, Value = value, VerticalAlignment = VerticalAlignment.Center };
-            s.ValueChanged += delegate { set(s.Value); apply.Stop(); apply.Start(); };
+            s.ValueChanged += delegate { set(s.Value); if(applySettings) { apply.Stop(); apply.Start(); } };
             Grid.SetColumn(s, 1);
             g.Children.Add(s);
             Row(p, g);
