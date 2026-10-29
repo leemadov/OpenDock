@@ -138,6 +138,7 @@ namespace OpenDock
         readonly IntPtr hwnd; readonly uint msg; readonly Func<Native.RECT> bounds; uint edge; bool registered; int thickness; bool placing;
         public Action<bool> FullScreen;
         public Action<Native.RECT> Placed;
+        public bool IsPlacing { get { return placing; } }
 
         public AppBar(Window w, uint edge, Func<Native.RECT> bounds = null)
         {

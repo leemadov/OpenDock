@@ -90,7 +90,7 @@ namespace OpenDock
         public Rect MonitorBounds { get { return DisplayLayout.Dip(Screen.Bounds); } }
         public Rect MonitorWorkArea { get { return DisplayLayout.Dip(Screen.Work); } }
         int iconRevision=Settings.IconRevision;
-        bool closed, pinsNeedRefresh;
+        bool closed, pinsNeedRefresh, repairingPlacement;
         readonly DispatcherTimer trashTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
         readonly Canvas canvas = new Canvas(), layer = new Canvas();
         readonly Image wall = new Image { Stretch = Stretch.Fill };
@@ -299,6 +299,14 @@ namespace OpenDock
         public void OnFullScreen(bool fs)
         {
             if (closed) return;
+            var target=MonitorBounds; Native.RECT actual;
+            if(Bar!=null&&!Bar.IsPlacing&&!repairingPlacement&&(monitor!=target||Native.GetWindowRect(new WindowInteropHelper(this).Handle,out actual)&&!target.Contains(DisplayLayout.Dip(actual))))
+            {
+                // A display reconnect or Explorer can relocate the native window without changing our assigned device.
+                repairingPlacement=true;
+                try { Bar.Remove(); Place(); }
+                finally { repairingPlacement=false; }
+            }
             bool covered = Windows.FullscreenOn(Screen);
             if (covered && IsVisible)
             {

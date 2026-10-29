@@ -72,6 +72,19 @@ namespace OpenDock
                     }
                 }
                 Settings.AutoHide = false; Settings.DockPosition = 0; CheckDocks(screens.Count);
+                if(screens.Count>1)
+                {
+                    var misplaced=App.Docks.First(); var other=DisplayLayout.Dip(screens.Last().Bounds);
+                    misplaced.Bar.Remove();
+                    Native.SetWindowPos(new WindowInteropHelper(misplaced).Handle,IntPtr.Zero,(int)(other.Left*App.Dpi),(int)((other.Bottom-misplaced.Height)*App.Dpi),(int)(other.Width*App.Dpi),(int)(misplaced.Height*App.Dpi),4|Native.SWP_NOACTIVATE);
+                    Settle();
+                    foreach(var dock in App.Docks) dock.OnFullScreen(true);
+                    Settle();
+                    Native.RECT repaired;
+                    if(!Native.GetWindowRect(new WindowInteropHelper(misplaced).Handle,out repaired)||!misplaced.MonitorBounds.Contains(DisplayLayout.Dip(repaired))) throw new Exception("periodic monitor check left two docks stacked on one monitor");
+                    CheckDocks(screens.Count);
+                    Console.WriteLine("multi-display: misplaced native dock returned to its assigned monitor");
+                }
                 // Exercise shared pin insertion, removal and order without persisting preferences.
                 Settings.Pins.Add("Shared fixture|" + Path.Combine(fixture, "Report.csv"));
                 Settings.Pins.Reverse(); App.SyncPins(null);
@@ -142,6 +155,7 @@ namespace OpenDock
                 Native.RECT rc;
                 if (owner == pid && Native.WindowText(h) == "OpenDock" && Native.GetWindowRect(h, out rc))
                 {
+                    Console.WriteLine("dock HWND="+h+": "+rc.Left+","+rc.Top+" to "+rc.Right+","+rc.Bottom+", visible="+Native.IsWindowVisible(h));
                     all.Add(rc); if (Native.IsWindowVisible(h)) windows.Add(rc);
                 }
                 return true;
@@ -150,6 +164,7 @@ namespace OpenDock
             foreach (var screen in Sys.Screens())
             {
                 var bounds = screen.Bounds;
+                Console.WriteLine("monitor "+screen.Device+": "+bounds.Left+","+bounds.Top+" to "+bounds.Right+","+bounds.Bottom);
                 bool found = windows.Any(r => r.Left >= bounds.Left && r.Right <= bounds.Right && r.Top >= bounds.Top && r.Bottom <= bounds.Bottom);
                 bool present = all.Any(r => r.Left >= bounds.Left && r.Right <= bounds.Right && r.Top >= bounds.Top && r.Bottom <= bounds.Bottom);
                 bool fullscreen = Windows.FullscreenOn(screen);
