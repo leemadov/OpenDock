@@ -152,6 +152,7 @@ namespace OpenDock
                         InternalWindowChecks.Run();
                         DesktopRegressionChecks.Run(fixture);
                         WorkspaceChecks.Desktop(fixture);
+                        AuditChecks.Desktop(fixture);
                         FeatureChecks.Handoff();
                         Console.WriteLine("desktop checks passed; snapshots in bin/qa");
                         timer.Stop();

@@ -87,19 +87,28 @@ namespace OpenDock
                 // A wrong staged checksum must leave the installed executable byte-for-byte intact.
                 string staged = Updater.Stage(next, "sha256:" + Updater.Hash(next), target);
                 RunHelper(Updater.HelperScript(int.MaxValue, staged, target, "sha256:" + new string('0', 64), result), directory, false);
-                WaitForFixture(directory);
+                WaitForFixture(directory,"old");
+                if(File.Exists(staged)) throw new Exception("failed update left its staging executable behind");
                 if (Updater.Hash(File.ReadAllBytes(target)) != Updater.Hash(previous)) throw new Exception("failed update changed installed executable");
                 File.Delete(Path.Combine(directory, "started.txt"));
                 staged = Updater.Stage(next, "sha256:" + Updater.Hash(next), target);
                 RunHelper(Updater.HelperScript(int.MaxValue, staged, target, "sha256:" + Updater.Hash(next), result), directory, true);
-                WaitForFixture(directory);
+                WaitForFixture(directory,"new");
                 if (Updater.Hash(File.ReadAllBytes(target)) != Updater.Hash(next) || Updater.Hash(File.ReadAllBytes(target + ".previous")) != Updater.Hash(previous)) throw new Exception("update or previous-build backup differed");
                 File.Delete(Path.Combine(directory, "started.txt"));
                 staged = Updater.Stage(previous, "sha256:" + Updater.Hash(previous), target);
                 RunHelper(Updater.HelperScript(int.MaxValue, staged, target, "sha256:" + Updater.Hash(previous), result), directory, true);
-                WaitForFixture(directory);
+                WaitForFixture(directory,"old");
                 if (Updater.Hash(File.ReadAllBytes(target)) != Updater.Hash(previous) || Updater.Hash(File.ReadAllBytes(target + ".previous")) != Updater.Hash(next)) throw new Exception("rollback didn't preserve both builds");
-                Console.WriteLine("updater: rejected checksum, atomic replacement, restart and rollback verified on isolated executables");
+                string crash=Path.Combine(directory,"crash.exe"); CompileFixture(crash,"crash"); var broken=File.ReadAllBytes(crash);
+                File.Delete(Path.Combine(directory,"started.txt")); staged=Updater.Stage(broken,"sha256:"+Updater.Hash(broken),target);
+                RunHelper(Updater.HelperScript(int.MaxValue,staged,target,"sha256:"+Updater.Hash(broken),result),directory,false); WaitForFixture(directory,"old");
+                if(Updater.Hash(File.ReadAllBytes(target))!=Updater.Hash(previous)) throw new Exception("immediate startup failure did not restore the previous executable");
+                string cannotLog=Path.Combine(directory,"result-is-a-directory"); Directory.CreateDirectory(cannotLog);
+                File.Delete(Path.Combine(directory,"started.txt")); staged=Updater.Stage(next,"sha256:"+Updater.Hash(next),target);
+                RunHelper(Updater.HelperScript(int.MaxValue,staged,target,"sha256:"+Updater.Hash(next),cannotLog),directory,true); WaitForFixture(directory,"new");
+                if(Updater.Hash(File.ReadAllBytes(target))!=Updater.Hash(next)) throw new Exception("result logging failure undid a successful update");
+                Console.WriteLine("updater: rejected checksum, atomic replacement, restart, rollback, immediate startup failure and unavailable result log verified on isolated executables");
             }
             finally { Directory.Delete(directory, true); }
         }
@@ -109,7 +118,7 @@ namespace OpenDock
             using (var compiler = new Microsoft.CSharp.CSharpCodeProvider())
             {
                 var options = new CompilerParameters(new[] { "System.dll" }, destination, false) { GenerateExecutable = true };
-                string source = "using System; using System.IO; using System.Diagnostics; using System.Threading; class Fixture { static void Main() { File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, \"started.txt\"), Process.GetCurrentProcess().Id.ToString()); Thread.Sleep(3500); } }";
+                string source = "using System; using System.IO; using System.Diagnostics; using System.Threading; class Fixture { static void Main() { File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, \"started.txt\"), \""+marker+"|\"+Process.GetCurrentProcess().Id.ToString()); "+(marker=="crash"?"return;":"Thread.Sleep(3500);")+" } }";
                 var result = compiler.CompileAssemblyFromSource(options, source);
                 if (result.Errors.HasErrors) throw new Exception("Couldn't compile isolated update fixture: " + result.Errors[0]);
             }
@@ -124,12 +133,12 @@ namespace OpenDock
             }
         }
 
-        static void WaitForFixture(string directory)
+        static void WaitForFixture(string directory,string expected)
         {
             string marker = Path.Combine(directory, "started.txt"); int attempts = 0;
-            while (!File.Exists(marker) && attempts++ < 50) Thread.Sleep(100);
-            if (!File.Exists(marker)) throw new Exception("updated fixture didn't restart: " + File.ReadAllText(Path.Combine(directory, "result.txt")));
-            try { using (var process = Process.GetProcessById(int.Parse(File.ReadAllText(marker)))) if (!process.WaitForExit(10000)) throw new Exception("fixture did not exit"); }
+            while ((!File.Exists(marker)||!File.ReadAllText(marker).StartsWith(expected+"|")) && attempts++ < 50) Thread.Sleep(100);
+            if (!File.Exists(marker)||!File.ReadAllText(marker).StartsWith(expected+"|")) throw new Exception("expected updated fixture didn't restart");
+            try { using (var process = Process.GetProcessById(int.Parse(File.ReadAllText(marker).Split('|')[1]))) if (!process.WaitForExit(10000)) throw new Exception("fixture did not exit"); }
             catch (ArgumentException) { } // It already exited.
         }
     }

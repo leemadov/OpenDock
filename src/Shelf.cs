@@ -15,13 +15,22 @@ namespace OpenDock
         public static void Add(string kind,string value)
         {
             if (string.IsNullOrEmpty(value)) return;
+            if(kind!="file"&&kind!="text") throw new ArgumentException("Unsupported Shelf item type.");
             if(value.Length>16000) throw new ArgumentException("Shelf text entries support up to 16,000 characters.");
             if (kind=="file") { value=Path.GetFullPath(value); if (!File.Exists(value)&&!Directory.Exists(value)) return; }
-            if (Workspace.Data.Shelf.Any(x=>x.Kind==kind&&x.Value==value)) return;
-            Workspace.Data.Shelf.Add(new ShelfEntry { Kind=kind, Value=value });
-            while(Workspace.Data.Shelf.Count>200||Workspace.Data.Shelf.Sum(e=>e.Value.Length)>100000) Workspace.Data.Shelf.RemoveAt(0);
-            Workspace.Save();
+            if (Workspace.Data.Shelf.Any(x=>x.Kind==kind&&string.Equals(x.Value,value,kind=="file"?StringComparison.OrdinalIgnoreCase:StringComparison.Ordinal))) return;
+            Change(items=>
+            {
+                items.Add(new ShelfEntry { Kind=kind, Value=value });
+                while(items.Count>200||items.Sum(e=>e.Value.Length)>100000) items.RemoveAt(0);
+            });
         }
+        static void Change(Action<System.Collections.Generic.List<ShelfEntry>> edit)
+        {
+            var previous=Workspace.Data.Shelf; var next=previous.ToList(); edit(next); Workspace.Data.Shelf=next;
+            try { Workspace.Save(); } catch { Workspace.Data.Shelf=previous; throw; }
+        }
+        public static void Remove(ShelfEntry[] entries) { Change(items=>items.RemoveAll(entries.Contains)); }
         public static DataObject Payload(ShelfEntry[] entries)
         {
             var data=new DataObject(); var paths=new StringCollection();
@@ -86,7 +95,7 @@ namespace OpenDock
             add("Add Clipboard",AddClipboard);
             add("Copy Selected",()=>Clipboard.SetDataObject(Shelf.Payload(list.SelectedItems.Cast<ShelfEntry>().ToArray()),true));
             add("Open",()=> { foreach(var e in list.SelectedItems.Cast<ShelfEntry>()) { if(e.Kind=="file") Launcher.Open(e.Value); else { Uri uri; if(Uri.TryCreate(e.Value,UriKind.Absolute,out uri)&&(uri.Scheme=="https"||uri.Scheme=="http")) Launcher.Shell(uri.AbsoluteUri); } } });
-            add("Remove",()=> { foreach(var item in list.SelectedItems.Cast<ShelfEntry>().ToList()) Workspace.Data.Shelf.Remove(item); Workspace.Save(); });
+            add("Remove",()=>Shelf.Remove(list.SelectedItems.Cast<ShelfEntry>().ToArray()));
             DockPanel.SetDock(buttons,Dock.Top); root.Children.Add(buttons);
             var tip=new TextBlock { Text="Drop files or text here. Drag selected items into another app. Removing an item keeps its original file.",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(16,4,16,8) }; tip.SetResourceReference(ForegroundProperty,"FgDim"); DockPanel.SetDock(tip,Dock.Bottom); root.Children.Add(tip);
             list.SetResourceReference(BackgroundProperty,"Field"); list.SetResourceReference(ForegroundProperty,"Fg"); root.Children.Add(list); Layout.Children.Add(root);

@@ -15,11 +15,11 @@ namespace OpenDock
 {
     static class Updater
     {
-        public const string CurrentTag = "v0.3.0-preview.3";
+        public const string CurrentTag = "v0.3.0-preview.4";
         public const string ReleasesPage = "https://github.com/leemadov/OpenDock/releases";
         const int MaximumBuild = 32 * 1024 * 1024;
         const string AssetPrefix = "https://github.com/leemadov/OpenDock/releases/download/";
-        static readonly Regex versionPattern = new Regex(@"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$", RegexOptions.CultureInvariant);
+        static readonly Regex versionPattern = new Regex(@"^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$", RegexOptions.CultureInvariant);
 
         public class Asset
         {
@@ -44,7 +44,7 @@ namespace OpenDock
             var match = versionPattern.Match(tag);
             int number;
             if (!match.Success || Enumerable.Range(1, 3).Any(i => !int.TryParse(match.Groups[i].Value, out number)) ||
-                (match.Groups[4].Success && match.Groups[4].Value.Split('.').Any(s => s.Length == 0))) throw new ArgumentException("Invalid release version.");
+                (match.Groups[4].Success && match.Groups[4].Value.Split('.').Any(s => s.Length>1&&s[0]=='0'&&s.All(char.IsDigit)))) throw new ArgumentException("Invalid release version.");
             return match;
         }
 
@@ -57,8 +57,8 @@ namespace OpenDock
             var ax = ap.Split('.'); var bx = bp.Split('.');
             for (int i = 0; i < Math.Min(ax.Length, bx.Length); i++)
             {
-                long an, bn; bool numericA = long.TryParse(ax[i], out an), numericB = long.TryParse(bx[i], out bn);
-                int order = numericA && numericB ? an.CompareTo(bn) : numericA != numericB ? (numericA ? -1 : 1) : StringComparer.Ordinal.Compare(ax[i], bx[i]);
+                bool numericA=ax[i].All(char.IsDigit),numericB=bx[i].All(char.IsDigit);
+                int order = numericA && numericB ? (ax[i].Length!=bx[i].Length?ax[i].Length.CompareTo(bx[i].Length):StringComparer.Ordinal.Compare(ax[i],bx[i])) : numericA != numericB ? (numericA ? -1 : 1) : StringComparer.Ordinal.Compare(ax[i], bx[i]);
                 if (order != 0) return order;
             }
             return ax.Length.CompareTo(bx.Length);
@@ -141,7 +141,13 @@ namespace OpenDock
         public static string Previous(string target)
         {
             return Directory.GetFiles(Path.GetDirectoryName(target), Path.GetFileName(target) + ".backup-*").Concat(File.Exists(target+".previous")?new[]{target+".previous"}:new string[0])
-                .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+                .OrderByDescending(BackupTime).FirstOrDefault();
+        }
+        static DateTime BackupTime(string path)
+        {
+            var stamp=Regex.Match(Path.GetFileName(path),@"\.backup-.*-(\d{8}-\d{6})$"); DateTime time;
+            if(stamp.Success&&DateTime.TryParseExact(stamp.Groups[1].Value,"yyyyMMdd-HHmmss",System.Globalization.CultureInfo.InvariantCulture,System.Globalization.DateTimeStyles.AssumeUniversal|System.Globalization.DateTimeStyles.AdjustToUniversal,out time)) return time;
+            return File.GetLastWriteTimeUtc(path);
         }
         public static bool CanRollback { get { try { return Previous(Location) != null; } catch { return false; } } }
 
@@ -192,24 +198,33 @@ function Restart {
   $info.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
   return [Diagnostics.Process]::Start($info)
 }
+function Report([string]$message) {
+  try { [IO.File]::WriteAllText($result, $message) } catch { }
+}
 try {
   if ([IO.Path]::GetDirectoryName($stage) -ne [IO.Path]::GetDirectoryName($target)) { throw 'Update paths must share a directory.' }
+  if ($stage -eq $target) { throw 'Update stage and target must be different files.' }
   $old = $null
   try { $old = [Diagnostics.Process]::GetProcessById(" + process + @") } catch [ArgumentException] { }
   if ($null -ne $old -and !$old.WaitForExit(30000)) { throw 'OpenDock did not exit in time.' }
   if ((Hash $stage) -ne " + Quote(digest.Substring(7)) + @") { throw 'Staged checksum mismatch.' }
   [IO.File]::Replace($stage, $target, $backup)
   $replaced = $true
+  [IO.File]::SetLastWriteTimeUtc($backup, [DateTime]::UtcNow)
   if ((Hash $target) -ne " + Quote(digest.Substring(7)) + @") { throw 'Installed checksum mismatch.' }
   $started = Restart
   if ($started.WaitForExit(2500)) { throw 'Updated build exited during startup.' }
-  [IO.File]::WriteAllText($result, 'Update installed; previous build retained.')
+  Report 'Update installed; previous build retained.'
 } catch {
   $failure = $_.Exception.Message
-  if ($replaced -and [IO.File]::Exists($backup)) { [IO.File]::Copy($backup, $target, $true) }
+  if ($replaced -and ($null -eq $started -or $started.HasExited) -and [IO.File]::Exists($backup)) { [IO.File]::Copy($backup, $target, $true) }
   if ($null -eq $old -or $old.HasExited) { try { $null = Restart } catch { } }
-  [IO.File]::WriteAllText($result, 'Update failed: ' + $failure)
+  Report ('Update failed: ' + $failure)
   exit 1
+} finally {
+  if ($stage -ne $target -and [IO.Path]::GetDirectoryName($stage) -eq [IO.Path]::GetDirectoryName($target) -and [IO.File]::Exists($stage)) {
+    try { [IO.File]::Delete($stage) } catch { }
+  }
 }
 ";
         }
@@ -219,7 +234,8 @@ try {
             Verify(bytes, digest);
             string directory = Path.GetDirectoryName(Path.GetFullPath(target));
             string staged = Path.Combine(directory, ".OpenDock-update-" + Guid.NewGuid().ToString("N") + ".exe");
-            using (var file = new FileStream(staged, FileMode.CreateNew, FileAccess.Write)) { file.Write(bytes, 0, bytes.Length); file.Flush(true); }
+            try { using (var file = new FileStream(staged, FileMode.CreateNew, FileAccess.Write)) { file.Write(bytes, 0, bytes.Length); file.Flush(true); } }
+            catch { try { File.Delete(staged); } catch { } throw; }
             return staged;
         }
 
@@ -230,8 +246,9 @@ try {
             string result = Path.Combine(updates, "last-result.txt");
             string script = HelperScript(process, staged, target, digest, result);
             string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
-            return Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe"),
-                "-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand " + encoded) { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden });
+            try { return Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe"),
+                "-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand " + encoded) { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden }); }
+            catch { try { File.Delete(staged); } catch { } throw; }
         }
 
         public static string LastResult

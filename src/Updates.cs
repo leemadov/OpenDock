@@ -40,8 +40,10 @@ namespace OpenDock
                 check.IsEnabled = false; install.IsEnabled = false; status.Text = "Checking GitHub…";
                 try
                 {
-                    candidate = await Updater.Check(Settings.IncludePreviewUpdates, cancel.Token);
+                    bool requestedPreview=Settings.IncludePreviewUpdates;
+                    candidate = await Updater.Check(requestedPreview, cancel.Token);
                     if (cancel.IsCancellationRequested) return;
+                    if(requestedPreview!=Settings.IncludePreviewUpdates) { candidate=null; status.Text="Update channel changed. Check again."; return; }
                     status.Text = candidate == null ? "You're up to date." : "Available: " + candidate.tag_name;
                     install.IsEnabled = candidate != null;
                 }

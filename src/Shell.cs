@@ -28,6 +28,7 @@ namespace OpenDock
 
         public static void Start()
         {
+            if(Ui!=null) return;
             Ui = Dispatcher.CurrentDispatcher;
             var t = new Thread(() => { foreach (var a in queue.GetConsumingEnumerable()) { try { a(); } catch (Exception ex) { Debug.WriteLine(ex); } } });
             t.SetApartmentState(ApartmentState.STA);
@@ -45,20 +46,21 @@ namespace OpenDock
             if (string.IsNullOrEmpty(path)) return;
             key = (key ?? path) + "|" + size + "|" + (tile ? (Settings.IconTiles ? (Theme.Dark ? "d" : "l") : "s") : "");
             ImageSource img;
-            if (cache.TryGetValue(key, out img)) { done(img); return; }
+            if (cache.TryGetValue(key, out img)) { try { done(img); } catch(Exception ex) { App.Log(ex); } return; }
             List<Action<ImageSource>> waiting;
             if (pending.TryGetValue(key, out waiting)) { waiting.Add(done); return; }
             pending[key] = new List<Action<ImageSource>> { done };
             bool tiles = Settings.IconTiles, dark = Theme.Dark;
             queue.Add(() =>
             {
-                BitmapSource raw = Load(path, size);
-                ImageSource result = raw != null && tile ? Compose(raw, tiles, dark, size) : raw;
+                ImageSource result=null;
+                try { BitmapSource raw=Load(path,size); result=raw!=null&&tile?Compose(raw,tiles,dark,size):raw; }
+                catch(Exception ex) { App.Log(ex); }
                 Ui.BeginInvoke(new Action(() =>
                 {
                     if (keep && result != null) cache[key] = result;
                     var list = pending[key]; pending.Remove(key);
-                    if (result != null) foreach (var cb in list) cb(result);
+                    if (result != null) foreach (var cb in list) try { cb(result); } catch(Exception ex) { App.Log(ex); }
                 }));
             });
         }
@@ -445,7 +447,6 @@ namespace OpenDock
 
     static class Windows
     {
-        static readonly Dictionary<uint, string> exeByPid = new Dictionary<uint, string>();
         static readonly Dictionary<IntPtr, string> aumidByHwnd = new Dictionary<IntPtr, string>();
         static readonly HashSet<string> shellClasses = new HashSet<string> { "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow" };
         static readonly uint myPid = (uint)Process.GetCurrentProcess().Id;
@@ -473,6 +474,7 @@ namespace OpenDock
         // Same rules Alt+Tab uses: visible, unowned, not a tool window, not cloaked.
         public static List<WinInfo> Enumerate()
         {
+            var exeByPid=new Dictionary<uint,string>();
             var list = new List<WinInfo>();
             var seen = new HashSet<IntPtr>();
             Native.EnumWindows((h, l) =>
@@ -500,16 +502,13 @@ namespace OpenDock
                     list.Add(new WinInfo { Hwnd = new WindowInteropHelper(window).Handle, Pid = myPid, Title = window.Title,
                         InternalKind = window is SettingsWindow ? "settings" : window is AboutWindow ? "about" : window is ShelfWindow ? "shelf" : "window" });
             foreach (var h in aumidByHwnd.Keys.Where(k => !seen.Contains(k)).ToList()) aumidByHwnd.Remove(h);
-            if (exeByPid.Count > 500) exeByPid.Clear();
             return list;
         }
 
         public static string ExeOf(IntPtr h)
         {
             uint pid; Native.GetWindowThreadProcessId(h, out pid);
-            string exe;
-            if (!exeByPid.TryGetValue(pid, out exe)) exeByPid[pid] = exe = Native.ProcessPath(pid);
-            return exe;
+            return Native.ProcessPath(pid);
         }
     }
 
@@ -534,7 +533,7 @@ namespace OpenDock
 
         public static void Shell(string uri) { try { Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true }); } catch { } }
 
-        public static string Quote(IEnumerable<string> files) { return string.Join(" ", files.Select(f => "\"" + f + "\"")); }
+        public static string Quote(IEnumerable<string> files) { return string.Join(" ", files.Select(f => "\"" + f + new string('\\',f.Length-f.TrimEnd('\\').Length) + "\"")); }
 
         public static void Recycle(IEnumerable<string> paths)
         {

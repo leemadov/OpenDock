@@ -26,6 +26,7 @@ namespace OpenDock
         public readonly List<WinInfo> Wins = new List<WinInfo>();
         public Border Root; public Image Img; public Ellipse Dot;
         public Border Badge; public TextBlock BadgeText;
+        public int IconVersion;
         public readonly ScaleTransform Scale = new ScaleTransform(1, 1);
         // P = presence (0..1, grows/shrinks the slot), X = smoothed resting centre, CX/S = magnified centre/scale.
         public double P, PWant = 1, X = double.NaN, CX, S = 1, DotA, BounceT0 = -1, BounceStop;
@@ -399,8 +400,10 @@ namespace OpenDock
 
         void LoadIcon(DockItem it)
         {
+            int version=++it.IconVersion;
+            Action<ImageSource> set=image=> { if(version==it.IconVersion) it.Img.Source=image; };
             string custom=CustomIcons.Get(it.IconKey);
-            if(custom!=null) { Icons.Get(custom,true,image=>it.Img.Source=image); return; }
+            if(custom!=null) { Icons.Get(custom,true,set); return; }
             switch (it.Kind)
             {
                 case "finder": it.Img.Source = Art.Finder; break;
@@ -409,7 +412,7 @@ namespace OpenDock
                 case "shelf": it.Img.Source = Art.Shelf; break;
                 case "trash": trashFull = Launcher.TrashFull(); it.Img.Source = Art.Trash(trashFull); break;
                 case "internal": it.Img.Source = it.RunKey == "opendock:settings" ? Art.Settings : Art.Computer; break;
-                default: Icons.Get(it.IconPath, true, img => it.Img.Source = img); break;
+                default: Icons.Get(it.IconPath, true, set); break;
             }
         }
 

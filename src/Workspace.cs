@@ -41,7 +41,7 @@ namespace OpenDock
     class ShelfEntry
     {
         public string Kind, Value;
-        public string Label { get { return Kind == "file" ? Path.GetFileName(Value.TrimEnd('\\')) : Value.Length > 100 ? Value.Substring(0, 100) + "…" : Value; } }
+        public string Label { get { if(Kind=="file") { string name=Path.GetFileName(Value.TrimEnd('\\')); return string.IsNullOrEmpty(name)?Value:name; } return Value.Length>100?Value.Substring(0,100)+"…":Value; } }
     }
     class DockTheme
     {
@@ -72,21 +72,28 @@ namespace OpenDock
         public static IntPtr CommandWindow;
         public static string Status = "";
         public static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 2 * 1024 * 1024 };
+        static string unreadableFile, preserveBeforeSave;
+        static WorkspaceData Read(string path)
+        {
+            if(new FileInfo(path).Length>2*1024*1024) throw new InvalidDataException("Workspace file is too large.");
+            var data=Json.Deserialize<WorkspaceData>(File.ReadAllText(path)); Validate(data); return data;
+        }
         public static void Load()
         {
-            if (!File.Exists(FilePath)) return;
-            try
+            unreadableFile=preserveBeforeSave=null;
+            if (!File.Exists(FilePath)) { Data=new WorkspaceData(); return; }
+            try { Data=Read(FilePath); }
+            catch (Exception ex)
             {
-                if (new FileInfo(FilePath).Length > 2 * 1024 * 1024) throw new InvalidDataException("Workspace file is too large.");
-                Data = Json.Deserialize<WorkspaceData>(File.ReadAllText(FilePath)) ?? new WorkspaceData();
-                Validate(Data);
+                App.Log(ex);
+                try { Data=Read(FilePath+".previous"); preserveBeforeSave=FilePath; Status="Workspace recovered from its previous copy. The unreadable original will be archived before saving."; }
+                catch { Data=new WorkspaceData(); unreadableFile=FilePath; Status="Workspace data is unreadable. Restore a valid backup before saving; existing files have been retained."; }
             }
-            catch (Exception ex) { Data = new WorkspaceData(); App.Log(ex); Status = "Workspace data could not be loaded; the original file was retained."; }
         }
         internal static void Validate(WorkspaceData data)
         {
             Func<List<MonitorLayout>,bool> layouts=list=>list!=null&&list.All(l=>l!=null&&!string.IsNullOrEmpty(l.Device)&&l.Pins!=null&&l.Pins.All(p=>p!=null));
-            if(data.Scenes==null||data.Shelf==null||data.Themes==null||!layouts(data.Layouts)||
+            if(data==null||data.Scenes==null||data.Shelf==null||data.Themes==null||!layouts(data.Layouts)||
                 data.Themes.Any(t=>t==null||string.IsNullOrWhiteSpace(t.Name))||
                 data.Shelf.Any(e=>e==null||(e.Kind!="file"&&e.Kind!="text")||string.IsNullOrEmpty(e.Value))||
                 data.Scenes.Any(s=>s==null||string.IsNullOrWhiteSpace(s.Name)||s.Pins==null||s.Pins.Any(p=>p==null)||!layouts(s.Layouts)||s.Folders==null||s.Folders.Any(f=>f==null)||s.Windows==null||
@@ -96,18 +103,29 @@ namespace OpenDock
         }
         public static void Save()
         {
+            if(unreadableFile==FilePath) throw new InvalidDataException(Status);
+            Validate(Data);
             Directory.CreateDirectory(DirectoryPath);
             string json=Json.Serialize(Data);
             if(System.Text.Encoding.UTF8.GetByteCount(json)>2*1024*1024) throw new InvalidDataException("Workspace storage is full. Remove unused scenes or Shelf items before saving.");
-            AtomicWrite(FilePath, json); Notify();
+            if(preserveBeforeSave==FilePath&&File.Exists(FilePath)) File.Copy(FilePath,FilePath+".unreadable-"+Guid.NewGuid().ToString("N"));
+            AtomicWrite(FilePath, json); preserveBeforeSave=null; Notify();
         }
         public static void AtomicWrite(string path, string text)
         {
             string stage = path + ".tmp-" + Guid.NewGuid().ToString("N");
-            File.WriteAllText(stage, text, new System.Text.UTF8Encoding(false));
-            if (File.Exists(path)) File.Replace(stage, path, path + ".previous"); else File.Move(stage, path);
+            try
+            {
+                File.WriteAllText(stage, text, new System.Text.UTF8Encoding(false));
+                if (File.Exists(path)) File.Replace(stage, path, path + ".previous"); else File.Move(stage, path);
+            }
+            finally { try { if(File.Exists(stage)) File.Delete(stage); } catch { } }
         }
-        public static void Notify() { if (Changed != null) Changed(); foreach (var dock in App.Docks.ToList()) { dock.RefreshShelf(); dock.Sync(App.Wins); } }
+        public static void Notify()
+        {
+            if(Changed!=null) foreach(Action changed in Changed.GetInvocationList()) try { changed(); } catch(Exception ex) { App.Log(ex); }
+            foreach(var dock in App.Docks.ToList()) try { dock.RefreshShelf(); dock.Sync(App.Wins); } catch(Exception ex) { App.Log(ex); }
+        }
         public static List<string> Pins(string device)
         {
             var layout = Data.Layouts.FirstOrDefault(l => l.Device == device);
@@ -169,13 +187,13 @@ namespace OpenDock
                         }
                         var screens = Sys.Screens(); var screen = screens.FirstOrDefault(s => s.Device == saved.Monitor) ?? screens.FirstOrDefault(s => s.Primary) ?? screens.First();
                         var r = Bounds(saved, screen.Work); Native.ShowWindow(window.Hwnd, Native.SW_RESTORE);
-                        Native.SetWindowPos(window.Hwnd, IntPtr.Zero, r.Left, r.Top, r.Right-r.Left, r.Bottom-r.Top, 4 | Native.SWP_NOACTIVATE);
+                        if(!Native.SetWindowPos(window.Hwnd, IntPtr.Zero, r.Left, r.Top, r.Right-r.Left, r.Bottom-r.Top, 4 | Native.SWP_NOACTIVATE | 0x4000 /* ASYNCWINDOWPOS */)) continue;
                         if (saved.Maximized) Native.ShowWindow(window.Hwnd, Native.SW_MAXIMIZE);
                         used.Add(window.Hwnd); remaining.Remove(saved); restored++;
                     }
                     if (remaining.Count>0) await Task.Delay(400);
                 }
-                Data.Layouts = Json.Deserialize<List<MonitorLayout>>(Json.Serialize(scene.Layouts)); Save(); foreach(var dock in App.Docks) dock.RefreshPins();
+                Save(); foreach(var dock in App.Docks) dock.RefreshPins();
                 foreach(var folder in scene.Folders.Where(Directory.Exists)) if (!App.Finders.Any(f=>f.OpenPaths().Contains(folder))) App.NewFinder(folder);
                 Status = "Restored " + restored + " of " + scene.Windows.Count + " windows" + (remaining.Count>0 ? "; some apps were unavailable or need another window opened." : ".");
             }
@@ -189,7 +207,7 @@ namespace OpenDock
             var b=screens[next ? (Math.Max(0,current)+1)%screens.Count : Math.Max(0,current)].Work;
             int width=next ? b.Right-b.Left : (b.Right-b.Left)/2;
             Native.ShowWindow(window,Native.SW_RESTORE);
-            Native.SetWindowPos(window,IntPtr.Zero,next || leftHalf ? b.Left : b.Left+width,b.Top,width,b.Bottom-b.Top,4|Native.SWP_NOACTIVATE);
+            Native.SetWindowPos(window,IntPtr.Zero,next || leftHalf ? b.Left : b.Left+width,b.Top,width,b.Bottom-b.Top,4|Native.SWP_NOACTIVATE|0x4000);
         }
         public static IEnumerable<Entry> Commands(string query)
         {

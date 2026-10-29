@@ -46,7 +46,7 @@ namespace OpenDock
                 int round = 2; Native.DwmSetWindowAttribute(h, 33, ref round, 4);
                 int dark = Theme.Dark ? 1 : 0; Native.DwmSetWindowAttribute(h, 20, ref dark, 4);
             };
-            StateChanged += delegate { Layout.Margin = WindowState == WindowState.Maximized ? new Thickness(7) : new Thickness(0); App.QueueRefresh(); };
+            StateChanged += delegate { ChromeBody.Margin = WindowState == WindowState.Maximized ? new Thickness(7) : new Thickness(0); App.QueueRefresh(); };
             Activated += delegate { Paint(true); };
             Deactivated += delegate { Paint(false); };
         }
@@ -75,6 +75,7 @@ namespace OpenDock
         }
 
         protected virtual void CloseFromChrome() { Close(); }
+        protected virtual FrameworkElement ChromeBody { get { return Layout; } }
         protected virtual void MinimizeFromChrome() { WindowState=WindowState.Minimized; }
         protected virtual void ZoomFromChrome() { WindowState=WindowState==WindowState.Maximized?WindowState.Normal:WindowState.Maximized; }
 
@@ -114,7 +115,9 @@ namespace OpenDock
         DispatcherTimer reloadSoon;
         readonly TextBox address = new TextBox();
         Action appsChanged;
-        string path, selectAfterLoad;
+        string path, selectAfterLoad, loadedPath;
+        List<string> restoreSelection=new List<string>();
+        bool paneClosed;
         Point? dragFrom;
         int loadId;
 
@@ -123,7 +126,7 @@ namespace OpenDock
 
         public FinderWindow(string start, string select = null, FinderWindow workspaceHost = null)
         {
-            host=workspaceHost; Layout.PreviewMouseDown+=delegate { PaneFocused(); };
+            host=workspaceHost; Layout.PreviewMouseDown+=delegate { PaneFocused(); }; Layout.GotKeyboardFocus+=delegate { PaneFocused(); };
             Width = 1000; Height = 640; MinWidth = 560; MinHeight = 340;
             int n = App.Finders.Count;
             WindowStartupLocation = WindowStartupLocation.Manual;
@@ -222,15 +225,16 @@ namespace OpenDock
             {
                 var t = SideUnder(e.OriginalSource);
                 e.Effects = !e.Data.GetDataPresent(DataFormats.FileDrop) || !SideAccepts(t) ? DragDropEffects.None
-                    : t.Path == "trash" || (e.KeyStates & DragDropKeyStates.ControlKey) == 0 ? DragDropEffects.Move : DragDropEffects.Copy;
+                    : t.Path == "trash" ? e.AllowedEffects&DragDropEffects.Move : TransferEffect(e.Data.GetData(DataFormats.FileDrop) as string[],t.Path,e.KeyStates,e.AllowedEffects);
                 e.Handled = true;
             };
             side.Drop += (s, e) =>
             {
                 var t = SideUnder(e.OriginalSource);
                 var dropped = e.Data.GetData(DataFormats.FileDrop) as string[];
-                if (dropped == null || !SideAccepts(t)) return;
-                if (t.Path == "trash") Launcher.Recycle(dropped); else DropInto(dropped, t.Path, e);
+                if (dropped == null || !SideAccepts(t)) { e.Effects=DragDropEffects.None; e.Handled=true; return; }
+                if (t.Path == "trash") { e.Effects=e.AllowedEffects&DragDropEffects.Move; if(e.Effects!=DragDropEffects.None) Launcher.Recycle(dropped); e.Handled=true; }
+                else DropInto(dropped, t.Path, e);
             };
             files.MouseDoubleClick += (s, e) => { var en = Under(e.OriginalSource); if (en != null) Open(en); };
             files.PreviewMouseLeftButtonDown += (s, e) =>
@@ -242,7 +246,7 @@ namespace OpenDock
             files.KeyDown += OnKey;
             files.MouseRightButtonUp += OnContext;
             files.Drop += OnDrop;
-            files.DragOver += (s, e) => { e.Effects = path == AppsLocation ? DragDropEffects.None : (e.KeyStates & DragDropKeyStates.ControlKey) != 0 ? DragDropEffects.Copy : DragDropEffects.Move; e.Handled = true; };
+            files.DragOver += (s, e) => { var target=Under(e.OriginalSource); e.Effects = path == AppsLocation ? DragDropEffects.None : TransferEffect(e.Data.GetData(DataFormats.FileDrop) as string[],target!=null&&target.IsDir?target.Path:path,e.KeyStates,e.AllowedEffects); e.Handled = true; };
             files.SelectionChanged += delegate { UpdateStatus(); };
             Grid.SetRow(files, 2);
             main.Children.Add(files);
@@ -267,11 +271,11 @@ namespace OpenDock
             reloadSoon = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
             reloadSoon.Tick += delegate { reloadSoon.Stop(); Load(); };
             Loaded += delegate { App.Finders.Add(this); App.QueueRefresh(); };
-            Closed += delegate { App.Finders.Remove(this); if (watcher != null) watcher.Dispose(); reloadSoon.Stop(); loadId++; Apps.Changed-=appsChanged; App.QueueRefresh(); };
+            Closed += delegate { App.Finders.Remove(this); DisposePane(); App.QueueRefresh(); };
             appsChanged=delegate { if (path == AppsLocation) Load(); }; Apps.Changed += appsChanged;
 
             selectAfterLoad = select;
-            Go(start, false);
+            Go(start==AppsLocation||Directory.Exists(start)?start:Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), false);
             if(host==null) InitWorkspace();
         }
 
@@ -380,19 +384,34 @@ namespace OpenDock
         void Go(string target, bool record = true)
         {
             if (target != AppsLocation && !Directory.Exists(target)) return;
+            if(string.Equals(path,target,StringComparison.OrdinalIgnoreCase)) { address.Text=path==AppsLocation?"Applications":path; filter.Text=""; return; }
             if (record && path != null) { history.Push(path); future.Clear(); }
             path = target;
             filter.Text = "";
             Load();
         }
 
-        void Back() { if (history.Count == 0) return; future.Push(path); path = history.Pop(); Load(); }
-        void Forward() { if (future.Count == 0) return; history.Push(path); path = future.Pop(); Load(); }
+        void NavigateHistory(Stack<string> from,Stack<string> to)
+        {
+            while(from.Count>0)
+            {
+                string target=from.Pop(); if(string.Equals(target,path,StringComparison.OrdinalIgnoreCase)||(target!=AppsLocation&&!Directory.Exists(target))) continue;
+                to.Push(path); path=target; filter.Text=""; Load(); return;
+            }
+            back.IsEnabled=history.Count>0; forward.IsEnabled=future.Count>0;
+        }
+        void Back() { NavigateHistory(history,future); }
+        void Forward() { NavigateHistory(future,history); }
         void Up() { if (path == AppsLocation) return; var p = Directory.GetParent(path); if (p != null) Go(p.FullName); }
 
         void Load()
         {
+            if(paneClosed) return;
             int id = ++loadId;
+            if(!string.Equals(loadedPath,path,StringComparison.OrdinalIgnoreCase)) restoreSelection=new List<string>();
+            else if(entries.Count>0) restoreSelection=Selected();
+            loadedPath=path;
+            all=new List<Entry>(); entries.Clear();
             address.Text = path == AppsLocation ? "Applications" : path;
             address.ToolTip = path == AppsLocation ? "Applications — enter a folder path to navigate" : path;
             back.IsEnabled = history.Count > 0; forward.IsEnabled = future.Count > 0;
@@ -425,7 +444,7 @@ namespace OpenDock
                 catch (Exception ex) { App.Log(ex.Message); }
                 list.Sort((a, b) => a.IsDir != b.IsDir ? (a.IsDir ? -1 : 1) : StrCmpLogicalW(a.Name, b.Name));
                 return list;
-            }).ContinueWith(t => Fill(t.Result, id), TaskScheduler.FromCurrentSynchronizationContext());
+            }).ContinueWith(t => { if(t.IsFaulted) App.Log(t.Exception); else if(!t.IsCanceled) Fill(t.Result, id); }, TaskScheduler.FromCurrentSynchronizationContext());
         }
 
         static readonly HashSet<string> thumbs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".tif", ".tiff", ".ico", ".mp4", ".mov", ".mkv", ".avi", ".wmv", ".pdf", ".psd", ".svg" };
@@ -452,6 +471,7 @@ namespace OpenDock
                 selectAfterLoad = null;
                 if (s != null) { files.SelectedItem = s; files.ScrollIntoView(s); }
             }
+            else foreach(var selected in restoreSelection) { var item=entries.FirstOrDefault(e=>string.Equals(e.Path,selected,StringComparison.OrdinalIgnoreCase)); if(item!=null) files.SelectedItems.Add(item); }
         }
 
         void ApplyFilter()
@@ -487,12 +507,19 @@ namespace OpenDock
             if (path == AppsLocation) return;
             try
             {
-                watcher = new FileSystemWatcher(path) { NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName };
-                FileSystemEventHandler h = delegate { Dispatcher.BeginInvoke(new Action(() => { reloadSoon.Stop(); reloadSoon.Start(); })); };
-                watcher.Created += h; watcher.Deleted += h; watcher.Renamed += (s, e) => h(s, e);
+                watcher = new FileSystemWatcher(path) { NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size };
+                FileSystemEventHandler h = delegate { if(!Dispatcher.HasShutdownStarted) Dispatcher.BeginInvoke(new Action(() => { if(paneClosed) return; reloadSoon.Stop(); reloadSoon.Start(); })); };
+                watcher.Created += h; watcher.Deleted += h; watcher.Changed+=h; watcher.Renamed += (s, e) => h(s, e);
                 watcher.EnableRaisingEvents = true;
             }
             catch { }
+        }
+
+        void DisposePane()
+        {
+            if(paneClosed) return; paneClosed=true;
+            if(watcher!=null) { watcher.Dispose(); watcher=null; }
+            reloadSoon.Stop(); loadId++; Apps.Changed-=appsChanged;
         }
 
         // ---------- actions ----------
@@ -537,14 +564,15 @@ namespace OpenDock
             Transfer(Clipboard.GetFileDropList().Cast<string>().ToArray(), true);
         }
 
-        void Transfer(string[] sources, bool copy)
+        void Transfer(string[] sources, bool copy, string folder=null)
         {
+            folder=folder??path;
             foreach (var src in sources)
             {
-                string dest = System.IO.Path.Combine(path, System.IO.Path.GetFileName(src.TrimEnd('\\')));
-                if (string.Equals(dest, src, StringComparison.OrdinalIgnoreCase)) continue;
                 try
                 {
+                    string dest=TransferDestination(src,folder);
+                    if (string.Equals(dest, System.IO.Path.GetFullPath(src), StringComparison.OrdinalIgnoreCase)) continue;
                     bool dir = Directory.Exists(src);
                     if (copy) { if (dir) VB.FileSystem.CopyDirectory(src, dest, VB.UIOption.AllDialogs); else VB.FileSystem.CopyFile(src, dest, VB.UIOption.AllDialogs); }
                     else { if (dir) VB.FileSystem.MoveDirectory(src, dest, VB.UIOption.AllDialogs); else VB.FileSystem.MoveFile(src, dest, VB.UIOption.AllDialogs); }
@@ -574,14 +602,34 @@ namespace OpenDock
             DropInto(dropped, target != null && target.IsDir ? target.Path : path, e);   // dropping onto a folder moves into it
         }
 
-        // Same drive moves, another drive copies; holding Ctrl always copies (like Explorer).
+        internal static string TransferDestination(string source,string folder)
+        {
+            string full=System.IO.Path.GetFullPath(source).TrimEnd('\\'), destination=System.IO.Path.Combine(System.IO.Path.GetFullPath(folder),System.IO.Path.GetFileName(full));
+            if(Directory.Exists(full)&&destination.StartsWith(full+"\\",StringComparison.OrdinalIgnoreCase)) throw new IOException("A folder cannot be copied or moved inside itself.");
+            return destination;
+        }
+
+        internal static DragDropEffects TransferEffect(string[] sources,string folder,DragDropKeyStates keys,DragDropEffects allowed)
+        {
+            if(sources==null||sources.Length==0||sources.Any(string.IsNullOrWhiteSpace)||string.IsNullOrEmpty(folder)||folder==AppsLocation) return DragDropEffects.None;
+            try
+            {
+                bool control=(keys&DragDropKeyStates.ControlKey)!=0,shift=(keys&DragDropKeyStates.ShiftKey)!=0;
+                if((keys&DragDropKeyStates.AltKey)!=0||control&&shift) return DragDropEffects.None;
+                bool same=sources.All(s=>string.Equals(System.IO.Path.GetPathRoot(s),System.IO.Path.GetPathRoot(folder),StringComparison.OrdinalIgnoreCase));
+                var requested=control?DragDropEffects.Copy:shift?DragDropEffects.Move:same?DragDropEffects.Move:DragDropEffects.Copy;
+                if((allowed&requested)!=0) return requested;
+                if(control||shift) return DragDropEffects.None;
+                return (allowed&DragDropEffects.Copy)!=0?DragDropEffects.Copy:allowed&DragDropEffects.Move;
+            }
+            catch(ArgumentException) { return DragDropEffects.None; }
+        }
+
+        // Respect both the source's allowed operations and the modifier keys; never mutate navigation during file dialogs.
         void DropInto(string[] dropped, string folder, DragEventArgs e)
         {
-            string saved = path;
-            path = folder;
-            bool sameDrive = dropped.All(f => string.Equals(System.IO.Path.GetPathRoot(f), System.IO.Path.GetPathRoot(folder), StringComparison.OrdinalIgnoreCase));
-            Transfer(dropped, (e.KeyStates & DragDropKeyStates.ControlKey) != 0 || !sameDrive);
-            path = saved;
+            e.Effects=TransferEffect(dropped,folder,e.KeyStates,e.AllowedEffects); e.Handled=true;
+            if(e.Effects!=DragDropEffects.None) Transfer(dropped,e.Effects==DragDropEffects.Copy,folder);
         }
 
         static SideEntry SideUnder(object source)
@@ -606,7 +654,7 @@ namespace OpenDock
             {
                 if (!files.SelectedItems.Contains(en)) files.SelectedItem = en;
                 add("Open", () => Open(en), true);
-                if (en.Path != null && en.Open == null && !en.IsDir) add("Open With…", () => Process.Start("rundll32.exe", "shell32.dll,OpenAs_RunDLL " + en.Path), true);
+                if (en.Path != null && en.Open == null && !en.IsDir) add("Open With…", () => Process.Start("rundll32.exe", "shell32.dll,OpenAs_RunDLL " + Launcher.Quote(new[]{en.Path})), true);
                 cm.Items.Add(new Separator());
                 if (en.Path != null)
                 {

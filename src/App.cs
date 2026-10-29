@@ -46,11 +46,11 @@ namespace OpenDock
         public static bool WallpapersSeeded = false;            // the library was filled with the Windows wallpapers once
 
         public static event Action Changed;
-        static readonly string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "OpenDock");
-        public static string DataDir { get { return dir; } }
-        public static string WallpaperDir { get { return Path.Combine(dir, "Wallpapers"); } }   // copies of photos you add
-        static readonly string file = Path.Combine(dir, "settings.txt");
-        public static string LogFile { get { return Path.Combine(dir, "error.log"); } }
+        internal static string StorageDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "OpenDock");
+        public static string DataDir { get { return StorageDirectory; } }
+        public static string WallpaperDir { get { return Path.Combine(DataDir, "Wallpapers"); } }   // copies of photos you add
+        static string file { get { return Path.Combine(DataDir, "settings.txt"); } }
+        public static string LogFile { get { return Path.Combine(DataDir, "error.log"); } }
 
         static IEnumerable<FieldInfo> Fields()
         {
@@ -60,7 +60,9 @@ namespace OpenDock
         public static void Load()
         {
             if (!File.Exists(file)) return;
-            foreach (var line in File.ReadAllLines(file))
+            var saved=File.ReadAllLines(file);
+            Pins.Clear(); Hidden.Clear(); Wallpapers.Clear(); CustomIcons.Map.Clear();
+            foreach (var line in saved)
             {
                 int eq = line.IndexOf('=');
                 if (eq < 0) continue;
@@ -76,7 +78,7 @@ namespace OpenDock
 
         public static void Save()
         {
-            Directory.CreateDirectory(dir);
+            Directory.CreateDirectory(DataDir);
             var lines = Fields().Select(f => f.Name + "=" + f.GetValue(null)).ToList();
             lines.AddRange(Pins.Select(p => "pin=" + p));
             lines.AddRange(Hidden.Select(h => "hide=" + h));
