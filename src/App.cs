@@ -16,6 +16,13 @@ namespace OpenDock
 {
     static class Settings
     {
+        public static int DockPosition = 0;      // 0 = bottom, 1 = left, 2 = right
+        public static bool DockOnAllDisplays = true;
+        public static string DisplayDevice = ""; // empty = follow primary, otherwise Windows' display device name
+        public static bool LiveGlass = true;     // original live blur; excluded from screen capture to avoid feedback
+        public static bool FinderListView = false;
+        public static int IconRevision = 0;
+        public static bool IncludePreviewUpdates = true;
         public static int IconSize = 60;          // dock slot size (DIP)
         public static int MagnifySize = 100;
         public static bool Magnify = true;
@@ -39,26 +46,30 @@ namespace OpenDock
         public static bool WallpapersSeeded = false;            // the library was filled with the Windows wallpapers once
 
         public static event Action Changed;
-        static readonly string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "OpenDock");
-        public static string WallpaperDir { get { return Path.Combine(dir, "Wallpapers"); } }   // copies of photos you add
-        static readonly string file = Path.Combine(dir, "settings.txt");
-        public static string LogFile { get { return Path.Combine(dir, "error.log"); } }
+        internal static string StorageDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "OpenDock");
+        public static string DataDir { get { return StorageDirectory; } }
+        public static string WallpaperDir { get { return Path.Combine(DataDir, "Wallpapers"); } }   // copies of photos you add
+        static string file { get { return Path.Combine(DataDir, "settings.txt"); } }
+        public static string LogFile { get { return Path.Combine(DataDir, "error.log"); } }
 
         static IEnumerable<FieldInfo> Fields()
         {
-            return typeof(Settings).GetFields(BindingFlags.Public | BindingFlags.Static).Where(f => f.FieldType == typeof(int) || f.FieldType == typeof(bool));
+            return typeof(Settings).GetFields(BindingFlags.Public | BindingFlags.Static).Where(f => f.FieldType == typeof(int) || f.FieldType == typeof(bool) || f.FieldType == typeof(string));
         }
 
         public static void Load()
         {
             if (!File.Exists(file)) return;
-            foreach (var line in File.ReadAllLines(file))
+            var saved=File.ReadAllLines(file);
+            Pins.Clear(); Hidden.Clear(); Wallpapers.Clear(); CustomIcons.Map.Clear();
+            foreach (var line in saved)
             {
                 int eq = line.IndexOf('=');
                 if (eq < 0) continue;
                 string k = line.Substring(0, eq), v = line.Substring(eq + 1);
                 if (k == "pin") { Pins.Add(v); continue; }
                 if (k == "hide") { Hidden.Add(v); continue; }
+                if (k == "icon") { CustomIcons.Read(v); continue; }
                 if (k == "wall") { Wallpapers.Add(v); continue; }
                 var f = Fields().FirstOrDefault(x => x.Name == k);
                 try { if (f != null) f.SetValue(null, Convert.ChangeType(v, f.FieldType)); } catch { }
@@ -67,12 +78,13 @@ namespace OpenDock
 
         public static void Save()
         {
-            Directory.CreateDirectory(dir);
+            Directory.CreateDirectory(DataDir);
             var lines = Fields().Select(f => f.Name + "=" + f.GetValue(null)).ToList();
             lines.AddRange(Pins.Select(p => "pin=" + p));
             lines.AddRange(Hidden.Select(h => "hide=" + h));
             lines.AddRange(Wallpapers.Select(w => "wall=" + w));
-            File.WriteAllLines(file, lines);
+            lines.AddRange(CustomIcons.SaveLines());
+            Workspace.AtomicWrite(file,string.Join(Environment.NewLine,lines)+Environment.NewLine);
         }
 
         public static void Apply() { Save(); if (Changed != null) Changed(); }
@@ -125,14 +137,16 @@ namespace OpenDock
     // Reserves screen space like the Windows taskbar does, so maximized windows stop at the menu bar / dock.
     class AppBar
     {
-        readonly IntPtr hwnd; readonly uint edge, msg; bool registered; int thickness;
+        readonly IntPtr hwnd; readonly uint msg; readonly Func<Native.RECT> bounds; uint edge; bool registered; int thickness; bool placing;
         public Action<bool> FullScreen;
         public Action<Native.RECT> Placed;
+        public bool IsPlacing { get { return placing; } }
 
-        public AppBar(Window w, uint edge)
+        public AppBar(Window w, uint edge, Func<Native.RECT> bounds = null)
         {
             hwnd = new WindowInteropHelper(w).Handle;
             this.edge = edge;
+            this.bounds = bounds ?? (() => DisplayLayout.Selected.Bounds);
             msg = Native.RegisterWindowMessage("OpenDockAppBar");
             HwndSource.FromHwnd(hwnd).AddHook(Hook);
         }
@@ -141,29 +155,45 @@ namespace OpenDock
 
         public void Reserve(int px)
         {
-            thickness = px;
-            var d = Data();
-            if (!registered) { Native.SHAppBarMessage(Native.ABM_NEW, ref d); registered = true; }
-            int sw = (int)Math.Round(SystemParameters.PrimaryScreenWidth * App.Dpi), sh = (int)Math.Round(SystemParameters.PrimaryScreenHeight * App.Dpi);
-            d.rc = new Native.RECT { Left = 0, Right = sw, Top = edge == Native.ABE_TOP ? 0 : sh - px, Bottom = edge == Native.ABE_TOP ? px : sh };
-            Native.SHAppBarMessage(Native.ABM_QUERYPOS, ref d);
-            if (edge == Native.ABE_TOP) d.rc.Bottom = d.rc.Top + px; else d.rc.Top = d.rc.Bottom - px;
-            Native.SHAppBarMessage(Native.ABM_SETPOS, ref d);
-            if (Placed != null) Placed(d.rc);
+            if (placing) return;
+            placing = true;
+            try
+            {
+                thickness = px;
+                var d = Data();
+                if (!registered) { registered = Native.SHAppBarMessage(Native.ABM_NEW, ref d) != IntPtr.Zero; }
+                if (!registered) { App.Log("Appbar registration failed"); return; }
+                d.rc = bounds();
+                Native.SHAppBarMessage(Native.ABM_QUERYPOS, ref d);
+                if (edge == Native.ABE_TOP) d.rc.Bottom = d.rc.Top + px;
+                else if (edge == Native.ABE_BOTTOM) d.rc.Top = d.rc.Bottom - px;
+                else if (edge == Native.ABE_LEFT) d.rc.Right = d.rc.Left + px;
+                else d.rc.Left = d.rc.Right - px;
+                Native.SHAppBarMessage(Native.ABM_SETPOS, ref d);
+                if (Placed != null) Placed(d.rc);
+            }
+            finally { placing = false; }
         }
+
+        public void SetEdge(uint value) { if (edge != value) { Remove(); edge = value; } }
 
         public void Remove()
         {
             if (!registered) return;
+            registered = false;
             var d = Data();
             Native.SHAppBarMessage(Native.ABM_REMOVE, ref d);
-            registered = false;
         }
 
         public void Reregister() { if (registered) { registered = false; Reserve(thickness); } }
 
         IntPtr Hook(IntPtr h, int m, IntPtr w, IntPtr l, ref bool handled)
         {
+            if (m == 0x0047 /* WM_WINDOWPOSCHANGED */ && registered && !placing)
+            {
+                var data = Data();
+                Native.SHAppBarMessage(Native.ABM_WINDOWPOSCHANGED, ref data);
+            }
             if (m == msg)
             {
                 if ((int)w == Native.ABN_POSCHANGED && registered) Reserve(thickness);
@@ -257,6 +287,8 @@ namespace OpenDock
     {
         public static double Dpi = 1;
         public static DockWindow Dock;
+        public static readonly List<DockWindow> Docks = new List<DockWindow>();
+        static bool reconcilingDocks;
         public static MenuBarWindow MenuBar;
         public static LaunchpadWindow Launchpad;
         public static SpotlightWindow Spotlight;
@@ -308,7 +340,7 @@ namespace OpenDock
                 SystemEvents.SessionEnding += delegate { Cleanup(); };
                 using (var g = System.Drawing.Graphics.FromHwnd(IntPtr.Zero)) Dpi = g.DpiX / 96.0;
 
-                Settings.Load();
+                Settings.Load(); Workspace.Load();
                 Theme.Init(app);
                 Glass.Init();
                 Outside.Init();
@@ -316,7 +348,18 @@ namespace OpenDock
                 Apps.Refresh(true);
                 Wallpaper.Load();
                 SystemEvents.UserPreferenceChanged += (s, e) => { if (e.Category == UserPreferenceCategory.Desktop) Wallpaper.Load(); };
-                SystemEvents.DisplaySettingsChanged += delegate { Wallpaper.Load(); if (Dock != null) Dock.Place(); if (MenuBar != null) MenuBar.Place(); };
+                SystemEvents.DisplaySettingsChanged += delegate
+                {
+                    app.Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        Wallpaper.Load();
+                        if (MenuBar != null) MenuBar.Place();
+                        ReconcileDocks();
+                        foreach (var dock in Docks) dock.Place();
+                        if (Launchpad != null && Launchpad.IsOpen) Launchpad.Close2(null);
+                        if (Spotlight != null && Spotlight.IsVisible) Spotlight.Close2();
+                    }));
+                };
 
                 app.Startup += delegate { Start(); };
                 app.Run();
@@ -368,7 +411,7 @@ namespace OpenDock
                 {
                     if (Settings.HideTaskbar) Taskbar.Hide();
                     if (MenuBar != null) MenuBar.Bar.Reregister();
-                    if (Dock != null) Dock.Bar.Reregister();
+                    foreach (var dock in Docks) dock.Bar.Reregister();
                 }), DispatcherPriority.Background);
                 return IntPtr.Zero;
             });
@@ -378,8 +421,8 @@ namespace OpenDock
             if (Settings.HideTaskbar || Settings.TaskbarStateToRestore >= 0) { if (Settings.HideTaskbar) Taskbar.Hide(); else Taskbar.Restore(); }
             MenuBar = new MenuBarWindow();
             if (Settings.ShowMenuBar) MenuBar.Show();
-            Dock = new DockWindow();
-            Dock.Show();
+            ReconcileDocks();
+            Settings.Changed += ReconcileDocks;
             Launchpad = new LaunchpadWindow();
             Spotlight = new SpotlightWindow();
 
@@ -394,16 +437,61 @@ namespace OpenDock
             Hook(0x8001, 0x8003, onWindow);  // destroy / show / hide
             Hook(0x8017, 0x8018, onWindow);  // cloaked / uncloaked (Store apps)
             Hook(0x800C, 0x800C, onWindow);  // title change
+            Hook(0x800B, 0x800B, onWindow);  // location/size changes, including browser fullscreen transitions
 
             refresh = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
             refresh.Tick += delegate { refresh.Stop(); RefreshWindows(); };
             // Window events above keep the list current; the full re-scan is only a safety net.
             int ticks = 0;
             var slow = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-            slow.Tick += delegate { if (++ticks % 5 == 0) RefreshWindows(); Taskbar.Enforce(); };
+            slow.Tick += delegate { if (++ticks % 5 == 0) RefreshWindows(); foreach (var dock in Docks) dock.OnFullScreen(true); Taskbar.Enforce(); };
             slow.Start();
             RefreshWindows();
+            Living.Start();
             LastForeground = Native.GetForegroundWindow();
+        }
+
+        // Keep a window per connected monitor. Closing a removed dock also releases its appbar and timers.
+        public static void ReconcileDocks()
+        {
+            if (reconcilingDocks) return;
+            reconcilingDocks = true;
+            try
+            {
+                var screens = Sys.Screens();
+                if (screens.Count == 0) return; // transient display change; retain the last usable layout
+                var selected = screens.FirstOrDefault(s => s.Device == Settings.DisplayDevice) ?? screens.FirstOrDefault(s => s.Primary) ?? screens[0];
+                var devices = Settings.DockOnAllDisplays ? screens.Select(s => s.Device).ToList() : new List<string> { selected.Device };
+                foreach (var dock in Docks.Where(d => !devices.Contains(d.Device)).ToList())
+                {
+                    Docks.Remove(dock);
+                    if (Dock == dock) Dock = null;
+                    dock.Close();
+                }
+                foreach (var device in devices.Where(d => !Docks.Any(w => w.Device == d)))
+                {
+                    var dock = new DockWindow(device);
+                    Docks.Add(dock);
+                    if (Dock == null) Dock = dock;
+                    dock.Show();
+                    dock.Sync(Wins);
+                }
+                if (!Docks.Contains(Dock)) Dock = Docks.FirstOrDefault(d => d.Device == selected.Device) ?? Docks.FirstOrDefault();
+            }
+            finally { reconcilingDocks = false; }
+        }
+
+        public static void SyncPins(DockWindow source)
+        {
+            foreach (var dock in Docks.ToList()) if (dock != source) dock.RefreshPins();
+        }
+
+        static void SelectDockAtCursor()
+        {
+            Native.POINT p;
+            if (!Native.GetCursorPos(out p)) return;
+            var at = new Point(p.X / Dpi, p.Y / Dpi);
+            Dock = Docks.FirstOrDefault(d => d.MonitorBounds.Contains(at)) ?? Dock;
         }
 
         static void Hook(uint min, uint max, Native.WinEventProc cb, uint flags = 2 /* OUTOFCONTEXT | SKIPOWNPROCESS */)
@@ -418,13 +506,15 @@ namespace OpenDock
         {
             Wins = Windows.Enumerate();
             if (WindowsChanged != null) WindowsChanged(Wins);
+            foreach (var dock in Docks) dock.OnFullScreen(true);
         }
 
-        public static void ToggleSpotlight() { if (Spotlight.IsVisible) Spotlight.Close2(); else Spotlight.Open(); }
-        public static void ToggleLaunchpad() { if (Launchpad.IsOpen) Launchpad.Close2(null); else Launchpad.Open(); }
+        public static void ToggleSpotlight() { SelectDockAtCursor(); if (Spotlight.IsVisible) Spotlight.Close2(); else Spotlight.Open(); }
+        public static void ToggleLaunchpad() { SelectDockAtCursor(); if (Launchpad.IsOpen) Launchpad.Close2(null); else Launchpad.Open(); }
 
         public static void NewFinder(string path = null)
         {
+            SelectDockAtCursor();
             var f = new FinderWindow(path ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
             f.Show();
             f.Activate();
@@ -463,7 +553,7 @@ namespace OpenDock
             try
             {
                 ColorProfiles.Stop();
-                if (Dock != null) Dock.Bar.Remove();
+                foreach (var dock in Docks) if (dock.Bar != null) dock.Bar.Remove();
                 if (MenuBar != null) MenuBar.Bar.Remove();
                 if (Settings.HideTaskbar) Taskbar.Release(); else Taskbar.Restore();
             }

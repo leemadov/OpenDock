@@ -37,21 +37,8 @@ namespace OpenDock
             FontFamily = Theme.Font;
             SetResourceReference(BackgroundProperty, "WinBg");
             if (glass) Glass.Attach(this, "WinGlass");
-            // Click anywhere outside the window (another app, the desktop) and it minimizes out of the way.
-            // OpenDock's own dialogs, menus and other windows don't count, and neither does dragging out of it.
-            Deactivated += delegate
-            {
-                var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
-                t.Tick += delegate
-                {
-                    t.Stop();
-                    if (IsActive || Dragging || !IsVisible || WindowState == WindowState.Minimized) return;
-                    uint pid;
-                    Native.GetWindowThreadProcessId(Native.GetForegroundWindow(), out pid);
-                    if (pid != (uint)Process.GetCurrentProcess().Id) WindowState = WindowState.Minimized;
-                };
-                t.Start();
-            };
+            Loaded += delegate { App.QueueRefresh(); };
+            Closed += delegate { App.QueueRefresh(); };
             Content = Layout;
             SourceInitialized += delegate
             {
@@ -59,7 +46,7 @@ namespace OpenDock
                 int round = 2; Native.DwmSetWindowAttribute(h, 33, ref round, 4);
                 int dark = Theme.Dark ? 1 : 0; Native.DwmSetWindowAttribute(h, 20, ref dark, 4);
             };
-            StateChanged += delegate { Layout.Margin = WindowState == WindowState.Maximized ? new Thickness(7) : new Thickness(0); };
+            StateChanged += delegate { ChromeBody.Margin = WindowState == WindowState.Maximized ? new Thickness(7) : new Thickness(0); App.QueueRefresh(); };
             Activated += delegate { Paint(true); };
             Deactivated += delegate { Paint(false); };
         }
@@ -69,7 +56,7 @@ namespace OpenDock
             var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(20, 20, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Background = Brushes.Transparent };
             WindowChrome.SetIsHitTestVisibleInChrome(row, true);
             string[] glyphs = { "×", "−", "+" };
-            Action[] acts = { Close, () => WindowState = WindowState.Minimized, () => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized };
+            Action[] acts = { CloseFromChrome, MinimizeFromChrome, ZoomFromChrome };
             for (int i = 0; i < 3; i++)
             {
                 var act = acts[i];
@@ -86,6 +73,11 @@ namespace OpenDock
             Paint(true);
             return row;
         }
+
+        protected virtual void CloseFromChrome() { Close(); }
+        protected virtual FrameworkElement ChromeBody { get { return Layout; } }
+        protected virtual void MinimizeFromChrome() { WindowState=WindowState.Minimized; }
+        protected virtual void ZoomFromChrome() { WindowState=WindowState==WindowState.Maximized?WindowState.Normal:WindowState.Maximized; }
 
         void Paint(bool active)
         {
@@ -106,10 +98,13 @@ namespace OpenDock
 
     class SideEntry { public string Name { get; set; } public string Glyph { get; set; } public string Path; public bool IsHeader { get; set; } }
 
-    class FinderWindow : MacWindow
+    partial class FinderWindow : MacWindow
     {
         const string AppsLocation = "::apps";
-        readonly ListBox side = new ListBox(), files = new ListBox();
+        readonly ListBox side = new ListBox();
+        readonly ListView files = new ListView();
+        readonly Button viewButton;
+        bool listView;
         readonly ObservableCollection<Entry> entries = new ObservableCollection<Entry>();
         readonly TextBlock title = Text("", 15, "Fg", FontWeights.Bold), status = Text("", 11, "FgDim");
         readonly TextBox filter = new TextBox();
@@ -118,19 +113,27 @@ namespace OpenDock
         List<Entry> all = new List<Entry>();
         FileSystemWatcher watcher;
         DispatcherTimer reloadSoon;
-        string path, selectAfterLoad;
+        readonly TextBox address = new TextBox();
+        Action appsChanged;
+        string path, selectAfterLoad, loadedPath;
+        List<string> restoreSelection=new List<string>();
+        bool paneClosed;
         Point? dragFrom;
         int loadId;
 
         [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)] static extern int StrCmpLogicalW(string a, string b);
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern bool SHObjectProperties(IntPtr h, int type, string name, string page);
 
-        public FinderWindow(string start, string select = null)
+        public FinderWindow(string start, string select = null, FinderWindow workspaceHost = null)
         {
+            host=workspaceHost; Layout.PreviewMouseDown+=delegate { PaneFocused(); }; Layout.GotKeyboardFocus+=delegate { PaneFocused(); };
             Width = 1000; Height = 640; MinWidth = 560; MinHeight = 340;
             int n = App.Finders.Count;
             WindowStartupLocation = WindowStartupLocation.Manual;
-            Left = (SystemParameters.WorkArea.Width - Width) / 2 + n * 28; Top = Math.Max(SystemParameters.WorkArea.Top + 40, (SystemParameters.WorkArea.Height - Height) / 2 + n * 28);
+            var area = DisplayLayout.ActiveWorkArea;
+            Width = Math.Min(Width, area.Width); Height = Math.Min(Height, area.Height);
+            var origin = DisplayLayout.Clamp(new Point(area.Left + (area.Width - Width) / 2 + n * 28, area.Top + (area.Height - Height) / 2 + n * 28), new Size(Width, Height), area);
+            Left = origin.X; Top = origin.Y;
 
             Layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(210) });
             Layout.ColumnDefinitions.Add(new ColumnDefinition());
@@ -163,6 +166,7 @@ namespace OpenDock
             var main = new Grid();
             Grid.SetColumn(main, 1);
             main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(52) });
+            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(36) });
             main.RowDefinitions.Add(new RowDefinition());
             main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(26) });
             var toolbar = new DockPanel { LastChildFill = true, Margin = new Thickness(10, 0, 14, 0) };
@@ -187,34 +191,50 @@ namespace OpenDock
             searchBox.Child = sg;
             WindowChrome.SetIsHitTestVisibleInChrome(searchBox, true);
             toolbar.Children.Add(searchBox);
+            viewButton = Tool("", () => SetView(!listView, true));
+            viewButton.ToolTip = "Switch between icons (Ctrl+1) and list (Ctrl+2)";
+            DockPanel.SetDock(viewButton, Dock.Right);
+            toolbar.Children.Add(viewButton);
             toolbar.Children.Add(title);
             var toolBg = new Border { Child = toolbar, BorderThickness = new Thickness(0, 0, 0, 1) };
             toolBg.SetResourceReference(Border.BackgroundProperty, "ToolBg");
             toolBg.SetResourceReference(Border.BorderBrushProperty, "MenuSep");
             main.Children.Add(toolBg);
 
+            address.FontSize = 12; address.Padding = new Thickness(8, 3, 8, 3); address.VerticalContentAlignment = VerticalAlignment.Center;
+            address.ToolTip = "Folder path — Ctrl+L to edit, Enter to open, Escape to cancel";
+            address.SetResourceReference(BackgroundProperty, "Field"); address.SetResourceReference(ForegroundProperty, "Fg");
+            address.SetResourceReference(TextBox.CaretBrushProperty, "Fg"); address.SetResourceReference(TextBox.BorderBrushProperty, "MenuSep");
+            address.KeyDown += (s, e) =>
+            {
+                if (e.Key == Key.Enter) { NavigateAddress(); e.Handled = true; }
+                else if (e.Key == Key.Escape) { address.Text = path == AppsLocation ? "Applications" : path; files.Focus(); e.Handled = true; }
+            };
+            var location = new Border { Child = address, Padding = new Thickness(10, 4, 14, 4) };
+            Grid.SetRow(location, 1); main.Children.Add(location);
+
+
             files.ItemsSource = entries;
-            files.ItemTemplate = (DataTemplate)Application.Current.Resources["FinderTile"];
             files.ItemContainerStyle = (Style)Application.Current.Resources["Bare"];
             files.SelectionMode = SelectionMode.Extended;
             files.Background = Brushes.Transparent; files.BorderThickness = new Thickness(0); files.Padding = new Thickness(10, 8, 10, 8);
-            files.ItemsPanel = new ItemsPanelTemplate(new FrameworkElementFactory(typeof(WrapPanel)));
-            ScrollViewer.SetHorizontalScrollBarVisibility(files, ScrollBarVisibility.Disabled);
+            SetView(Settings.FinderListView, false);
             files.AllowDrop = true;
             side.AllowDrop = true;
             side.DragOver += (s, e) =>
             {
                 var t = SideUnder(e.OriginalSource);
                 e.Effects = !e.Data.GetDataPresent(DataFormats.FileDrop) || !SideAccepts(t) ? DragDropEffects.None
-                    : t.Path == "trash" || (e.KeyStates & DragDropKeyStates.ControlKey) == 0 ? DragDropEffects.Move : DragDropEffects.Copy;
+                    : t.Path == "trash" ? e.AllowedEffects&DragDropEffects.Move : TransferEffect(e.Data.GetData(DataFormats.FileDrop) as string[],t.Path,e.KeyStates,e.AllowedEffects);
                 e.Handled = true;
             };
             side.Drop += (s, e) =>
             {
                 var t = SideUnder(e.OriginalSource);
                 var dropped = e.Data.GetData(DataFormats.FileDrop) as string[];
-                if (dropped == null || !SideAccepts(t)) return;
-                if (t.Path == "trash") Launcher.Recycle(dropped); else DropInto(dropped, t.Path, e);
+                if (dropped == null || !SideAccepts(t)) { e.Effects=DragDropEffects.None; e.Handled=true; return; }
+                if (t.Path == "trash") { e.Effects=e.AllowedEffects&DragDropEffects.Move; if(e.Effects!=DragDropEffects.None) Launcher.Recycle(dropped); e.Handled=true; }
+                else DropInto(dropped, t.Path, e);
             };
             files.MouseDoubleClick += (s, e) => { var en = Under(e.OriginalSource); if (en != null) Open(en); };
             files.PreviewMouseLeftButtonDown += (s, e) =>
@@ -226,32 +246,81 @@ namespace OpenDock
             files.KeyDown += OnKey;
             files.MouseRightButtonUp += OnContext;
             files.Drop += OnDrop;
-            files.DragOver += (s, e) => { e.Effects = path == AppsLocation ? DragDropEffects.None : (e.KeyStates & DragDropKeyStates.ControlKey) != 0 ? DragDropEffects.Copy : DragDropEffects.Move; e.Handled = true; };
+            files.DragOver += (s, e) => { var target=Under(e.OriginalSource); e.Effects = path == AppsLocation ? DragDropEffects.None : TransferEffect(e.Data.GetData(DataFormats.FileDrop) as string[],target!=null&&target.IsDir?target.Path:path,e.KeyStates,e.AllowedEffects); e.Handled = true; };
             files.SelectionChanged += delegate { UpdateStatus(); };
-            Grid.SetRow(files, 1);
+            Grid.SetRow(files, 2);
             main.Children.Add(files);
             status.HorizontalAlignment = HorizontalAlignment.Center;
-            Grid.SetRow(status, 2);
+            Grid.SetRow(status, 3);
             main.Children.Add(status);
             Layout.Children.Add(main);
 
-            PreviewKeyDown += (s, e) =>
+            Layout.PreviewKeyDown += (s, e) =>
             {
-                if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control) { filter.Focus(); e.Handled = true; }
+                if (e.Key == Key.L && Keyboard.Modifiers == ModifierKeys.Control) { address.Focus(); address.SelectAll(); e.Handled = true; }
+                else if (address.IsKeyboardFocusWithin) return;
+                else if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control) { filter.Focus(); e.Handled = true; }
                 else if (e.SystemKey == Key.Left || (e.Key == Key.Back && !filter.IsKeyboardFocused)) { Back(); e.Handled = true; }
                 else if (e.SystemKey == Key.Right) { Forward(); e.Handled = true; }
                 else if (e.SystemKey == Key.Up) { Up(); e.Handled = true; }
-                else if (e.Key == Key.W && Keyboard.Modifiers == ModifierKeys.Control) Close();
+                else if (e.Key == Key.W && Keyboard.Modifiers == ModifierKeys.Control) { (host??this).ClosePane(this); e.Handled=true; }
                 else if (e.Key == Key.F5) Load();
+                else if (e.Key == Key.D1 && Keyboard.Modifiers == ModifierKeys.Control) { SetView(false, true); e.Handled = true; }
+                else if (e.Key == Key.D2 && Keyboard.Modifiers == ModifierKeys.Control) { SetView(true, true); e.Handled = true; }
             };
             reloadSoon = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
             reloadSoon.Tick += delegate { reloadSoon.Stop(); Load(); };
             Loaded += delegate { App.Finders.Add(this); App.QueueRefresh(); };
-            Closed += delegate { App.Finders.Remove(this); if (watcher != null) watcher.Dispose(); App.QueueRefresh(); };
-            Apps.Changed += delegate { if (path == AppsLocation) Load(); };
+            Closed += delegate { App.Finders.Remove(this); DisposePane(); App.QueueRefresh(); };
+            appsChanged=delegate { if (path == AppsLocation) Load(); }; Apps.Changed += appsChanged;
 
             selectAfterLoad = select;
-            Go(start, false);
+            Go(start==AppsLocation||Directory.Exists(start)?start:Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), false);
+            if(host==null) InitWorkspace();
+        }
+
+        void SetView(bool list, bool save)
+        {
+            var selection = files.SelectedItems.Cast<Entry>().ToList();
+            listView = list;
+            if (list)
+            {
+                var view = new GridView { ColumnHeaderContainerStyle = (Style)Application.Current.Resources["FinderColumn"] };
+                files.ItemContainerStyle = (Style)Application.Current.Resources["FinderListRow"];
+                var row = new FrameworkElementFactory(typeof(DockPanel));
+                var image = new FrameworkElementFactory(typeof(Image));
+                image.SetValue(Image.WidthProperty, 24.0); image.SetValue(Image.HeightProperty, 24.0);
+                image.SetValue(Image.MarginProperty, new Thickness(0, 0, 8, 0));
+                image.SetValue(DockPanel.DockProperty, Dock.Left);
+                image.SetBinding(Image.SourceProperty, new System.Windows.Data.Binding("Icon"));
+                var name = new FrameworkElementFactory(typeof(TextBlock));
+                name.SetValue(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center);
+                name.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
+                name.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("Name"));
+                row.AppendChild(image); row.AppendChild(name);
+                view.Columns.Add(new GridViewColumn { Header = "Name", Width = 240, CellTemplate = new DataTemplate { VisualTree = row } });
+                view.Columns.Add(new GridViewColumn { Header = "Size", Width = 90, DisplayMemberBinding = new System.Windows.Data.Binding("SizeText") });
+                view.Columns.Add(new GridViewColumn { Header = "Kind", Width = 120, DisplayMemberBinding = new System.Windows.Data.Binding("Kind") });
+                view.Columns.Add(new GridViewColumn { Header = "Date Modified", Width = 160, DisplayMemberBinding = new System.Windows.Data.Binding("Modified") });
+                files.ItemTemplate = null;
+                files.View = view;
+                files.ItemsPanel = new ItemsPanelTemplate(new FrameworkElementFactory(typeof(VirtualizingStackPanel)));
+                files.SetResourceReference(Control.ForegroundProperty, "Fg");
+                ScrollViewer.SetHorizontalScrollBarVisibility(files, ScrollBarVisibility.Auto);
+            }
+            else
+            {
+                files.View = null;
+                files.ItemContainerStyle = (Style)Application.Current.Resources["Bare"];
+                files.ItemTemplate = (DataTemplate)Application.Current.Resources["FinderTile"];
+                files.ItemsPanel = new ItemsPanelTemplate(new FrameworkElementFactory(typeof(WrapPanel)));
+                ScrollViewer.SetHorizontalScrollBarVisibility(files, ScrollBarVisibility.Disabled);
+            }
+            files.SelectedItems.Clear();
+            foreach (var entry in selection) files.SelectedItems.Add(entry);
+            if (selection.Count > 0) files.ScrollIntoView(selection[0]);
+            ((TextBlock)viewButton.Content).Text = list ? "\uE8A9" : "\uE8FD";
+            if (save) { Settings.FinderListView = list; Settings.Save(); }
         }
 
         Button Tool(string glyph, Action a)
@@ -294,30 +363,66 @@ namespace OpenDock
 
         // ---------- navigation ----------
 
+        bool NavigateAddress()
+        {
+            string target = Environment.ExpandEnvironmentVariables(address.Text.Trim().Trim('"'));
+            if (target.Equals("Applications", StringComparison.OrdinalIgnoreCase) || target == AppsLocation) target = AppsLocation;
+            else
+            {
+                try
+                {
+                    if (target == "~") target = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                    if (!System.IO.Path.IsPathRooted(target) && path != AppsLocation) target = System.IO.Path.Combine(path, target);
+                    target = System.IO.Path.GetFullPath(target);
+                    if (!Directory.Exists(target)) { address.ToolTip = "Folder not found. Enter an existing folder path."; return false; }
+                }
+                catch (Exception ex) { address.ToolTip = ex.Message; return false; }
+            }
+            Go(target); files.Focus(); return true;
+        }
+
         void Go(string target, bool record = true)
         {
             if (target != AppsLocation && !Directory.Exists(target)) return;
+            if(string.Equals(path,target,StringComparison.OrdinalIgnoreCase)) { address.Text=path==AppsLocation?"Applications":path; filter.Text=""; return; }
             if (record && path != null) { history.Push(path); future.Clear(); }
             path = target;
             filter.Text = "";
             Load();
         }
 
-        void Back() { if (history.Count == 0) return; future.Push(path); path = history.Pop(); Load(); }
-        void Forward() { if (future.Count == 0) return; history.Push(path); path = future.Pop(); Load(); }
+        void NavigateHistory(Stack<string> from,Stack<string> to)
+        {
+            while(from.Count>0)
+            {
+                string target=from.Pop(); if(string.Equals(target,path,StringComparison.OrdinalIgnoreCase)||(target!=AppsLocation&&!Directory.Exists(target))) continue;
+                to.Push(path); path=target; filter.Text=""; Load(); return;
+            }
+            back.IsEnabled=history.Count>0; forward.IsEnabled=future.Count>0;
+        }
+        void Back() { NavigateHistory(history,future); }
+        void Forward() { NavigateHistory(future,history); }
         void Up() { if (path == AppsLocation) return; var p = Directory.GetParent(path); if (p != null) Go(p.FullName); }
 
         void Load()
         {
+            if(paneClosed) return;
             int id = ++loadId;
+            if(!string.Equals(loadedPath,path,StringComparison.OrdinalIgnoreCase)) restoreSelection=new List<string>();
+            else if(entries.Count>0) restoreSelection=Selected();
+            loadedPath=path;
+            all=new List<Entry>(); entries.Clear();
+            address.Text = path == AppsLocation ? "Applications" : path;
+            address.ToolTip = path == AppsLocation ? "Applications — enter a folder path to navigate" : path;
             back.IsEnabled = history.Count > 0; forward.IsEnabled = future.Count > 0;
             var sideMatch = ((List<SideEntry>)side.ItemsSource).FirstOrDefault(s => s.Path != null && string.Equals(s.Path.TrimEnd('\\'), path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
             side.SelectedItem = sideMatch;
             Title = title.Text = path == AppsLocation ? "Applications" : sideMatch != null ? sideMatch.Name : (new DirectoryInfo(path).Name);
+            if(host!=null) host.RefreshTabs(); else if(tabs.Count>0) RefreshTabs();
             Watch();
             if (path == AppsLocation)
             {
-                Fill(Apps.All.Select(a => { var app = a; return new Entry { Name = a.Name, Path = a.Exe, Open = () => Launcher.Open(app.Target), Sub = a.Icon }; }).ToList(), id);
+                Fill(Apps.All.Select(a => { var app = a; return new Entry { Name = a.Name, Path = a.Exe, Open = () => Launcher.Open(app.Target), Sub = a.Icon, Kind = "Application" }; }).ToList(), id);
                 return;
             }
             string dir = path;
@@ -329,13 +434,17 @@ namespace OpenDock
                     foreach (var fi in new DirectoryInfo(dir).EnumerateFileSystemInfos())
                     {
                         if ((fi.Attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0 || fi.Name.StartsWith(".")) continue;
-                        list.Add(new Entry { Name = fi.Name, Path = fi.FullName, IsDir = (fi.Attributes & FileAttributes.Directory) != 0 });
+                        bool isDir = (fi.Attributes & FileAttributes.Directory) != 0;
+                        var entry = new Entry { Name = fi.Name, Path = fi.FullName, IsDir = isDir,
+                            Kind = isDir ? "Folder" : System.IO.Path.GetExtension(fi.Name).TrimStart('.').ToUpperInvariant() + " file" };
+                        try { entry.Modified = fi.LastWriteTime.ToString("g"); if (!isDir) entry.SizeText = Size(((FileInfo)fi).Length); } catch { }
+                        list.Add(entry);
                     }
                 }
                 catch (Exception ex) { App.Log(ex.Message); }
                 list.Sort((a, b) => a.IsDir != b.IsDir ? (a.IsDir ? -1 : 1) : StrCmpLogicalW(a.Name, b.Name));
                 return list;
-            }).ContinueWith(t => Fill(t.Result, id), TaskScheduler.FromCurrentSynchronizationContext());
+            }).ContinueWith(t => { if(t.IsFaulted) App.Log(t.Exception); else if(!t.IsCanceled) Fill(t.Result, id); }, TaskScheduler.FromCurrentSynchronizationContext());
         }
 
         static readonly HashSet<string> thumbs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".tif", ".tiff", ".ico", ".mp4", ".mov", ".mkv", ".avi", ".wmv", ".pdf", ".psd", ".svg" };
@@ -362,6 +471,7 @@ namespace OpenDock
                 selectAfterLoad = null;
                 if (s != null) { files.SelectedItem = s; files.ScrollIntoView(s); }
             }
+            else foreach(var selected in restoreSelection) { var item=entries.FirstOrDefault(e=>string.Equals(e.Path,selected,StringComparison.OrdinalIgnoreCase)); if(item!=null) files.SelectedItems.Add(item); }
         }
 
         void ApplyFilter()
@@ -397,12 +507,19 @@ namespace OpenDock
             if (path == AppsLocation) return;
             try
             {
-                watcher = new FileSystemWatcher(path) { NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName };
-                FileSystemEventHandler h = delegate { Dispatcher.BeginInvoke(new Action(() => { reloadSoon.Stop(); reloadSoon.Start(); })); };
-                watcher.Created += h; watcher.Deleted += h; watcher.Renamed += (s, e) => h(s, e);
+                watcher = new FileSystemWatcher(path) { NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size };
+                FileSystemEventHandler h = delegate { if(!Dispatcher.HasShutdownStarted) Dispatcher.BeginInvoke(new Action(() => { if(paneClosed) return; reloadSoon.Stop(); reloadSoon.Start(); })); };
+                watcher.Created += h; watcher.Deleted += h; watcher.Changed+=h; watcher.Renamed += (s, e) => h(s, e);
                 watcher.EnableRaisingEvents = true;
             }
             catch { }
+        }
+
+        void DisposePane()
+        {
+            if(paneClosed) return; paneClosed=true;
+            if(watcher!=null) { watcher.Dispose(); watcher=null; }
+            reloadSoon.Stop(); loadId++; Apps.Changed-=appsChanged;
         }
 
         // ---------- actions ----------
@@ -427,6 +544,7 @@ namespace OpenDock
         {
             var sel = files.SelectedItem as Entry;
             if (e.Key == Key.Enter && sel != null) { foreach (var x in files.SelectedItems.Cast<Entry>().ToList()) Open(x); e.Handled = true; }
+            else if (e.Key == Key.F2 && Keyboard.Modifiers == ModifierKeys.None) { RenameSelection(); e.Handled = true; }
             else if (e.Key == Key.Delete && path != AppsLocation) { Launcher.Recycle(Selected()); e.Handled = true; }
             else if (e.Key == Key.C && Keyboard.Modifiers == ModifierKeys.Control) CopySelection();
             else if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control) Paste();
@@ -446,14 +564,15 @@ namespace OpenDock
             Transfer(Clipboard.GetFileDropList().Cast<string>().ToArray(), true);
         }
 
-        void Transfer(string[] sources, bool copy)
+        void Transfer(string[] sources, bool copy, string folder=null)
         {
+            folder=folder??path;
             foreach (var src in sources)
             {
-                string dest = System.IO.Path.Combine(path, System.IO.Path.GetFileName(src.TrimEnd('\\')));
-                if (string.Equals(dest, src, StringComparison.OrdinalIgnoreCase)) continue;
                 try
                 {
+                    string dest=TransferDestination(src,folder);
+                    if (string.Equals(dest, System.IO.Path.GetFullPath(src), StringComparison.OrdinalIgnoreCase)) continue;
                     bool dir = Directory.Exists(src);
                     if (copy) { if (dir) VB.FileSystem.CopyDirectory(src, dest, VB.UIOption.AllDialogs); else VB.FileSystem.CopyFile(src, dest, VB.UIOption.AllDialogs); }
                     else { if (dir) VB.FileSystem.MoveDirectory(src, dest, VB.UIOption.AllDialogs); else VB.FileSystem.MoveFile(src, dest, VB.UIOption.AllDialogs); }
@@ -483,14 +602,34 @@ namespace OpenDock
             DropInto(dropped, target != null && target.IsDir ? target.Path : path, e);   // dropping onto a folder moves into it
         }
 
-        // Same drive moves, another drive copies; holding Ctrl always copies (like Explorer).
+        internal static string TransferDestination(string source,string folder)
+        {
+            string full=System.IO.Path.GetFullPath(source).TrimEnd('\\'), destination=System.IO.Path.Combine(System.IO.Path.GetFullPath(folder),System.IO.Path.GetFileName(full));
+            if(Directory.Exists(full)&&destination.StartsWith(full+"\\",StringComparison.OrdinalIgnoreCase)) throw new IOException("A folder cannot be copied or moved inside itself.");
+            return destination;
+        }
+
+        internal static DragDropEffects TransferEffect(string[] sources,string folder,DragDropKeyStates keys,DragDropEffects allowed)
+        {
+            if(sources==null||sources.Length==0||sources.Any(string.IsNullOrWhiteSpace)||string.IsNullOrEmpty(folder)||folder==AppsLocation) return DragDropEffects.None;
+            try
+            {
+                bool control=(keys&DragDropKeyStates.ControlKey)!=0,shift=(keys&DragDropKeyStates.ShiftKey)!=0;
+                if((keys&DragDropKeyStates.AltKey)!=0||control&&shift) return DragDropEffects.None;
+                bool same=sources.All(s=>string.Equals(System.IO.Path.GetPathRoot(s),System.IO.Path.GetPathRoot(folder),StringComparison.OrdinalIgnoreCase));
+                var requested=control?DragDropEffects.Copy:shift?DragDropEffects.Move:same?DragDropEffects.Move:DragDropEffects.Copy;
+                if((allowed&requested)!=0) return requested;
+                if(control||shift) return DragDropEffects.None;
+                return (allowed&DragDropEffects.Copy)!=0?DragDropEffects.Copy:allowed&DragDropEffects.Move;
+            }
+            catch(ArgumentException) { return DragDropEffects.None; }
+        }
+
+        // Respect both the source's allowed operations and the modifier keys; never mutate navigation during file dialogs.
         void DropInto(string[] dropped, string folder, DragEventArgs e)
         {
-            string saved = path;
-            path = folder;
-            bool sameDrive = dropped.All(f => string.Equals(System.IO.Path.GetPathRoot(f), System.IO.Path.GetPathRoot(folder), StringComparison.OrdinalIgnoreCase));
-            Transfer(dropped, (e.KeyStates & DragDropKeyStates.ControlKey) != 0 || !sameDrive);
-            path = saved;
+            e.Effects=TransferEffect(dropped,folder,e.KeyStates,e.AllowedEffects); e.Handled=true;
+            if(e.Effects!=DragDropEffects.None) Transfer(dropped,e.Effects==DragDropEffects.Copy,folder);
         }
 
         static SideEntry SideUnder(object source)
@@ -515,13 +654,14 @@ namespace OpenDock
             {
                 if (!files.SelectedItems.Contains(en)) files.SelectedItem = en;
                 add("Open", () => Open(en), true);
-                if (en.Path != null && en.Open == null && !en.IsDir) add("Open With…", () => Process.Start("rundll32.exe", "shell32.dll,OpenAs_RunDLL " + en.Path), true);
+                if (en.Path != null && en.Open == null && !en.IsDir) add("Open With…", () => Process.Start("rundll32.exe", "shell32.dll,OpenAs_RunDLL " + Launcher.Quote(new[]{en.Path})), true);
                 cm.Items.Add(new Separator());
                 if (en.Path != null)
                 {
-                    add("Get Info", () => SHObjectProperties(new WindowInteropHelper(this).Handle, 2, en.Path, null), true);
+                    add("Get Info", () => SHObjectProperties(new WindowInteropHelper(host??this).Handle, 2, en.Path, null), true);
                     add("Show in Explorer", () => Process.Start("explorer.exe", "/select,\"" + en.Path + "\""), true);
                     add("Copy", CopySelection, en.Open == null);
+                    if (en.Open == null) add("Rename…", RenameSelection, files.SelectedItems.Count == 1);
                     add("Copy Path", () => Clipboard.SetText(en.Path), true);
                     if (en.Open == null) { cm.Items.Add(new Separator()); add("Move to Trash", () => Launcher.Recycle(Selected()), true); }
                 }
@@ -538,16 +678,72 @@ namespace OpenDock
                 add("Paste", Paste, Clipboard.ContainsFileDropList());
                 cm.Items.Add(new Separator());
                 add("Open in Explorer", () => Process.Start("explorer.exe", "\"" + path + "\""), true);
-                add("Get Info", () => SHObjectProperties(new WindowInteropHelper(this).Handle, 2, path, null), true);
+                add("Get Info", () => SHObjectProperties(new WindowInteropHelper(host??this).Handle, 2, path, null), true);
             }
             if (cm.Items.Count > 0) cm.IsOpen = true;
             e.Handled = true;
         }
 
+        // Accept only a single Windows filename. Move never replaces an existing destination.
+        public static string RenamePath(string source, string name)
+        {
+            if (string.IsNullOrWhiteSpace(name) || name == "." || name == ".." || name.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0 || name != name.TrimEnd(' ', '.'))
+                throw new ArgumentException("Enter a filename without path separators, invalid characters, or a trailing dot or space.");
+            string stem = name.Split('.')[0].TrimEnd(' ').ToUpperInvariant();
+            if (new[] { "CON", "PRN", "AUX", "NUL", "CLOCK$" }.Contains(stem) ||
+                (stem.Length == 4 && (stem.StartsWith("COM") || stem.StartsWith("LPT")) && stem[3] >= '1' && stem[3] <= '9'))
+                throw new ArgumentException("That filename is reserved by Windows.");
+            string full = System.IO.Path.GetFullPath(source);
+            string parent = System.IO.Path.GetDirectoryName(full);
+            if (parent == null) throw new ArgumentException("A drive cannot be renamed here.");
+            string destination = System.IO.Path.Combine(parent, name);
+            if (full == destination) return full;
+            if (string.Equals(full, destination, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!MoveFileEx(full, destination, 0)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            }
+            else if (Directory.Exists(full)) Directory.Move(full, destination);
+            else File.Move(full, destination);
+            return destination;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool MoveFileEx(string source, string destination, uint flags);
+
+        void RenameSelection()
+        {
+            var en = files.SelectedItem as Entry;
+            if (files.SelectedItems.Count != 1 || en == null || en.Open != null || en.Path == null || path == AppsLocation) return;
+            var dialog = new MacWindow(false) { Title = "Rename", Owner = host??this, Width = 420, Height = 180,
+                ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+            var body = new StackPanel { Margin = new Thickness(20, 12, 20, 16) };
+            body.Children.Add(Text("Rename “" + en.Name + "”", 14, "Fg", FontWeights.SemiBold));
+            var input = new TextBox { Text = en.Name, Margin = new Thickness(0, 12, 0, 14), Padding = new Thickness(6), FontSize = 14 };
+            input.SetResourceReference(Control.BackgroundProperty, "Field"); input.SetResourceReference(Control.ForegroundProperty, "Fg");
+            body.Children.Add(input);
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            var cancel = new Button { Content = "Cancel", IsCancel = true, MinWidth = 80, Margin = new Thickness(0, 0, 8, 0) };
+            var rename = new Button { Content = "Rename", IsDefault = true, MinWidth = 80 };
+            buttons.Children.Add(cancel); buttons.Children.Add(rename); body.Children.Add(buttons);
+            dialog.Content = body; WindowChrome.SetIsHitTestVisibleInChrome(body, true);
+            rename.Click += delegate
+            {
+                try
+                {
+                    selectAfterLoad = RenamePath(en.Path, input.Text);
+                    reloadSoon.Stop(); Load();
+                    dialog.DialogResult = true;
+                }
+                catch (Exception ex) { MessageBox.Show(dialog, ex.Message, "Rename", MessageBoxButton.OK, MessageBoxImage.Error); input.Focus(); }
+            };
+            dialog.Loaded += delegate { input.Focus(); input.Select(0, en.IsDir ? input.Text.Length : System.IO.Path.GetFileNameWithoutExtension(input.Text).Length); };
+            dialog.ShowDialog();
+        }
+
         void NewFolder()
         {
             string name = "untitled folder";
-            for (int i = 2; Directory.Exists(System.IO.Path.Combine(path, name)); i++) name = "untitled folder " + i;
+            for (int i = 2; Directory.Exists(System.IO.Path.Combine(path, name))||File.Exists(System.IO.Path.Combine(path,name)); i++) name = "untitled folder " + i;
             try { Directory.CreateDirectory(System.IO.Path.Combine(path, name)); selectAfterLoad = System.IO.Path.Combine(path, name); }
             catch (Exception ex) { MessageBox.Show(ex.Message, "Finder"); }
         }
@@ -575,9 +771,18 @@ namespace OpenDock
         public SettingsWindow(string start)
         {
             Title = "System Settings";
+            Icon = Art.Settings;
             Width = 920; Height = 660; MinWidth = 760; MinHeight = 480;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             apply.Tick += delegate { apply.Stop(); Settings.Apply(); };
+            Closing+=(s,e)=>
+            {
+                if(!apply.IsEnabled) return;
+                apply.Stop();
+                try { Settings.Apply(); }
+                catch(Exception ex) { e.Cancel=true; apply.Start(); MessageBox.Show(this,ex.Message,"Couldn't save settings"); }
+            };
+            Closed+=delegate { apply.Stop(); };
 
             var cats = new[]
             {
@@ -591,11 +796,11 @@ namespace OpenDock
                 new[] { C("Keyboard", "\uE765", "#8E8E93", KeyboardPane), C("Mouse", "\uE962", "#8E8E93", MousePane), C("Printers & Scanners", "\uE749", "#8E8E93", Printers) },
             };
             // Panes reached from General, like macOS.
-            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane } };
+            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane }, { "Workspace", WorkspacePane }, { "Updates", Updates } };
             // Panes reached from General, like macOS.
-            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane } };
+            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane }, { "Workspace", WorkspacePane }, { "Updates", Updates } };
             // Panes reached from General, like macOS.
-            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane } };
+            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane }, { "Workspace", WorkspacePane }, { "Updates", Updates } };
 
             Layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(250) });
             Layout.ColumnDefinitions.Add(new ColumnDefinition());
@@ -743,6 +948,7 @@ namespace OpenDock
             }
             title.Text = current;
             Title = current;
+            App.QueueRefresh();
             back.IsEnabled = at > 0; back.Opacity = at > 0 ? 1 : 0.35;
             forward.IsEnabled = at < history.Count - 1; forward.Opacity = forward.IsEnabled ? 1 : 0.35;
             var body = new StackPanel { Margin = new Thickness(24, 0, 24, 28) };
@@ -776,6 +982,8 @@ namespace OpenDock
 
             body.Children.Add(new Border { Height = 16 });
             var nav = Group(body);
+            NavLink(nav, "Desktop Scenes & Dock Studio", "\uE713", "#0A84FF", "Workspace");
+            NavLink(nav, "Software Update", "\uE777", "#0A84FF", "Updates");
             NavLink(nav, "About", "\uE977", "#8E8E93", "About");
             NavLink(nav, "Storage", "\uEDA2", "#8E8E93", "Storage");
             NavLink(nav, "Login Items", "\uE7E8", "#8E8E93", "Login Items");
@@ -842,6 +1050,17 @@ namespace OpenDock
         {
             body.Children.Add(Heading("Dock"));
             var dock = Group(body);
+            var positions = new ComboBox { MinWidth = 180, ItemsSource = new[] { "Bottom", "Left", "Right" }, SelectedIndex = Math.Max(0, Math.Min(2, Settings.DockPosition)) };
+            AddChoice(dock, "Position on screen", positions, () => Settings.DockPosition = positions.SelectedIndex);
+            var screens = Sys.Screens();
+            var display = new ComboBox { MinWidth = 180 };
+            display.Items.Add("Follow main display");
+            foreach (var screen in screens) display.Items.Add(screen.Device + (screen.Primary ? " (Main)" : ""));
+            int selected = screens.FindIndex(s => s.Device == Settings.DisplayDevice);
+            display.SelectedIndex = selected < 0 ? 0 : selected + 1;
+            AddSwitch(dock, "Show Dock on every display", Settings.DockOnAllDisplays, v => Settings.DockOnAllDisplays = v);
+            AddChoice(dock, "Menu bar / single Dock display", display, () => Settings.DisplayDevice = display.SelectedIndex == 0 ? "" : screens[display.SelectedIndex - 1].Device);
+            AddSwitch(dock, "Live glass (hides windows from screen capture)", Settings.LiveGlass, v => Settings.LiveGlass = v);
             AddSlider(dock, "Size", 36, 96, Settings.IconSize, v => Settings.IconSize = (int)v);
             AddSlider(dock, "Spacing between apps", 0, 16, Settings.DockSpacing, v => Settings.DockSpacing = (int)Math.Round(v));
             AddSwitch(dock, "Magnification", Settings.Magnify, v => Settings.Magnify = v);
@@ -917,21 +1136,30 @@ namespace OpenDock
             Row(p, d);
         }
 
-        void AddSwitch(Panel p, string label, bool value, Action<bool> set)
+        void AddChoice(Panel p, string label, ComboBox choice, Action set)
+        {
+            var row = new DockPanel();
+            DockPanel.SetDock(choice, Dock.Right);
+            row.Children.Add(choice); row.Children.Add(Text(label, 13, "Fg"));
+            choice.SelectionChanged += delegate { set(); apply.Stop(); apply.Start(); };
+            Row(p, row);
+        }
+
+        void AddSwitch(Panel p, string label, bool value, Action<bool> set, bool applySettings=true)
         {
             var cb = new CheckBox { Content = Text(label, 13, "Fg"), IsChecked = value, Style = (Style)Application.Current.Resources["Switch"], Cursor = Cursors.Hand };
-            cb.Click += delegate { set(cb.IsChecked == true); apply.Stop(); apply.Start(); };
+            cb.Click += delegate { set(cb.IsChecked == true); if(applySettings) { apply.Stop(); apply.Start(); } };
             Row(p, cb);
         }
 
-        void AddSlider(Panel p, string label, double min, double max, double value, Action<double> set)
+        void AddSlider(Panel p, string label, double min, double max, double value, Action<double> set, bool applySettings=true)
         {
             var g = new Grid();
             g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
             g.ColumnDefinitions.Add(new ColumnDefinition());
             g.Children.Add(Text(label, 13, "Fg"));
             var s = new Slider { Minimum = min, Maximum = max, Value = value, VerticalAlignment = VerticalAlignment.Center };
-            s.ValueChanged += delegate { set(s.Value); apply.Stop(); apply.Start(); };
+            s.ValueChanged += delegate { set(s.Value); if(applySettings) { apply.Stop(); apply.Start(); } };
             Grid.SetColumn(s, 1);
             g.Children.Add(s);
             Row(p, g);

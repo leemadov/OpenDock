@@ -29,6 +29,9 @@ namespace OpenDock
         readonly List<IntPtr> thumbs = new List<IntPtr>();
         readonly DispatcherTimer hideSoon = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
         IntPtr hwnd;
+        Point anchor;
+        int position;
+        Rect area;
 
         public PreviewWindow()
         {
@@ -47,6 +50,7 @@ namespace OpenDock
             hideSoon.Tick += delegate { hideSoon.Stop(); if (!IsMouseOver && !StillHovered(Item)) Close2(); };
             MouseLeave += delegate { hideSoon.Stop(); hideSoon.Start(); };
             MouseEnter += delegate { hideSoon.Stop(); };
+            Closed+=delegate { hideSoon.Stop(); Unregister(); };
         }
 
         public bool MouseInside
@@ -61,17 +65,20 @@ namespace OpenDock
         }
 
         // anchor: screen point (DIP) at the top centre of the dock icon
-        public void ShowFor(DockItem item, List<IntPtr> windows, ImageSource icon, Point anchor)
+        public void ShowFor(DockItem item, List<IntPtr> windows, ImageSource icon, Point anchor, int position, Rect area)
         {
             hideSoon.Stop();
             Unregister();
             row.Children.Clear();
             Item = item;
-            foreach (var w in windows.Take(8)) row.Children.Add(Card(w, icon));
+            this.anchor=anchor; this.position=position; this.area=area;
+            row.Orientation = position == 0 ? Orientation.Horizontal : Orientation.Vertical;
+            int capacity = position == 0 ? (int)((area.Width - 16) / CardW) : (int)((area.Height - 16) / (ThumbH + 46));
+            foreach (var w in windows.Take(Math.Max(1, Math.Min(8, capacity)))) row.Children.Add(Card(w, icon));
             if (!IsVisible) Show();
             UpdateLayout();
-            Left = Math.Max(4, Math.Min(SystemParameters.PrimaryScreenWidth - ActualWidth - 4, anchor.X - ActualWidth / 2));
-            Top = anchor.Y - ActualHeight - 10;
+            var at = DisplayLayout.Beside(anchor, new Size(ActualWidth, ActualHeight), position, area);
+            Left = at.X; Top = at.Y;
             UpdateLayout();
             Native.SetWindowPos(hwnd, Native.HWND_TOPMOST, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
             foreach (Border card in row.Children) Attach(card);
@@ -87,7 +94,7 @@ namespace OpenDock
             head.Children.Add(close); head.Children.Add(title);
             // Minimized windows have no live picture; show the app icon instead, like the taskbar does.
             var host = new Grid { Width = CardW - 16, Height = ThumbH, Tag = w };
-            if (Native.IsIconic(w)) host.Children.Add(new Image { Source = icon, Width = 64, Height = 64, Opacity = 0.8 });
+            if (Native.IsIconic(w) || Item.Kind == "internal" || Item.Kind == "shelf") host.Children.Add(new Image { Source = icon, Width = 64, Height = 64, Opacity = 0.8 });
             var body = new StackPanel();
             body.Children.Add(head); body.Children.Add(host);
             var card = new Border { Width = CardW, Padding = new Thickness(8), CornerRadius = new CornerRadius(8), Background = Brushes.Transparent, Child = body, Tag = w, Cursor = Cursors.Hand };
@@ -98,19 +105,29 @@ namespace OpenDock
             {
                 Native.PostMessage(w, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
                 e.Handled = true;
+                Unregister();
                 card.Visibility = Visibility.Collapsed;
                 if (row.Children.Cast<UIElement>().All(c => c.Visibility != Visibility.Visible)) Close2();
-                else Dispatcher.BeginInvoke(new Action(() => { foreach (Border c in row.Children) Attach(c); }), DispatcherPriority.Loaded);
+                else Dispatcher.BeginInvoke(new Action(Reflow), DispatcherPriority.Loaded);
             };
             return card;
+        }
+        void Reflow()
+        {
+            if(!IsVisible||Item==null) return;
+            Unregister(); UpdateLayout();
+            var at=DisplayLayout.Beside(anchor,new Size(ActualWidth,ActualHeight),position,area); Left=at.X; Top=at.Y;
+            foreach(Border card in row.Children) Attach(card);
         }
 
         // Places the live thumbnail of the card's window into its picture area, keeping the aspect ratio.
         void Attach(Border card)
         {
+            if(Item==null||!IsVisible) return;
             var w = (IntPtr)card.Tag;
             var host = (Grid)((StackPanel)card.Child).Children[1];
-            if (card.Visibility != Visibility.Visible || Native.IsIconic(w)) return;
+            // Our live-glass windows are excluded from desktop capture; use their dedicated icon instead of a blank thumbnail.
+            if (card.Visibility != Visibility.Visible || Native.IsIconic(w) || Item.Kind == "internal" || Item.Kind == "shelf") return;
             IntPtr thumb;
             if (DwmRegisterThumbnail(hwnd, w, out thumb) != 0) return;
             thumbs.Add(thumb);

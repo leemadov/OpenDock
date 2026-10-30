@@ -19,18 +19,20 @@ namespace OpenDock
     {
         // ---------- plumbing ----------
 
-        public static string Run(string exe, string args)
+        public static string Run(string exe, string args, int timeout=10000)
         {
             try
             {
-                var p = Process.Start(new ProcessStartInfo(exe, args)
+                using(var p = Process.Start(new ProcessStartInfo(exe, args)
                 {
                     UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true,
                     StandardOutputEncoding = Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage)
-                });
-                string s = p.StandardOutput.ReadToEnd();
-                p.WaitForExit(10000);
-                return s;
+                }))
+                {
+                    var output=p.StandardOutput.ReadToEndAsync();
+                    if(!p.WaitForExit(timeout)) { try { p.Kill(); } catch { } return ""; }
+                    return output.Wait(1000)?output.Result:"";
+                }
             }
             catch { return ""; }
         }
@@ -408,22 +410,36 @@ namespace OpenDock
             return Settings.Wallpapers.Where(File.Exists).ToList();
         }
 
-        // OpenDock's copy of a picture (same name and size), if it already has one.
+        // Match actual contents, including copies that were renamed to avoid a filename collision.
         public static string CopyOf(string file)
         {
             try
             {
                 var copy = Path.Combine(Settings.WallpaperDir, Path.GetFileName(file));
-                return File.Exists(copy) && File.Exists(file) && new FileInfo(copy).Length == new FileInfo(file).Length ? copy : null;
+                if(!File.Exists(file)) return null;
+                foreach(var candidate in new[]{copy}.Concat(Settings.Wallpapers.Where(p=>Within(p,Settings.WallpaperDir))).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    if(!File.Exists(candidate)||new FileInfo(candidate).Length!=new FileInfo(file).Length) continue;
+                    if(Same(Path.GetFullPath(candidate),Path.GetFullPath(file))) return candidate;
+                    using(var hash=System.Security.Cryptography.SHA256.Create())
+                    using(var original=File.OpenRead(file))
+                    using(var owned=File.OpenRead(candidate))
+                        if(hash.ComputeHash(original).SequenceEqual(hash.ComputeHash(owned))) return candidate;
+                }
+                return null;
             }
             catch { return null; }
+        }
+        internal static bool Within(string file,string directory)
+        {
+            return Path.GetFullPath(file).StartsWith(Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar)+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase);
         }
 
         // Keeps a copy in OpenDock's own folder, so the picture stays even if you move or delete the original.
         public static string AddToLibrary(string file)
         {
             string dest = CopyOf(file) ?? file;
-            if (!dest.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.Windows), StringComparison.OrdinalIgnoreCase) && !dest.StartsWith(Settings.WallpaperDir, StringComparison.OrdinalIgnoreCase))
+            if (!Within(dest,Environment.GetFolderPath(Environment.SpecialFolder.Windows)) && !Within(dest,Settings.WallpaperDir))
             {
                 Directory.CreateDirectory(Settings.WallpaperDir);
                 string name = Path.GetFileNameWithoutExtension(file), ext = Path.GetExtension(file);
@@ -442,13 +458,13 @@ namespace OpenDock
             Settings.Wallpapers.RemoveAll(w => Same(w, file));
             Settings.Save();
             // Our own copy goes too, unless it's still on the desktop.
-            if (file.StartsWith(Settings.WallpaperDir, StringComparison.OrdinalIgnoreCase) && !Same(file, WallpaperPath()))
+            if (Same(Path.GetDirectoryName(Path.GetFullPath(file)),Path.GetFullPath(Settings.WallpaperDir)) && !Same(file, WallpaperPath()))
                 try { File.Delete(file); } catch { }
         }
 
         // ---------- Displays (DDC/CI for brightness) ----------
 
-        public class Display { public IntPtr Monitor; public string Device; public int Width, Height, Hz, Brightness = -1; public bool Primary; }
+        public class Display { public IntPtr Monitor; public string Device; public int Width, Height, Hz, Brightness = -1; public bool Primary; public Native.RECT Bounds, Work; }
 
         delegate bool MonitorProc(IntPtr m, IntPtr dc, IntPtr rect, IntPtr data);
         [DllImport("user32.dll")] static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorProc cb, IntPtr data);
@@ -474,21 +490,28 @@ namespace OpenDock
         [DllImport("dxva2.dll")] static extern bool GetMonitorBrightness(IntPtr h, out uint min, out uint cur, out uint max);
         [DllImport("dxva2.dll")] static extern bool SetMonitorBrightness(IntPtr h, uint v);
 
-        public static List<Display> Displays()
+        public static List<Display> Screens()
         {
             var list = new List<Display>();
             EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (m, dc, r, data) =>
             {
                 var mi = new MONITORINFOEX { cbSize = Marshal.SizeOf(typeof(MONITORINFOEX)) };
-                GetMonitorInfo(m, ref mi);
+                if (!GetMonitorInfo(m, ref mi)) return true;
                 var dm = new DEVMODE { dmSize = (short)Marshal.SizeOf(typeof(DEVMODE)) };
                 EnumDisplaySettings(mi.szDevice, -1 /* current */, ref dm);
-                var d = new Display { Monitor = m, Device = mi.szDevice, Width = dm.dmPelsWidth, Height = dm.dmPelsHeight, Hz = dm.dmDisplayFrequency, Primary = (mi.dwFlags & 1) != 0 };
-                Physical(m, h => { uint min, cur, max; if (GetMonitorBrightness(h, out min, out cur, out max) && max > min) d.Brightness = (int)((cur - min) * 100 / (max - min)); });
+                var d = new Display { Monitor = m, Device = mi.szDevice, Width = dm.dmPelsWidth, Height = dm.dmPelsHeight, Hz = dm.dmDisplayFrequency, Primary = (mi.dwFlags & 1) != 0, Bounds = mi.rcMonitor, Work = mi.rcWork };
                 list.Add(d);
                 return true;
             }, IntPtr.Zero);
             return list.OrderByDescending(d => d.Primary).ToList();
+        }
+
+        public static List<Display> Displays()
+        {
+            var list = Screens();
+            foreach (var d in list)
+                Physical(d.Monitor, h => { uint min, cur, max; if (GetMonitorBrightness(h, out min, out cur, out max) && max > min) d.Brightness = (int)((cur - min) * 100 / (max - min)); });
+            return list;
         }
 
         public static void SetBrightness(IntPtr monitor, int percent)

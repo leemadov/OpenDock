@@ -19,18 +19,21 @@ namespace OpenDock
 {
     class DockItem
     {
-        public string Kind = "app";               // app, finder, launchpad, stack, trash, sep
+        public string Kind = "app";               // app, internal, finder, launchpad, stack, trash, sep
         public string Name, Target, IconPath, RunKey;
         public bool Pinned;
         public readonly HashSet<string> Keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         public readonly List<WinInfo> Wins = new List<WinInfo>();
         public Border Root; public Image Img; public Ellipse Dot;
+        public Border Badge; public TextBlock BadgeText;
+        public int IconVersion;
         public readonly ScaleTransform Scale = new ScaleTransform(1, 1);
         // P = presence (0..1, grows/shrinks the slot), X = smoothed resting centre, CX/S = magnified centre/scale.
         public double P, PWant = 1, X = double.NaN, CX, S = 1, DotA, BounceT0 = -1, BounceStop;
         public double PFrom, PTarget = -1, PT0, GoneAt = -1;   // presence tween + grace period after the last window closes
         public bool Attention;                                  // a window flashed for attention (red dot until you switch to it)
 
+        public string IconKey { get { return Kind=="app" ? Target??RunKey : "fixed:"+Kind; } }
         public bool IsSep { get { return Kind == "sep"; } }
         public bool Running { get { return Kind == "finder" ? App.Finders.Count > 0 : Wins.Count > 0; } }
 
@@ -83,18 +86,25 @@ namespace OpenDock
     class DockWindow : Window
     {
         public AppBar Bar;
+        public readonly string Device;
+        public Sys.Display Screen { get { return Device == null ? DisplayLayout.Selected : DisplayLayout.ForDevice(Device); } }
+        public Rect MonitorBounds { get { return DisplayLayout.Dip(Screen.Bounds); } }
+        public Rect MonitorWorkArea { get { return DisplayLayout.Dip(Screen.Work); } }
+        int iconRevision=Settings.IconRevision;
+        bool closed, pinsNeedRefresh, repairingPlacement;
+        readonly DispatcherTimer trashTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
         readonly Canvas canvas = new Canvas(), layer = new Canvas();
         readonly Image wall = new Image { Stretch = Stretch.Fill };
         readonly RectangleGeometry wallClip = new RectangleGeometry();
         readonly Border bg = new Border { BorderThickness = new Thickness(1) }, sheen = new Border { IsHitTestVisible = false }, outline = new Border { BorderThickness = new Thickness(1), IsHitTestVisible = false };
         readonly Border label = new Border { CornerRadius = new CornerRadius(7), Padding = new Thickness(10, 3, 10, 4), Opacity = 0, IsHitTestVisible = false };
-        readonly TextBlock labelText = new TextBlock { FontSize = 13, FontFamily = Theme.Font };
+        readonly TextBlock labelText = new TextBlock { FontSize = 13, FontFamily = Theme.Font, MaxWidth = 180, TextTrimming = TextTrimming.CharacterEllipsis };
         readonly Rectangle edge = new Rectangle { Fill = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)), Height = 2 };
         readonly List<DockItem> items = new List<DockItem>();
         readonly Stopwatch clock = Stopwatch.StartNew();
         readonly GhostWindow ghost = new GhostWindow();
         const double Gap = 6;   // space between dock and screen edge
-        double slot, magSlot, bgH, H, W, bottomDip, last, dt, mag, hide, labelA, hoverLeftAt, bgL, bgR, bgTop;
+        double slot, magSlot, bgH, H, W, last, dt, mag, hide, labelA, hoverLeftAt, bgL, bgR, bgTop;
         bool looping, hovering, menuOpen, dropActive, dragOut, trashFull, tiles;
         DockItem press, drag, labelItem, dropHot, trash;
         Point pressAt;
@@ -104,14 +114,21 @@ namespace OpenDock
         DockItem hoverItem, lastHot;
         double hoverSince;
         DispatcherTimer grace;
-        // Live glass: the dock is left out of screen capture, so a capture of its area shows what is behind it.
+        int position;
+        Rect monitor, reserved;
+        // Original live sampling; wallpaper frost remains available when Live glass is switched off.
         bool live;
         long glassSum;
         double wallX, wallY;   // where the backdrop image sits on the canvas
         readonly DispatcherTimer glassTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
 
-        public DockWindow()
+        public DockWindow(string device = null)
         {
+            Device = device;
+            // WPF chooses its native creation monitor before SourceInitialized registers the appbar.
+            var initial = MonitorBounds;
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Left = initial.Left; Top = initial.Top;
             Title = "OpenDock";
             WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent;
             ShowInTaskbar = false; Topmost = true; ResizeMode = ResizeMode.NoResize; ShowActivated = false;
@@ -131,7 +148,7 @@ namespace OpenDock
             canvas.Children.Add(wall); canvas.Children.Add(outline); canvas.Children.Add(bg); canvas.Children.Add(layer); canvas.Children.Add(label); canvas.Children.Add(edge);
             Content = canvas;
 
-            MouseEventHandler enter = delegate { hovering = true; StartLoop(); };
+            MouseEventHandler enter = delegate { App.Dock = this; hovering = true; StartLoop(); };
             bg.MouseEnter += enter; edge.MouseEnter += enter;
             bg.MouseRightButtonUp += (s, e) => { var cm = new ContextMenu(); DockOptions(cm); OpenMenu(cm, bg, true); e.Handled = true; };
             DragEnter += OnDragOver; DragOver += OnDragOver; Drop += OnDrop;
@@ -141,17 +158,16 @@ namespace OpenDock
             {
                 var hwnd = new WindowInteropHelper(this).Handle;
                 Native.MakeToolWindow(hwnd, true);
-                live = Glass.Exclude(hwnd);
-                if (live) glassTimer.Start();
-                Bar = new AppBar(this, Native.ABE_BOTTOM);
-                Bar.Placed = rc => { bottomDip = rc.Bottom / App.Dpi; Position(); };
+                Bar = new AppBar(this, Native.ABE_BOTTOM, () => Screen.Bounds);
+                Bar.Placed = rc => { reserved = DisplayLayout.Dip(rc); Position(); };
                 Bar.FullScreen = OnFullScreen;
                 Place();
             };
 
             AddFixed("finder", "Finder");
             AddFixed("launchpad", "Launchpad");
-            foreach (var p in Settings.Pins) AddPin(p, items.Count);
+            if(Workspace.Data.ShowShelf) AddFixed("shelf", "Shelf");
+            foreach (var p in Workspace.Pins(Device)) AddPin(p, items.Count);
             AddFixed("sep", "");
             AddFixed("stack", "Downloads");
             trash = AddFixed("trash", "Trash");
@@ -160,46 +176,73 @@ namespace OpenDock
             App.WindowsChanged += Sync;
             preview.StillHovered = it => it != null && it == lastHot;
             App.WindowFlashed += OnFlash;
-            App.ForegroundChanged += h =>
-            {
-                glassTimer.Interval = TimeSpan.FromMilliseconds(80);   // something may be moving behind the dock
-                h = Native.GetAncestor(h, 2);
-                foreach (var it in items.Where(i => i.Attention && i.Wins.Any(w => w.Hwnd == h)))
-                {
-                    it.Attention = false;
-                    it.Dot.SetResourceReference(Shape.FillProperty, "Fg");
-                }
-            };
+            App.ForegroundChanged += OnForeground;
             Apps.Changed += OnAppsLoaded;
-            Wallpaper.Changed += delegate { if (!live) wall.Source = Wallpaper.Blurred; };
+            Wallpaper.Changed += OnWallpaper;
             glassTimer.Tick += delegate { RefreshGlass(); };
             wall.Source = Wallpaper.Blurred;
-            Settings.Changed += delegate
-            {
-                if (tiles != Settings.IconTiles) { tiles = Settings.IconTiles; ReloadIcons(); }
-                Place();
-            };
+            Settings.Changed += OnSettings;
             Theme.Changed += ReloadIcons;
-            var trashTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
             trashTimer.Tick += delegate { UpdateTrash(); };
             trashTimer.Start();
+            Closed += delegate
+            {
+                closed = true;
+                if (Bar != null) Bar.Remove();
+                CompositionTarget.Rendering -= Frame; looping = false;
+                glassTimer.Stop(); trashTimer.Stop(); if (grace != null) grace.Stop();
+                App.WindowsChanged -= Sync; App.WindowFlashed -= OnFlash; App.ForegroundChanged -= OnForeground;
+                Apps.Changed -= OnAppsLoaded; Wallpaper.Changed -= OnWallpaper; Settings.Changed -= OnSettings; Theme.Changed -= ReloadIcons;
+                if (openMenu != null) openMenu.IsOpen = false;
+                if (stack != null) stack.Close();
+                preview.Close2(); preview.Close(); ghost.Close();
+            };
+        }
+
+        void OnForeground(IntPtr h)
+        {
+            glassTimer.Interval = TimeSpan.FromMilliseconds(80);
+            h = Native.GetAncestor(h, 2);
+            foreach (var it in items.Where(i => i.Attention && i.Wins.Any(w => w.Hwnd == h)))
+            {
+                it.Attention = false;
+                it.Dot.SetResourceReference(Shape.FillProperty, "Fg");
+            }
+            OnFullScreen(true);
+        }
+
+        void OnWallpaper() { if (!live) { wall.Source = Wallpaper.Blurred; StartLoop(); } }
+        void OnSettings()
+        {
+            if (closed) return;
+            if (tiles != Settings.IconTiles || iconRevision != Settings.IconRevision) { tiles = Settings.IconTiles; iconRevision=Settings.IconRevision; ReloadIcons(); }
+            Place();
         }
 
         // ---------- placement ----------
 
         public void Place()
         {
-            if (Bar == null) return;
-            slot = Settings.IconSize;
+            if (closed || Bar == null) return;
+            position = Settings.DockPosition >= 0 && Settings.DockPosition <= 2 ? Settings.DockPosition : 0;
+            monitor = MonitorBounds;
+            preview.Close2();
+            if (stack != null && stack.IsVisible) stack.Dismiss();
+            if (openMenu != null) openMenu.IsOpen = false;
+            live = Glass.Exclude(new WindowInteropHelper(this).Handle);
+            glassSum = 0;
+            if (live) glassTimer.Start(); else { glassTimer.Stop(); wall.Source = Wallpaper.Blurred; }
+            slot = Math.Max(36, Math.Min(96, Settings.IconSize));
             magSlot = Settings.Magnify ? Math.Max(Settings.MagnifySize, slot) : slot;
             bgH = Math.Round(slot + 12);
-            H = Math.Ceiling(Math.Max(magSlot, slot * 1.65) + 72);
-            W = SystemParameters.PrimaryScreenWidth;
+            H = Math.Ceiling(Math.Max(magSlot, slot * 1.65) + (position == 0 ? 72 : 220));
+            W = position == 0 ? monitor.Width : monitor.Height;
+            Bar.SetEdge(position == 1 ? Native.ABE_LEFT : position == 2 ? Native.ABE_RIGHT : Native.ABE_BOTTOM);
             foreach (var it in items) SizeRoot(it);
             if (Settings.AutoHide)
             {
                 Bar.Remove();
-                bottomDip = SystemParameters.PrimaryScreenHeight;
+                reserved = monitor;
                 Position();
             }
             else Bar.Reserve((int)Math.Round((bgH + Gap + 4) * App.Dpi)); // calls Position via Placed
@@ -207,15 +250,34 @@ namespace OpenDock
 
         void Position()
         {
-            Width = W; Height = H; Left = 0; Top = bottomDip - H;
+            W = position == 0 ? reserved.Width : reserved.Height;
+            Width = position == 0 ? W : H; Height = position == 0 ? H : W;
+            Left = position == 1 ? reserved.Left : position == 2 ? reserved.Right - H : reserved.Left;
+            Top = position == 0 ? reserved.Bottom - H : reserved.Top;
             if (!live)
             {
-                wall.Width = SystemParameters.PrimaryScreenWidth; wall.Height = SystemParameters.PrimaryScreenHeight;
-                wallX = 0; wallY = -Top;
+                wall.Width = monitor.Width; wall.Height = monitor.Height;
+                wallX = monitor.Left - Left; wallY = monitor.Top - Top;
                 Canvas.SetLeft(wall, wallX); Canvas.SetTop(wall, wallY);
             }
-            edge.Width = W; Canvas.SetTop(edge, H - edge.Height);
+            SetRect(edge, new Rect(0, H - 2, W, 2));
+            foreach (var it in items)
+            {
+                it.X = double.NaN;
+                it.Root.RenderTransformOrigin = position == 1 ? new Point(0, 0.5) : position == 2 ? new Point(1, 0.5) : new Point(0.5, 1);
+            }
             StartLoop();
+        }
+
+        Point ToWindow(Point p) { return DisplayLayout.ToWindow(p, position, W, H); }
+        Point Logical(Point p) { return DisplayLayout.FromWindow(p, position, W, H); }
+        Point ScreenPoint(Point p) { var at = ToWindow(p); return new Point(Left + at.X, Top + at.Y); }
+        Rect Physical(Rect r) { return new Rect(ToWindow(r.TopLeft), ToWindow(r.BottomRight)); }
+        void SetRect(FrameworkElement element, Rect r)
+        {
+            r = Physical(r);
+            Canvas.SetLeft(element, r.Left); Canvas.SetTop(element, r.Top);
+            element.Width = r.Width; element.Height = r.Height;
         }
 
         // Frosts whatever is behind the dock: a 1/4-size capture around the pane (with room for it to widen while
@@ -224,24 +286,38 @@ namespace OpenDock
         {
             if (!IsVisible || hide > 0.99 || bgR <= bgL) return;
             double d = App.Dpi, x0 = Math.Max(0, Math.Floor(bgL - magSlot)), x1 = Math.Min(W, Math.Ceiling(bgR + magSlot)), y0 = Math.Max(0, Math.Floor(bgTop - 8));
-            var shot = Glass.Behind((int)Math.Round((Left + x0) * d), (int)Math.Round((Top + y0) * d), (int)Math.Round((x1 - x0) * d), (int)Math.Round((H - y0) * d), 1, ref glassSum);
+            var area = Physical(new Rect(x0, y0, Math.Max(1, x1 - x0), Math.Max(1, H - y0)));
+            var shot = Glass.Behind((int)Math.Round((Left + area.Left) * d), (int)Math.Round((Top + area.Top) * d), (int)Math.Round(area.Width * d), (int)Math.Round(area.Height * d), 1, ref glassSum);
             // Nothing changed: check less and less often (down to once a second). A change brings back ~12 checks a second.
             if (shot == null) { glassTimer.Interval = TimeSpan.FromMilliseconds(Math.Min(1000, glassTimer.Interval.TotalMilliseconds * 1.5)); return; }
             glassTimer.Interval = TimeSpan.FromMilliseconds(80);
             wall.Source = shot;
-            wallX = x0; wallY = y0; wall.Width = x1 - x0; wall.Height = H - y0;
+            wallX = area.Left; wallY = area.Top; wall.Width = area.Width; wall.Height = area.Height;
             Canvas.SetLeft(wall, wallX); Canvas.SetTop(wall, wallY);
             StartLoop();   // re-clip to the pane at the new spot
         }
 
         public void OnFullScreen(bool fs)
         {
-            var fg = Native.GetForegroundWindow();
-            uint pid; Native.GetWindowThreadProcessId(fg, out pid);
-            string cls = Native.ClassName(fg);
-            if (fs && (pid == (uint)Process.GetCurrentProcess().Id || cls == "Progman" || cls == "WorkerW")) return;
-            Visibility = fs ? Visibility.Hidden : Visibility.Visible;
-            if (App.MenuBar != null && Settings.ShowMenuBar) App.MenuBar.Visibility = Visibility;
+            if (closed) return;
+            var target=MonitorBounds; Native.RECT actual;
+            if(Bar!=null&&!Bar.IsPlacing&&!repairingPlacement&&(monitor!=target||Native.GetWindowRect(new WindowInteropHelper(this).Handle,out actual)&&!target.Contains(DisplayLayout.Dip(actual))))
+            {
+                // A display reconnect or Explorer can relocate the native window without changing our assigned device.
+                repairingPlacement=true;
+                try { Bar.Remove(); Place(); }
+                finally { repairingPlacement=false; }
+            }
+            bool covered = Windows.FullscreenOn(Screen);
+            if (covered && IsVisible)
+            {
+                preview.Close2();
+                if (stack != null && stack.IsVisible) stack.Dismiss();
+                if (openMenu != null) openMenu.IsOpen = false;
+            }
+            Visibility = covered ? Visibility.Hidden : Visibility.Visible;
+            if (!covered) StartLoop();
+            if (App.MenuBar != null && Settings.ShowMenuBar && Screen.Device == DisplayLayout.Selected.Device) App.MenuBar.Visibility = Visibility;
         }
 
         public void BringToFront()
@@ -280,16 +356,19 @@ namespace OpenDock
             else
             {
                 it.Img = new Image();
-                it.Root.Child = it.Img;
+                var face=new Grid(); face.Children.Add(it.Img);
+                it.BadgeText=new TextBlock { Foreground=Brushes.White,FontSize=10,FontWeight=FontWeights.SemiBold,Margin=new Thickness(4,0,4,0) };
+                it.Badge=new Border { Child=it.BadgeText,Background=Theme.B("#E33A46"),CornerRadius=new CornerRadius(7),HorizontalAlignment=HorizontalAlignment.Right,VerticalAlignment=VerticalAlignment.Top,MinWidth=16,Visibility=Visibility.Collapsed,IsHitTestVisible=false };
+                face.Children.Add(it.Badge); it.Root.Child = face;
                 it.Dot = new Ellipse { Width = 4, Height = 4, Opacity = 0, IsHitTestVisible = false };
                 it.Dot.SetResourceReference(Shape.FillProperty, "Fg");
                 layer.Children.Add(it.Dot);
-                it.Root.MouseLeftButtonDown += (s, e) => { press = it; pressAt = e.GetPosition(this); it.Root.CaptureMouse(); it.Img.Opacity = 0.65; e.Handled = true; };
+                it.Root.MouseLeftButtonDown += (s, e) => { press = it; pressAt = Logical(e.GetPosition(this)); it.Root.CaptureMouse(); it.Img.Opacity = 0.65; e.Handled = true; };
                 it.Root.MouseMove += (s, e) =>
                 {
                     if (press != it) return;
-                    var p = e.GetPosition(this);
-                    if (drag == null && (p - pressAt).Length > 6 && it.Kind == "app") BeginDrag(it);
+                    var p = Logical(e.GetPosition(this));
+                    if (drag == null && (p - pressAt).Length > 6 && (it.Kind == "app" || it.Kind == "shelf")) BeginDrag(it);
                     if (drag == it) DragMove(p);
                 };
                 it.Root.MouseLeftButtonUp += (s, e) =>
@@ -298,7 +377,7 @@ namespace OpenDock
                     press = null;
                     it.Root.ReleaseMouseCapture();
                     it.Img.Opacity = 1;
-                    if (drag == it) EndDrag(e.GetPosition(this)); else Click(it);
+                    if (drag == it) EndDrag(Logical(e.GetPosition(this))); else Click(it);
                 };
                 it.Root.MouseRightButtonUp += (s, e) => { preview.Close2(); ShowMenu(it); e.Handled = true; };
                 it.Root.MouseUp += (s, e) => { if (e.ChangedButton == MouseButton.Middle) { OpenNew(it); e.Handled = true; } };
@@ -321,20 +400,26 @@ namespace OpenDock
 
         void LoadIcon(DockItem it)
         {
+            int version=++it.IconVersion;
+            Action<ImageSource> set=image=> { if(version==it.IconVersion) it.Img.Source=image; };
+            string custom=CustomIcons.Get(it.IconKey);
+            if(custom!=null) { Icons.Get(custom,true,set); return; }
             switch (it.Kind)
             {
                 case "finder": it.Img.Source = Art.Finder; break;
                 case "launchpad": it.Img.Source = Art.Launchpad; break;
                 case "stack": it.Img.Source = Art.Downloads; break;
+                case "shelf": it.Img.Source = Art.Shelf; break;
                 case "trash": trashFull = Launcher.TrashFull(); it.Img.Source = Art.Trash(trashFull); break;
-                default: Icons.Get(it.IconPath, true, img => it.Img.Source = img); break;
+                case "internal": it.Img.Source = it.RunKey == "opendock:settings" ? Art.Settings : Art.Computer; break;
+                default: Icons.Get(it.IconPath, true, set); break;
             }
         }
 
         void ReloadIcons()
         {
             Icons.ClearCache();
-            foreach (var it in items.Where(i => i.Kind == "app")) LoadIcon(it);
+            foreach (var it in items.Where(i => !i.IsSep)) LoadIcon(it);
         }
 
         void UpdateTrash()
@@ -342,7 +427,7 @@ namespace OpenDock
             bool full = Launcher.TrashFull();
             if (full == trashFull) return;
             trashFull = full;
-            trash.Img.Source = Art.Trash(full);
+            LoadIcon(trash);
         }
 
         public void Pin(AppEntry a)
@@ -357,12 +442,50 @@ namespace OpenDock
 
         int SepIndex() { return items.FindIndex(i => i.IsSep); }
         int PinIndex() { int i = items.FindIndex(x => x.Kind == "app" && !x.Pinned); return i < 0 ? SepIndex() : i; }
-        int FirstMovable() { return items.FindIndex(i => i.Kind != "finder" && i.Kind != "launchpad"); }
+        int FirstMovable() { return items.FindIndex(i => i.Kind != "finder" && i.Kind != "launchpad" && i.Kind != "shelf"); }
+
+        public void RefreshShelf()
+        {
+            if(closed) return;
+            var shelf=items.FirstOrDefault(i=>i.Kind=="shelf");
+            if(Workspace.Data.ShowShelf)
+            {
+                if(shelf==null) Add(new DockItem { Kind="shelf",Name="Shelf",P=1 },Math.Min(2,items.Count));
+                return;
+            }
+            if(shelf==null) return;
+            if(press==shelf) { shelf.Root.ReleaseMouseCapture(); press=null; }
+            if(drag==shelf) { drag=null; ghost.Hide(); }
+            if(hoverItem==shelf) hoverItem=null;
+            if(lastHot==shelf) lastHot=null;
+            if(labelItem==shelf) { labelItem=null; labelA=0; label.Opacity=0; }
+            if(dropHot==shelf) SetDropHot(null);
+            if(springItem==shelf) springItem=null;
+            preview.Close2(); if(openMenu!=null) openMenu.IsOpen=false;
+            layer.Children.Remove(shelf.Root); layer.Children.Remove(shelf.Dot); items.Remove(shelf); StartLoop();
+        }
 
         void SavePins()
         {
-            Settings.Pins = items.Where(i => i.Kind == "app" && i.Pinned).Select(i => i.Name + "|" + i.Target).ToList();
-            Settings.Save();
+            try
+            {
+                Workspace.SetPins(Device, items.Where(i => i.Kind == "app" && i.Pinned).Select(i => i.Name + "|" + i.Target).ToList());
+                Settings.Save(); App.SyncPins(this);
+            }
+            catch { RefreshPins(); App.SyncPins(this); throw; }
+        }
+
+        public void RefreshPins()
+        {
+            if (closed) return;
+            if (drag != null) { pinsNeedRefresh = true; return; }
+            pinsNeedRefresh = false;
+            foreach (var it in items.Where(i => i.Kind == "app").ToList())
+            {
+                layer.Children.Remove(it.Root); layer.Children.Remove(it.Dot); items.Remove(it);
+            }
+            foreach (var pin in Workspace.Pins(Device)) AddPin(pin, PinIndex());
+            Sync(App.Wins);
         }
 
         static readonly string[] Defaults = { "Microsoft Edge", "Google Chrome", "Firefox", "Brave", "Spotify", "Discord", "Steam", "WhatsApp", "Visual Studio Code", "Terminal", "Notepad", "Calculator", "Photos", "Settings" };
@@ -389,24 +512,35 @@ namespace OpenDock
 
         // ---------- running windows ----------
 
-        void Sync(List<WinInfo> wins)
+        public void RefreshBadges()
         {
+            foreach(var it in items.Where(i=>!i.IsSep))
+            {
+                string text=it.Kind=="shelf" && Workspace.Data.Shelf.Count>0 ? Workspace.Data.Shelf.Count.ToString() : it.Kind=="stack" && Living.Downloads>0 ? "↓"+Living.Downloads : it.Kind=="launchpad" ? Living.TimerText : it.Wins.Count>1 ? it.Wins.Count.ToString() : "";
+                if(Workspace.Restoring&&it.Kind=="finder") text="…";
+                it.BadgeText.Text=text; it.Badge.Visibility=Workspace.Data.LivingIcons&&text.Length>0?Visibility.Visible:Visibility.Collapsed;
+            }
+        }
+
+        public void Sync(List<WinInfo> wins)
+        {
+            if (closed) return;
             foreach (var it in items) it.Wins.Clear();
             var loose = new List<WinInfo>();
             foreach (var w in wins)
             {
-                var it = items.FirstOrDefault(i => i.Kind == "app" && i.Pinned && i.Matches(w)) ?? items.FirstOrDefault(i => i.Kind == "app" && !i.Pinned && i.Matches(w));
-                if (it != null) it.Wins.Add(w); else loose.Add(w);
+                var it = w.InternalKind == "shelf" ? items.FirstOrDefault(i=>i.Kind=="shelf") : w.InternalKind != null ? items.FirstOrDefault(i => i.Kind == "internal" && i.RunKey == w.Key)
+                    : items.FirstOrDefault(i => i.Kind == "app" && i.Pinned && i.Matches(w)) ?? items.FirstOrDefault(i => i.Kind == "app" && !i.Pinned && i.Matches(w));
+                if (it != null) it.Wins.Add(w); else if(w.InternalKind!="shelf") loose.Add(w);
             }
-            if (Settings.ShowRunning)
-                foreach (var g in loose.Where(w => w.Key != null).GroupBy(w => w.Key, StringComparer.OrdinalIgnoreCase))
-                {
-                    var it = NewRunning(g.First());
-                    it.Wins.AddRange(g);
-                    Add(it, SepIndex());
-                }
+            foreach (var g in loose.Where(w => w.Key != null && (Settings.ShowRunning || w.InternalKind != null)).GroupBy(w => w.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                var it = NewRunning(g.First());
+                it.Wins.AddRange(g);
+                Add(it, SepIndex());
+            }
             double now = clock.Elapsed.TotalSeconds;
-            foreach (var it in items.Where(i => i.Kind == "app"))
+            foreach (var it in items.Where(i => i.Kind == "app" || i.Kind == "internal"))
             {
                 if (it.Wins.Count > 0) it.GoneAt = -1;
                 else if (it.GoneAt < 0) it.GoneAt = now;
@@ -414,7 +548,7 @@ namespace OpenDock
                 if (!it.Pinned && it.PWant == 1 && it.Wins.Count == 0) WaitThenSync();
                 if (it.BounceT0 >= 0 && it.Wins.Count > 0 && !it.Attention) it.BounceStop = Math.Min(it.BounceStop, now);   // launched: stop bouncing
             }
-            StartLoop();
+            RefreshBadges(); StartLoop();
         }
 
         void WaitThenSync()
@@ -429,6 +563,8 @@ namespace OpenDock
 
         DockItem NewRunning(WinInfo w)
         {
+            if (w.InternalKind != null) return new DockItem { Kind = "internal", RunKey = w.Key,
+                Name = w.InternalKind == "settings" ? "System Settings" : w.InternalKind == "about" ? "About This PC" : "OpenDock Windows" };
             var it = new DockItem { RunKey = w.Key };
             var e = w.IsFrameHost ? Apps.ById(w.Aumid) : (Apps.ByExe(w.Exe) ?? (w.Aumid != null ? Apps.ById(w.Aumid) : null));
             if (e != null) { it.Name = e.Name; it.Target = e.Target; it.IconPath = e.Icon; }
@@ -460,6 +596,7 @@ namespace OpenDock
         {
             preview.Close2();
             if (it.Kind == "finder") { App.NewFinder(); return; }
+            if (it.Kind == "internal") { if (it.Wins.Count > 0) FocusApp(it); return; }
             if (it.Kind != "app") return;
             Launcher.Open(it.Target);
             it.BounceT0 = clock.Elapsed.TotalSeconds; it.BounceStop = it.BounceT0;   // one bounce
@@ -469,7 +606,7 @@ namespace OpenDock
         List<IntPtr> WindowsOf(DockItem it)
         {
             if (it.Kind == "finder") return App.Finders.Select(f => new WindowInteropHelper(f).Handle).ToList();
-            return it.Kind == "app" ? it.Wins.Select(w => w.Hwnd).ToList() : null;
+            return it.Kind == "app" || it.Kind == "internal" || it.Kind == "shelf" ? it.Wins.Select(w => w.Hwnd).ToList() : null;
         }
 
         // Hover a running app for a moment and its windows' live previews appear; moving to another running app
@@ -482,7 +619,7 @@ namespace OpenDock
             if (target != null)
             {
                 if (preview.Item != target && (preview.IsVisible || now - hoverSince > 0.55))
-                    preview.ShowFor(target, wins, target.Img.Source, new Point(Left + target.CX, Top + iconBase - slot * target.S));
+                    preview.ShowFor(target, wins, target.Img.Source, ScreenPoint(new Point(target.CX, iconBase - slot * target.S)), position, MonitorWorkArea);
                 return preview.Item != target;   // keep the loop running until it's shown
             }
             if (preview.IsVisible && !preview.MouseInside) preview.MaybeHide();
@@ -500,8 +637,10 @@ namespace OpenDock
                     else foreach (var f in App.Finders.ToList()) { if (f.WindowState == WindowState.Minimized) f.WindowState = WindowState.Normal; f.Activate(); }
                     break;
                 case "launchpad": App.ToggleLaunchpad(); break;
+                case "shelf": ShelfWindow.Open(); break;
                 case "stack": ToggleStack(it); break;
                 case "trash": Launcher.Shell("shell:RecycleBinFolder"); break;
+                case "internal": if (it.Wins.Count > 0) FocusApp(it); break;
                 default:
                     if (it.Wins.Count == 0) Launch(it, null);
                     else FocusApp(it);
@@ -538,7 +677,7 @@ namespace OpenDock
         {
             if (stack != null && stack.IsVisible) { stack.Dismiss(); return; }
             stack = new StackWindow(Launcher.Downloads, "Downloads");
-            stack.ShowAbove(new Point(Left + it.CX, Top + bgTop - 8));
+            stack.ShowAbove(ScreenPoint(new Point(it.CX, bgTop - 8)), position, MonitorWorkArea);
         }
 
         // ---------- menus ----------
@@ -555,6 +694,8 @@ namespace OpenDock
             cm.Items.Add(Item(Settings.Magnify ? "Turn Magnification Off" : "Turn Magnification On", () => { Settings.Magnify = !Settings.Magnify; Settings.Apply(); }));
             cm.Items.Add(Item(Settings.AutoHide ? "Turn Hiding Off" : "Turn Hiding On", () => { Settings.AutoHide = !Settings.AutoHide; Settings.Apply(); }));
             cm.Items.Add(new Separator());
+            cm.Items.Add(Item("Shelf…", ShelfWindow.Open));
+            cm.Items.Add(Item("Desktop Scenes & Dock Studio…", ()=>App.OpenSettings("Workspace")));
             cm.Items.Add(Item("Task Manager", () => Launcher.Shell("taskmgr.exe")));
             cm.Items.Add(Item("Dock Settings…", () => App.OpenSettings("Desktop & Dock")));
         }
@@ -562,7 +703,7 @@ namespace OpenDock
         void ShowMenu(DockItem it)
         {
             var cm = new ContextMenu();
-            if (it.Kind == "app" && it.Wins.Count > 0)
+            if ((it.Kind == "app" || it.Kind == "internal") && it.Wins.Count > 0)
             {
                 foreach (var w in it.Wins.Take(12))
                 {
@@ -573,6 +714,10 @@ namespace OpenDock
             }
             switch (it.Kind)
             {
+                case "internal":
+                    cm.Items.Add(Item("Hide", () => { foreach (var w in it.Wins) Native.ShowWindow(w.Hwnd, Native.SW_MINIMIZE); }));
+                    cm.Items.Add(Item("Close Windows", () => { foreach (var w in it.Wins) Native.PostMessage(w.Hwnd, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero); }));
+                    break;
                 case "app":
                     if (it.Wins.Count == 0) cm.Items.Add(Item("Open", () => Launch(it, null)));
                     var keep = Item("Keep in Dock", () =>
@@ -600,6 +745,10 @@ namespace OpenDock
                 case "launchpad":
                     cm.Items.Add(Item("Open Launchpad", App.ToggleLaunchpad));
                     break;
+                case "shelf":
+                    cm.Items.Add(Item("Open Shelf",ShelfWindow.Open)); cm.Items.Add(Item("Collect Clipboard",ShelfWindow.AddClipboard));
+                    cm.Items.Add(new Separator());
+                    cm.Items.Add(Item("Remove from Dock",()=>Workspace.SetShelfShown(false))); break;
                 case "stack":
                     cm.Items.Add(Item("Open", () => ToggleStack(it)));
                     cm.Items.Add(Item("Open in Finder", () => App.NewFinder(Launcher.Downloads)));
@@ -620,7 +769,11 @@ namespace OpenDock
             else
             {
                 cm.Placement = PlacementMode.Custom;
-                cm.CustomPopupPlacementCallback = (popup, t, o) => new[] { new CustomPopupPlacement(new Point((t.Width - popup.Width) / 2, -popup.Height + 10), PopupPrimaryAxis.Horizontal) };
+                cm.CustomPopupPlacementCallback = (popup, t, o) => new[] { new CustomPopupPlacement(
+                    position == 1 ? new Point(t.Width + 6, (t.Height - popup.Height) / 2)
+                    : position == 2 ? new Point(-popup.Width - 6, (t.Height - popup.Height) / 2)
+                    : new Point((t.Width - popup.Width) / 2, -popup.Height + 10),
+                    position == 0 ? PopupPrimaryAxis.Horizontal : PopupPrimaryAxis.Vertical) };
             }
             menuOpen = true;
             openMenu = cm;
@@ -640,11 +793,11 @@ namespace OpenDock
 
         void DragMove(Point p)
         {
-            ghost.MoveTo(new Point(Left + p.X, Top + p.Y));
+            ghost.MoveTo(ScreenPoint(p));
             dragOut = p.Y < bgTop - slot * 0.9;
-            ghost.ShowRemove(dragOut && drag.Pinned);
+            ghost.ShowRemove(dragOut && (drag.Pinned || drag.Kind=="shelf"));
             drag.PWant = dragOut ? 0 : 1;
-            if (dragOut) return;
+            if (dragOut || drag.Kind=="shelf") return;
             items.Remove(drag);
             int lo = FirstMovable(), hi = SepIndex(), at = lo;
             for (int i = lo; i < hi; i++) if (p.X > items[i].X) at = i + 1;
@@ -655,6 +808,16 @@ namespace OpenDock
         {
             var it = drag;
             drag = null;
+            if(it.Kind=="shelf")
+            {
+                if(dragOut)
+                {
+                    try { Workspace.SetShelfShown(false); ghost.Poof(); }
+                    catch { ghost.Hide(); it.PWant=1; dragOut=false; StartLoop(); throw; }
+                }
+                else { ghost.Hide(); it.PWant=1; }
+                dragOut=false; if(pinsNeedRefresh) RefreshPins(); StartLoop(); return;
+            }
             if (dragOut && it.Pinned)
             {
                 ghost.Poof();
@@ -670,6 +833,7 @@ namespace OpenDock
             }
             dragOut = false;
             SavePins();
+            if (pinsNeedRefresh) RefreshPins();
             StartLoop();
         }
 
@@ -711,8 +875,9 @@ namespace OpenDock
 
         void OnDragOver(object s, DragEventArgs e)
         {
+            App.Dock = this;
             e.Handled = true;
-            var at = HitItem(e.GetPosition(this));
+            var at = HitItem(Logical(e.GetPosition(this)));
             SpringLoad(at != null && (at.Kind == "app" || at.Kind == "finder") ? at : null);
             dropActive = true; hovering = true; StartLoop();
             if (!e.Data.GetDataPresent(DataFormats.FileDrop)) { e.Effects = DragDropEffects.None; return; }
@@ -725,7 +890,7 @@ namespace OpenDock
         {
             dropActive = false;
             var files = e.Data.GetData(DataFormats.FileDrop) as string[];
-            var p = e.GetPosition(this);
+            var p = Logical(e.GetPosition(this));
             var it = HitItem(p);
             SetDropHot(null);
             if (files == null || files.Length == 0) return;
@@ -743,7 +908,25 @@ namespace OpenDock
                 App.QueueRefresh();
             }
             else if (it.Kind == "trash") { Launcher.Recycle(files); UpdateTrash(); }
+            else if (it.Kind == "shelf") { foreach(var file in files) Shelf.Add("file",file); ShelfWindow.Open(); }
             else if (it.Kind == "finder") foreach (var f in files) App.ShowInFinder(f);
+            else if (it.Kind == "app" && it.Wins.Count>1)
+            {
+                var menu=new ContextMenu();
+                foreach(var value in it.Wins)
+                {
+                    var target=value;
+                    menu.Items.Add(Item(((Native.GetWindowLong(target.Hwnd,Native.GWL_EXSTYLE)&0x10)!=0?"Send files to: ":"Activate & copy for: ")+(target.Title.Length>60?target.Title.Substring(0,60)+"…":target.Title),()=>
+                    {
+                        if(Shelf.Deliver(target.Hwnd,files)) return;
+                        foreach(var file in files) Shelf.Add("file",file);
+                        var paths=new System.Collections.Specialized.StringCollection(); paths.AddRange(files); Clipboard.SetFileDropList(paths);
+                        Workspace.Status="Selected window activated. Files are copied and stored in Shelf; paste or drag them into apps that do not accept Windows file-drop messages.";
+                        Native.Activate(target.Hwnd);
+                    }));
+                }
+                OpenMenu(menu,it.Root,false);
+            }
             else if (it.Kind == "app") Launch(it, Launcher.Quote(files));
         }
 
@@ -751,7 +934,7 @@ namespace OpenDock
 
         void StartLoop()
         {
-            if (looping) return;
+            if (closed || looping) return;
             looping = true;
             last = clock.Elapsed.TotalSeconds;
             CompositionTarget.Rendering += Frame;
@@ -789,7 +972,7 @@ namespace OpenDock
         Point CursorPos()
         {
             Native.POINT p; Native.GetCursorPos(out p);
-            return new Point(p.X / App.Dpi - Left, p.Y / App.Dpi - Top);
+            return Logical(new Point(p.X / App.Dpi - Left, p.Y / App.Dpi - Top));
         }
 
         void Frame(object sender, EventArgs e)
@@ -824,9 +1007,15 @@ namespace OpenDock
                 }
             }
 
-            // resting layout, eased so inserts / removals / reorders slide
-            // Each icon is followed by the spacing setting, which grows and shrinks with the icon's presence.
-            double sp = Settings.DockSpacing, total = items.Sum(i => BaseW(i) + sp * i.P) - (items.Count > 0 ? sp * items[items.Count - 1].P : 0);
+            // Fit even a crowded vertical dock, including the extra room needed for magnification.
+            double requested = Math.Max(36, Math.Min(96, Settings.IconSize));
+            double requestedMag = Settings.Magnify ? Math.Max(Math.Min(160, Settings.MagnifySize), requested) : requested;
+            double units = items.Sum(i => (i.IsSep ? 0.34 : 1) * i.P);
+            double gaps = Math.Max(0, items.Sum(i => i.P) - 1);
+            double fit = DisplayLayout.FitScale(W, requested * units + Settings.DockSpacing * gaps, (requestedMag - requested) * 2.6);
+            slot = requested * fit; magSlot = requestedMag * fit;
+            // Each gap grows and shrinks with its icon's presence.
+            double sp = Settings.DockSpacing * fit, total = items.Sum(i => BaseW(i) + sp * i.P) - (items.Count > 0 ? sp * items[items.Count - 1].P : 0);
             double x = (W - total) / 2, k = 1 - Math.Exp(-dt * 18);
             foreach (var it in items)
             {
@@ -844,13 +1033,14 @@ namespace OpenDock
             bgR = Rr + A * Shift(Rr - mx, R) + pad;
             bgTop = bottom - bgH;
             double radius = bgH * 0.29;
-            Canvas.SetLeft(bg, bgL); Canvas.SetTop(bg, bgTop);
-            bg.Width = Math.Max(0, bgR - bgL); bg.Height = bgH;
+            SetRect(bg, new Rect(bgL, bgTop, Math.Max(0, bgR - bgL), bgH));
             bg.CornerRadius = new CornerRadius(radius);
             sheen.CornerRadius = new CornerRadius(Math.Max(0, radius - 1));
-            Canvas.SetLeft(outline, bgL - 1); Canvas.SetTop(outline, bgTop - 1);
-            outline.Width = bg.Width + 2; outline.Height = bgH + 2; outline.CornerRadius = new CornerRadius(radius + 1);
-            wallClip.Rect = new Rect(bgL - wallX, bgTop - wallY, Math.Max(0, bgR - bgL), bgH);
+            SetRect(outline, new Rect(bgL - 1, bgTop - 1, Math.Max(0, bgR - bgL) + 2, bgH + 2));
+            outline.CornerRadius = new CornerRadius(radius + 1);
+            var paneRect = Physical(new Rect(bgL, bgTop, Math.Max(0, bgR - bgL), bgH));
+            paneRect.Offset(-wallX, -wallY);
+            wallClip.Rect = paneRect;
             wallClip.RadiusX = wallClip.RadiusY = radius;
 
             foreach (var it in items)
@@ -860,8 +1050,10 @@ namespace OpenDock
                 if (it.IsSep)
                 {
                     it.Root.Opacity = it.P;
-                    Canvas.SetLeft(it.Root, it.CX - it.Root.Width / 2);
-                    Canvas.SetTop(it.Root, bgTop + (bgH - it.Root.Height) / 2);
+                    double sepW = slot * 0.34, sepH = slot * 0.62;
+                    SetRect(it.Root, new Rect(it.CX - sepW / 2, bgTop + (bgH - sepH) / 2, sepW, sepH));
+                    var line = (Rectangle)it.Root.Child;
+                    line.Width = position == 0 ? 1 : sepH; line.Height = position == 0 ? sepH : 1;
                     continue;
                 }
                 double bounce = 0;
@@ -875,11 +1067,10 @@ namespace OpenDock
                 }
                 it.Scale.ScaleX = it.Scale.ScaleY = it.S * it.P;
                 it.Root.Opacity = it == drag ? 0 : 1;
-                Canvas.SetLeft(it.Root, it.CX - slot / 2);
-                Canvas.SetTop(it.Root, iconBase - slot - bounce);
+                SetRect(it.Root, new Rect(it.CX - slot / 2, iconBase - slot - bounce, slot, slot));
                 busy |= Approach(ref it.DotA, Settings.Indicators && it.Running ? 1 : 0, 6);
                 it.Dot.Opacity = it.DotA * it.P * 0.85;
-                Canvas.SetLeft(it.Dot, it.CX - 2); Canvas.SetTop(it.Dot, bottom - 6.5);
+                SetRect(it.Dot, new Rect(it.CX - 2, bottom - 6.5, 4, 4));
             }
 
             DockItem hot = null;
@@ -896,8 +1087,9 @@ namespace OpenDock
             {
                 label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
                 double lw = label.DesiredSize.Width, lh = label.DesiredSize.Height;
-                Canvas.SetLeft(label, Math.Max(4, Math.Min(W - lw - 4, labelItem.CX - lw / 2)));
-                Canvas.SetTop(label, iconBase - slot * labelItem.S - lh - 4);
+                var anchor = ToWindow(new Point(labelItem.CX, iconBase - slot * labelItem.S));
+                var at = DisplayLayout.Beside(anchor, new Size(lw, lh), position, new Rect(0, 0, Width, Height));
+                Canvas.SetLeft(label, at.X); Canvas.SetTop(label, at.Y);
             }
 
             if (!busy && !hovering && drag == null && !dropActive && !menuOpen)
@@ -1034,13 +1226,12 @@ namespace OpenDock
             SourceInitialized += delegate { Native.MakeToolWindow(new WindowInteropHelper(this).Handle, false); };
         }
 
-        public void ShowAbove(Point anchor)
+        public void ShowAbove(Point anchor, int position, Rect area)
         {
             Show();
             UpdateLayout();
-            Left = anchor.X - ActualWidth / 2;
-            Top = anchor.Y - ActualHeight + 30;
-            Left = Math.Max(0, Math.Min(SystemParameters.PrimaryScreenWidth - ActualWidth, Left));
+            var at = DisplayLayout.Beside(anchor, new Size(ActualWidth, ActualHeight), position, area);
+            Left = at.X; Top = at.Y;
             // frosted glass: blur what's behind the panel (the window is still fully transparent here)
             double w = panel.ActualWidth, h = panel.ActualHeight, dpi = App.Dpi;
             var shot = Icons.CaptureScreen((int)((Left + panel.Margin.Left) * dpi), (int)((Top + panel.Margin.Top) * dpi), (int)(w * dpi), (int)(h * dpi));

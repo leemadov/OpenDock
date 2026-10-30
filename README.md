@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/github/license/leemadov/OpenDock)](LICENSE)
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
 
-A free, open-source macOS-style desktop for Windows 10/11, inspired by MyDockFinder. It's a single ~250 KB executable: no installer, no runtime to download and no SDK needed to build it.
+A free, open-source macOS-style desktop for Windows 10/11, inspired by MyDockFinder. It's a single executable: no installer, no runtime to download and no SDK needed to build it.
 
 ![OpenDock demo: dock magnification, Launchpad and Spotlight](docs/demo.gif)
 
@@ -12,10 +12,14 @@ Run `OpenDock.exe` and the dock and menu bar appear. Quit from the logo menu in 
 ## Why OpenDock?
 
 - **Free and open source** (MIT). There's no paid version and nothing is locked.
-- **Tiny and light.** A ~250 KB exe that uses almost no CPU when idle. The animation loop only runs while something is moving, and if it ever hangs, it restarts itself.
+- **Small and self-contained.** The animation loop runs while something is moving, status badges use a lightweight timer, and download activity is checked in the background. A watchdog restarts the app if it hangs.
 - **The whole macOS look, not just a dock:** a menu bar, Launchpad, Spotlight, Finder and Stacks.
 - **Nothing to install.** It runs on the .NET Framework that ships with Windows, and building it only needs `build.bat`.
 - **Hackable.** Plain C#, with one file per feature. See [How it's built](#how-its-built).
+
+## Workspace feature preview
+
+Desktop Scenes, the Shelf, local desktop commands, independent monitor pins, living status badges, Finder tabs/split view, Dock Studio previews/custom icons, and verified update/rollback controls are available in v0.3.0-preview.1. Open **Desktop Scenes & Dock Studio** from the logo menu or dock context menu. See [Workspace guide](docs/WORKSPACE.md) for controls and limits.
 
 ## Features
 
@@ -26,11 +30,15 @@ Run `OpenDock.exe` and the dock and menu bar appear. Quit from the logo menu in 
 - Drop files onto an app to open them with it, onto the Trash to delete them, or onto empty space to pin them
 - **Drag between windows**: hold anything you are dragging (files, text, links) over a running app's icon and its window comes to the front, so you can drop into it. This is macOS spring-loading, and it stands in for the Windows taskbar's drag-hover
 - Open apps that aren't pinned show up automatically (Store apps included)
+- OpenDock's own Settings and About This PC windows appear on every dock with dedicated gear/computer icons. Click to minimize or restore; right-click to select, hide or close their windows. Finder keeps its existing icon, and transient popups/dialogs stay out of the dock
 - Right-click an icon to see its open windows plus Keep in Dock, Show in Finder, Hide and Quit
 - Downloads stack: a grid of your recent downloads with thumbnails
 - Trash shows when it's empty or full and can be emptied from the dock
-- **Live frosted glass**: whatever is behind the dock (your wallpaper, or a window you drag past it) shows through, lightly blurred. Space is reserved so maximized windows stop above the dock. OpenDock keeps itself out of screen capture so it can read what is behind it, and redraws only when that changes. One side effect: screenshots and screen recordings show what is behind the dock instead of the dock
+- **Live frosted glass** by default: the original blur samples the windows behind the dock, Finder, Settings and menus. Sampling windows can disappear from screenshots and recordings. Turn **Live glass** off in Desktop & Dock to use a blurred wallpaper backdrop that remains visible in capture
+- **Bottom, left or right** placement, with upright icons, inward magnification and bouncing, edge auto-hide, drag to reorder/remove, menus, previews and Downloads. Crowded docks shrink to fit the screen, including magnification
+- **A Dock on every display** by default, with shared pinned apps and running-app indicators. Desktop & Dock can switch back to a single selected display; the menu bar uses the selected display. Previews, Downloads, Launchpad, Spotlight and new Finder windows follow the dock you use. Display changes add/remove docks and release their reserved space
 - Auto-hide with a slide animation
+- Fullscreen hiding follows each monitor's front window, so fullscreen video stays unobstructed while another monitor has keyboard focus
 
 **Menu bar**
 - The bold name of the active app, plus File / Edit / View / Window / Help menus that send the matching shortcuts to that app
@@ -45,7 +53,7 @@ Run `OpenDock.exe` and the dock and menu bar appear. Quit from the logo menu in 
 
 **Spotlight** (`Alt+Space`): search apps, files (through the Windows Search index) and math (`12*7+3`), or fall back to a web search. `Ctrl+Enter` shows the selected result in Finder.
 
-**Finder**: a file browser with traffic-light buttons, a sidebar (Applications, Desktop, Documents, Downloads, drives and so on), image and video thumbnails, back/forward, a filter box, drag and drop (including onto sidebar folders and Trash), copy/paste, Move to Trash, Get Info and New Folder.
+**Finder**: a file browser with an editable folder path bar (Ctrl+L, Enter to navigate, Escape to cancel), traffic-light buttons, a sidebar (Applications, Desktop, Documents, Downloads, drives and so on), image and video thumbnails, back/forward, a filter box, drag and drop (including onto sidebar folders and Trash), copy/paste, Move to Trash, Get Info and New Folder. Toggle icons/list with the toolbar button or `Ctrl+1` / `Ctrl+2`; list view shows name, size, kind and modification date. Rename a selected file or folder with `F2` or **Rename…** in its context menu. Renaming validates Windows filenames and never overwrites an existing destination. Finder and Settings stay open when you switch to another app, including on another monitor; minimize them explicitly when wanted.
 
 **System Settings**: a macOS-style window with a sidebar and a real page for each category, so nothing sends you to the Windows Settings app. It covers Wi-Fi, Bluetooth, Network, Notifications, Sound, Displays, Wallpaper, Battery, Lock Screen, Privacy, Users, Keyboard, Mouse and Printers, plus OpenDock's own pages: Desktop & Dock (icon size, magnification, spacing between apps, auto-hide, animations, indicators), Appearance (Light, Dark or follow Windows) and Control Center (menu bar height). **Displays** also has **color profiles** (Standard, Vivid, OLED, Studio, Cinema, Night, Grayscale, or your own mix) that tint everything on screen while OpenDock runs. The **Wallpaper** page keeps a library: photos you add stay until you remove them. **About This PC** (logo menu) copies macOS's About This Mac.
 
@@ -56,7 +64,7 @@ build.bat
 bin\OpenDock.exe
 ```
 
-`build.bat` uses the C# compiler that ships with Windows (.NET Framework 4.8), so there's nothing to install. `build.bat check` runs the self-checks in `tests/`.
+`build.bat` uses the C# compiler that ships with Windows (.NET Framework 4.8), so there's nothing to install. `build.bat check` runs the self-checks in `tests/`. `build.bat check --ui` additionally runs opt-in desktop integration checks and writes UI snapshots to `bin/qa/`; `build.bat check --preview` keeps the isolated test windows open for inspection. See [Testing](docs/TESTING.md) for coverage and hardware checks.
 
 - Quit from the menu bar logo menu with **Quit OpenDock**, or run `OpenDock.exe --quit`.
 - Settings live in `%APPDATA%\OpenDock\settings.txt` and errors are written to `error.log` in the same folder.
@@ -74,7 +82,8 @@ Plain WPF written in code, one file per feature, in `src/`:
 | File | What |
 |---|---|
 | `Dock.cs` | dock, drag ghost and poof, Downloads stack |
-| `Preview.cs` | live window previews above a dock icon |
+| `Preview.cs` | live window previews beside a dock icon |
+| `DisplayLayout.cs` | selected display, coordinate conversion, edge placement and popup bounds |
 | `MenuBar.cs` | menu bar |
 | `Launchpad.cs`, `Spotlight.cs` | full-screen app grid, search panel |
 | `Finder.cs` | Finder window, the shared mac window chrome, the System Settings window |
@@ -86,12 +95,16 @@ Plain WPF written in code, one file per feature, in `src/`:
 | `Theme.cs`, `Art.cs` | light/dark palette and control templates, built-in vector icons |
 | `Native.cs` | Win32 interop |
 
-The blur doesn't use undocumented DWM APIs. The dock is excluded from screen capture (`SetWindowDisplayAffinity`), captures the strip behind itself at quarter size about 12 times a second and box-blurs it, only when the picture changed. On Windows older than 10 version 2004 it falls back to a blurred copy of the wallpaper. Launchpad, Spotlight and Stacks blur a snapshot of the screen taken as they open. The animation loop only runs while something is moving, so apart from the glass check the app does no work when idle.
+The blur uses the original capture-based implementation, with live glass enabled by default. It uses `SetWindowDisplayAffinity` to avoid capturing itself, samples at quarter size about 12 times a second, and box-blurs only when the picture changes. Sampling windows can therefore disappear from screenshots and recordings. Turning Live glass off uses wallpaper frost without a capture loop or capture exclusion. Wallpaper frost is also the fallback when capture exclusion is unavailable. Launchpad, Spotlight and Stacks blur an opening snapshot. The animation loop only runs while something is moving.
+
+The experimental v0.2.0-preview.1 update was withdrawn after a glass regression. The glass renderer uses the v0.1.2-preview.2 implementation, with its original live-glass default. The restored installed version was confirmed working before the Workspace features were added. The withdrawn implementation remains recoverable in Git history.
+
+Display geometry uses the app's existing system-DPI WPF coordinate space, including negative screen origins. A dock is created on each connected display by default. Each HWND is initially created on its target display before registering its appbar, so Explorer reserves space on the correct monitor. Closed docks release appbars, timers, event subscriptions and popup windows. The menu bar remains on the selected display; per-monitor DPI awareness is not enabled.
 
 ## Not done yet
 
-The genie minimize effect, window previews on hover, multiple monitors, a dock on the left or right edge, list view and rename in Finder, and per-app icon themes. Pull requests are welcome.
+The genie minimize effect and packaged icon-theme collections. Individual managed custom icons are available in Dock Studio. Pull requests are welcome.
 
 ## License
 
-MIT. OpenDock isn't affiliated with Apple or MyDockFinder, and all of its icons are original vector drawings.
+MIT. OpenDock isn't affiliated with Microsoft, Apple or MyDockFinder. The Windows mark belongs to Microsoft; the other built-in icons are original vector drawings.

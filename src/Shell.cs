@@ -28,6 +28,7 @@ namespace OpenDock
 
         public static void Start()
         {
+            if(Ui!=null) return;
             Ui = Dispatcher.CurrentDispatcher;
             var t = new Thread(() => { foreach (var a in queue.GetConsumingEnumerable()) { try { a(); } catch (Exception ex) { Debug.WriteLine(ex); } } });
             t.SetApartmentState(ApartmentState.STA);
@@ -45,20 +46,21 @@ namespace OpenDock
             if (string.IsNullOrEmpty(path)) return;
             key = (key ?? path) + "|" + size + "|" + (tile ? (Settings.IconTiles ? (Theme.Dark ? "d" : "l") : "s") : "");
             ImageSource img;
-            if (cache.TryGetValue(key, out img)) { done(img); return; }
+            if (cache.TryGetValue(key, out img)) { try { done(img); } catch(Exception ex) { App.Log(ex); } return; }
             List<Action<ImageSource>> waiting;
             if (pending.TryGetValue(key, out waiting)) { waiting.Add(done); return; }
             pending[key] = new List<Action<ImageSource>> { done };
             bool tiles = Settings.IconTiles, dark = Theme.Dark;
             queue.Add(() =>
             {
-                BitmapSource raw = Load(path, size);
-                ImageSource result = raw != null && tile ? Compose(raw, tiles, dark, size) : raw;
+                ImageSource result=null;
+                try { BitmapSource raw=Load(path,size); result=raw!=null&&tile?Compose(raw,tiles,dark,size):raw; }
+                catch(Exception ex) { App.Log(ex); }
                 Ui.BeginInvoke(new Action(() =>
                 {
                     if (keep && result != null) cache[key] = result;
                     var list = pending[key]; pending.Remove(key);
-                    if (result != null) foreach (var cb in list) cb(result);
+                    if (result != null) foreach (var cb in list) try { cb(result); } catch(Exception ex) { App.Log(ex); }
                 }));
             });
         }
@@ -437,22 +439,42 @@ namespace OpenDock
 
     class WinInfo
     {
-        public IntPtr Hwnd; public uint Pid; public string Title, Exe, Aumid;
+        public IntPtr Hwnd; public uint Pid; public string Title, Exe, Aumid, InternalKind;
         // Store apps all live in ApplicationFrameHost, so they're told apart by AppUserModelID.
-        public string Key { get { return !string.IsNullOrEmpty(Aumid) && IsFrameHost ? Aumid : Exe; } }
+        public string Key { get { return InternalKind != null ? "opendock:" + InternalKind : !string.IsNullOrEmpty(Aumid) && IsFrameHost ? Aumid : Exe; } }
         public bool IsFrameHost { get { return Exe != null && Exe.EndsWith("ApplicationFrameHost.exe", StringComparison.OrdinalIgnoreCase); } }
     }
 
     static class Windows
     {
-        static readonly Dictionary<uint, string> exeByPid = new Dictionary<uint, string>();
         static readonly Dictionary<IntPtr, string> aumidByHwnd = new Dictionary<IntPtr, string>();
         static readonly HashSet<string> shellClasses = new HashSet<string> { "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow" };
         static readonly uint myPid = (uint)Process.GetCurrentProcess().Id;
 
+        public static bool FullscreenOn(Sys.Display screen)
+        {
+            bool fullscreen = false;
+            // EnumWindows walks front to back. Only the front application on this monitor matters,
+            // even when keyboard focus is on a different monitor.
+            Native.EnumWindows((h, l) =>
+            {
+                if (!Native.IsWindowVisible(h) || Native.IsIconic(h) || Native.IsCloaked(h) || Native.GetWindowTextLength(h) == 0) return true;
+                int ex = Native.GetWindowLong(h, Native.GWL_EXSTYLE);
+                if ((ex & (Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE)) != 0 || shellClasses.Contains(Native.ClassName(h))) return true;
+                if (Native.MonitorFromWindow(h, 2) != screen.Monitor) return true;
+                Native.RECT r; var b = screen.Bounds;
+                if (!Native.GetWindowRect(h, out r)) return true;
+                bool caption = (Native.GetWindowLong(h, Native.GWL_STYLE) & 0x00C00000) != 0;
+                fullscreen = !(caption && Native.IsZoomed(h)) && r.Left <= b.Left && r.Top <= b.Top && r.Right >= b.Right && r.Bottom >= b.Bottom;
+                return false;
+            }, IntPtr.Zero);
+            return fullscreen;
+        }
+
         // Same rules Alt+Tab uses: visible, unowned, not a tool window, not cloaked.
         public static List<WinInfo> Enumerate()
         {
+            var exeByPid=new Dictionary<uint,string>();
             var list = new List<WinInfo>();
             var seen = new HashSet<IntPtr>();
             Native.EnumWindows((h, l) =>
@@ -474,17 +496,19 @@ namespace OpenDock
                 list.Add(new WinInfo { Hwnd = h, Pid = pid, Title = Native.WindowText(h), Exe = exe, Aumid = aumid });
                 return true;
             }, IntPtr.Zero);
+            // Include our document/settings windows explicitly; dock canvases, menus, overlays and owned dialogs stay out.
+            if (Application.Current != null)
+                foreach (var window in Application.Current.Windows.OfType<MacWindow>().Where(w => !(w is FinderWindow) && w.Owner == null && w.IsVisible))
+                    list.Add(new WinInfo { Hwnd = new WindowInteropHelper(window).Handle, Pid = myPid, Title = window.Title,
+                        InternalKind = window is SettingsWindow ? "settings" : window is AboutWindow ? "about" : window is ShelfWindow ? "shelf" : "window" });
             foreach (var h in aumidByHwnd.Keys.Where(k => !seen.Contains(k)).ToList()) aumidByHwnd.Remove(h);
-            if (exeByPid.Count > 500) exeByPid.Clear();
             return list;
         }
 
         public static string ExeOf(IntPtr h)
         {
             uint pid; Native.GetWindowThreadProcessId(h, out pid);
-            string exe;
-            if (!exeByPid.TryGetValue(pid, out exe)) exeByPid[pid] = exe = Native.ProcessPath(pid);
-            return exe;
+            return Native.ProcessPath(pid);
         }
     }
 
@@ -509,7 +533,7 @@ namespace OpenDock
 
         public static void Shell(string uri) { try { Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true }); } catch { } }
 
-        public static string Quote(IEnumerable<string> files) { return string.Join(" ", files.Select(f => "\"" + f + "\"")); }
+        public static string Quote(IEnumerable<string> files) { return string.Join(" ", files.Select(f => "\"" + f + new string('\\',f.Length-f.TrimEnd('\\').Length) + "\"")); }
 
         public static void Recycle(IEnumerable<string> paths)
         {

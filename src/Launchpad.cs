@@ -30,7 +30,7 @@ namespace OpenDock
         const int Cols = 7, Rows = 5;
         double W, H;
         int page, pages;
-        bool stale = true;
+        bool stale = true, closed;
         Point? pressAt; AppEntry pressedApp; Image pressedImg; bool swiping;
         DateTime lastWheel;
 
@@ -80,23 +80,27 @@ namespace OpenDock
             root.PreviewMouseLeftButtonDown += OnDown;
             root.PreviewMouseMove += OnMove;
             root.PreviewMouseLeftButtonUp += OnUp;
+            root.LostMouseCapture+=delegate { if(pressAt!=null) ResetGesture(); };
             SourceInitialized += delegate
             {
                 var h = new WindowInteropHelper(this).Handle;
                 Native.MakeToolWindow(h, false);
                 int pref = 1; Native.DwmSetWindowAttribute(h, 33 /* corner preference: don't round */, ref pref, 4);
             };
-            Apps.Changed += delegate { stale = true; if (IsOpen) Build(); };
-            Settings.Changed += delegate { stale = true; };
-            Theme.Changed += delegate { stale = true; };
+            Action appsChanged=delegate { stale=true; if(IsOpen) Build(); };
+            Action invalidate=delegate { stale=true; };
+            Apps.Changed+=appsChanged; Settings.Changed+=invalidate; Theme.Changed+=invalidate;
+            Closed+=delegate { closed=true; IsOpen=false; ResetGesture(); Apps.Changed-=appsChanged; Settings.Changed-=invalidate; Theme.Changed-=invalidate; };
         }
 
         public void Open()
         {
             if (IsOpen) return;
-            W = SystemParameters.PrimaryScreenWidth; H = SystemParameters.PrimaryScreenHeight;
-            Left = 0; Top = 0; Width = W; Height = H;
-            var shot = Icons.CaptureScreen(0, 0, (int)Math.Round(W * App.Dpi), (int)Math.Round(H * App.Dpi));
+            ResetGesture();
+            var bounds = DisplayLayout.ActiveBounds;
+            W = bounds.Width; H = bounds.Height;
+            Left = bounds.Left; Top = bounds.Top; Width = W; Height = H;
+            var shot = Icons.CaptureScreen((int)Math.Round(Left * App.Dpi), (int)Math.Round(Top * App.Dpi), (int)Math.Round(W * App.Dpi), (int)Math.Round(H * App.Dpi));
             sharp.Source = shot;
             blurred.Source = Icons.Blur(shot, (int)(W / 5), (int)(H / 5), 7);
             if (search.Text.Length > 0) { search.Text = ""; stale = true; }
@@ -123,6 +127,7 @@ namespace OpenDock
         {
             if (!IsOpen) return;
             IsOpen = false;
+            ResetGesture();
             if (launch != null) Launcher.Open(launch.Target);
             else if (refocus && App.LastForeground != IntPtr.Zero && Native.IsWindow(App.LastForeground)) Native.Activate(App.LastForeground);
             var d = TimeSpan.FromMilliseconds(240);
@@ -132,11 +137,21 @@ namespace OpenDock
             zoom.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1.08, d) { EasingFunction = ease });
             zoom.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1.08, d) { EasingFunction = ease });
             var fade = new DoubleAnimation(0, d);
-            fade.Completed += delegate { if (!IsOpen) { Hide(); sharp.Source = blurred.Source = null; } };
+            fade.Completed += delegate { if (!closed&&!IsOpen) { Hide(); sharp.Source = blurred.Source = null; } };
             content.BeginAnimation(OpacityProperty, fade);
         }
 
         public void Invalidate() { stale = true; }
+
+        void ResetGesture()
+        {
+            bool wasSwiping=swiping;
+            pressAt=null; swiping=false; pressedApp=null;
+            if(pressedImg!=null) pressedImg.Opacity=1; pressedImg=null;
+            var captured=Mouse.Captured as DependencyObject;
+            if(captured!=null&&Window.GetWindow(captured)==this) Mouse.Capture(null);
+            if(wasSwiping&&IsOpen&&!closed) Go(page);
+        }
 
         void Build()
         {
@@ -174,7 +189,7 @@ namespace OpenDock
         FrameworkElement Tile(AppEntry a, double size, double cellW)
         {
             var img = new Image { Width = size, Height = size, Opacity = 0 };
-            Icons.Get(a.Icon, true, s => { img.Source = s; img.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(180))); }, 192);
+            Icons.Get(CustomIcons.Get(a.Target) ?? a.Icon, true, s => { img.Source = s; img.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(180))); }, 192);
             var name = new TextBlock
             {
                 Text = a.Name, Foreground = Brushes.White, FontSize = 13, TextAlignment = TextAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis,

@@ -9,8 +9,8 @@ using System.Windows.Threading;
 
 namespace OpenDock
 {
-    // Frosted glass for OpenDock's own windows and menus: each one is left out of screen capture, so a capture of
-    // its area shows what is behind it, which is shrunk, blurred and painted under a translucent tint.
+    // Original live desktop sampling. Windows must exclude the sampling window from capture to avoid
+    // recursively capturing its own pixels. Turning Live glass off uses capture-safe wallpaper frost.
     static class Glass
     {
         const uint ExcludeFromCapture = 0x11;   // WDA_EXCLUDEFROMCAPTURE, Windows 10 2004+
@@ -33,30 +33,36 @@ namespace OpenDock
             return b;
         }
 
-        public static bool Exclude(IntPtr hwnd) { return Native.SetWindowDisplayAffinity(hwnd, ExcludeFromCapture); }
+        public static bool Exclude(IntPtr hwnd)
+        {
+            bool ok = Native.SetWindowDisplayAffinity(hwnd, Settings.LiveGlass ? ExcludeFromCapture : 0);
+            return Settings.LiveGlass && ok;
+        }
+
+        public static Brush WallpaperPane(Brush tint) { return Pane(Wallpaper.Blurred, tint); }
 
         static Brush Pane(ImageSource img, Brush tint)
         {
             var r = new Rect(0, 0, 1, 1);
             var g = new DrawingGroup();
-            g.Children.Add(new ImageDrawing(img, r));
+            if (img != null) g.Children.Add(new ImageDrawing(img, r));
             g.Children.Add(new GeometryDrawing(tint, null, new RectangleGeometry(r)));
             var b = new DrawingBrush(g) { Stretch = Stretch.Fill };
             b.Freeze();
             return b;
         }
 
-        // Windows (Finder, Settings, previews): live like the dock. Redrawn on every move or resize (so the glass
-        // stays put under the window while you drag it), otherwise checked ~12 times a second, backing off to ~3 a
-        // second while nothing behind changes. Without capture exclusion (older Windows) the window keeps its plain
-        // background.
+        // Wallpaper frost costs no capture loop. Optional live sampling redraws on moves and resizes,
+        // and backs off while idle. Never sample our own window if capture exclusion failed.
         public static void Attach(Window w, string tintKey)
         {
             long sum = 0;
+            bool live = false;
             var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
             var since = System.Diagnostics.Stopwatch.StartNew();
             Action update = delegate
             {
+                if (!live) return;
                 if (!w.IsVisible || w.WindowState == WindowState.Minimized) { t.Interval = TimeSpan.FromMilliseconds(300); return; }
                 since.Restart();
                 Native.RECT rc;
@@ -68,14 +74,24 @@ namespace OpenDock
             };
             // Moves arrive faster than the screen refreshes; one redraw per ~frame is enough.
             EventHandler moved = delegate { if (since.ElapsedMilliseconds >= 12) update(); };
-            Action retint = delegate { sum = 0; };
+            Action configure = delegate
+            {
+                var hwnd = new WindowInteropHelper(w).Handle;
+                if (hwnd == IntPtr.Zero) return;
+                live = Exclude(hwnd);
+                sum = 0;
+                if (live) { t.Start(); update(); }
+                else { t.Stop(); w.Background = WallpaperPane((Brush)w.FindResource(tintKey)); }
+            };
             t.Tick += delegate { update(); };
-            w.SourceInitialized += delegate { if (Exclude(new WindowInteropHelper(w).Handle)) t.Start(); };
+            w.SourceInitialized += delegate { configure(); };
             w.LocationChanged += moved;
             w.SizeChanged += delegate { moved(w, EventArgs.Empty); };
             w.IsVisibleChanged += delegate { t.Interval = TimeSpan.FromMilliseconds(80); };
-            Theme.Changed += retint;
-            w.Closed += delegate { t.Stop(); Theme.Changed -= retint; };
+            Theme.Changed += configure;
+            Settings.Changed += configure;
+            Wallpaper.Changed += configure;
+            w.Closed += delegate { t.Stop(); Theme.Changed -= configure; Settings.Changed -= configure; Wallpaper.Changed -= configure; };
         }
 
         // Menus: frosted once as they open (they don't move while open), so they cost nothing afterwards.
@@ -100,7 +116,8 @@ namespace OpenDock
         {
             var panel = root as Border ?? (VisualTreeHelper.GetChildrenCount(root) > 0 ? VisualTreeHelper.GetChild(root, 0) as Border : null);
             var src = PresentationSource.FromVisual(root) as HwndSource;
-            if (panel == null || src == null || !panel.IsVisible || !Exclude(src.Handle)) return;
+            if (panel == null || src == null || !panel.IsVisible) return;
+            if (!Exclude(src.Handle)) { panel.Background = WallpaperPane((Brush)panel.FindResource("MenuGlass")); return; }
             var p = panel.PointToScreen(new Point(0, 0));
             long sum = 0;
             var img = Behind((int)p.X, (int)p.Y, (int)(panel.ActualWidth * App.Dpi), (int)(panel.ActualHeight * App.Dpi), 2, ref sum);

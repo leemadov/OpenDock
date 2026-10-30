@@ -16,7 +16,8 @@ namespace OpenDock
     class MenuBarWindow : Window
     {
         public AppBar Bar;
-        public static double H { get { return Settings.MenuBarHeight; } }
+        public static double H { get { return Math.Max(24,Math.Min(48,Settings.MenuBarHeight)); } }
+        static IntPtr commandTarget;
         readonly Menu menu = new Menu { Background = Brushes.Transparent, VerticalAlignment = VerticalAlignment.Stretch };
         readonly MenuItem appMenu = new MenuItem();
         readonly TextBlock appName = new TextBlock { FontWeight = FontWeights.Bold };
@@ -29,35 +30,30 @@ namespace OpenDock
         readonly TextBlock net = new TextBlock { FontFamily = Theme.Glyphs, FontSize = 15, VerticalAlignment = VerticalAlignment.Center };
         Border batteryButton, bgApps;
         Brush fg;
-        string current = "Finder";
+        string current = "Finder", displayDevice;
 
         public MenuBarWindow()
         {
             Title = "OpenDock Menu Bar";
             WindowStyle = WindowStyle.None; AllowsTransparency = true; ShowInTaskbar = false; Topmost = true;
             ResizeMode = ResizeMode.NoResize; ShowActivated = false; Height = H;
-            Settings.Changed += delegate { Height = H; Place(); };
+            Settings.Changed += OnSettings;
             Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)); // invisible but clickable
             FontFamily = Theme.Font; FontSize = 13.5;
 
-            // The Windows 11 logo: four blue squares (2×2), each a sky-blue to deep-blue gradient with only its outer
-            // corner rounded, drawn as glass: slightly see-through, a bright rim along the top and a sheen.
-            var logo = new Grid { Width = 15, Height = 15, Margin = new Thickness(4, 0, 4, 0) };
-            var blue = new LinearGradientBrush(Color.FromArgb(235, 0x1F, 0xB2, 0xFF), Color.FromArgb(235, 0x3B, 0x7C, 0xF4), 0);
-            var rim = new LinearGradientBrush(Color.FromArgb(150, 255, 255, 255), Color.FromArgb(25, 255, 255, 255), 90);
-            const double outer = 1.6, inner = 0.4;
-            CornerRadius[] corners = { new CornerRadius(outer, inner, inner, inner), new CornerRadius(inner, outer, inner, inner), new CornerRadius(inner, inner, inner, outer), new CornerRadius(inner, inner, outer, inner) };
-            for (int i = 0; i < 4; i++)
+            // Windows 11's flat four-square mark, kept vector-sharp at any display scale.
+            var logo = new Path
             {
-                var sheen = new Border { CornerRadius = corners[i], Margin = new Thickness(0, 0, 0, 3.5), IsHitTestVisible = false,
-                    Background = new LinearGradientBrush(Color.FromArgb(120, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), 90) };
-                logo.Children.Add(new Border { Width = 7, Height = 7, CornerRadius = corners[i], Background = blue, BorderBrush = rim, BorderThickness = new Thickness(0.6), Child = sheen,
-                    HorizontalAlignment = i % 2 == 0 ? HorizontalAlignment.Left : HorizontalAlignment.Right, VerticalAlignment = i < 2 ? VerticalAlignment.Top : VerticalAlignment.Bottom });
-            }
+                Width = 15, Height = 15, Margin = new Thickness(4, 0, 4, 0), Stretch = Stretch.Uniform,
+                Fill = new SolidColorBrush(Color.FromRgb(0x00, 0x78, 0xD4)), SnapsToDevicePixels = true,
+                Data = Geometry.Parse("M0,0H7V7H0Z M8,0H15V7H8Z M0,8H7V15H0Z M8,8H15V15H8Z")
+            };
             var logoMenu = Bar0(logo);
             logoMenu.Items.Add(Cmd("About This PC", null, AboutWindow.ShowIt));
             logoMenu.Items.Add(new Separator());
             logoMenu.Items.Add(Cmd("System Settings…", null, () => App.OpenSettings("General")));
+            logoMenu.Items.Add(Cmd("Shelf…", null, ShelfWindow.Open));
+            logoMenu.Items.Add(Cmd("Desktop Scenes & Dock Studio…", null, ()=>App.OpenSettings("Workspace")));
             logoMenu.Items.Add(Cmd("App Store…", null, () => Launcher.Shell("ms-windows-store:")));
             logoMenu.Items.Add(new Separator());
             logoMenu.Items.Add(Cmd("Force Quit…", "Ctrl+Shift+Esc", () => Launcher.Shell("taskmgr.exe")));
@@ -142,7 +138,8 @@ namespace OpenDock
             {
                 Native.MakeToolWindow(new WindowInteropHelper(this).Handle, true);
                 Bar = new AppBar(this, Native.ABE_TOP);
-                Bar.FullScreen = fs => { if (App.Dock != null) App.Dock.OnFullScreen(fs); };
+                Bar.Placed = rc => { var r = DisplayLayout.Dip(rc); Left = r.Left; Top = r.Top; Width = r.Width; };
+                Bar.FullScreen = fs => { foreach (var dock in App.Docks) dock.OnFullScreen(fs); };
                 Place();
             };
             App.ForegroundChanged += OnForeground;
@@ -158,12 +155,17 @@ namespace OpenDock
             slow.Tick += delegate { UpdateStatus(); };
             slow.Start();
             UpdateStatus();
+            Closed+=delegate { minute.Stop(); slow.Stop(); Settings.Changed-=OnSettings; App.ForegroundChanged-=OnForeground; Wallpaper.Changed-=Recolor; if(Bar!=null) Bar.Remove(); };
         }
+        void OnSettings() { Height=H; Place(); }
 
         public void Place()
         {
             if (Bar == null) return;
-            Left = 0; Top = 0; Width = SystemParameters.PrimaryScreenWidth;
+            var selected = DisplayLayout.Selected;
+            if (displayDevice != selected.Device) { Bar.Remove(); displayDevice = selected.Device; }
+            var bounds = DisplayLayout.Dip(selected.Bounds);
+            Left = bounds.Left; Top = bounds.Top; Width = bounds.Width;
             if (Settings.ShowMenuBar) Bar.Reserve((int)Math.Round(H * App.Dpi)); else Bar.Remove();
         }
 
@@ -227,11 +229,12 @@ namespace OpenDock
             if (pid == (uint)Process.GetCurrentProcess().Id)
             {
                 var w = HwndSource.FromHwnd(h);
-                if (w != null && (w.RootVisual is FinderWindow || w.RootVisual is SettingsWindow)) SetName("Finder");
+                if (w != null && w.RootVisual is MacWindow) { commandTarget=h; SetName(w.RootVisual is FinderWindow?"Finder":((Window)w.RootVisual).Title); }
                 return;
             }
-            if (cls == "Progman" || cls == "WorkerW") { SetName("Finder"); return; }
+            if (cls == "Progman" || cls == "WorkerW") { commandTarget=h; SetName("Finder"); return; }
             if (cls == "Shell_TrayWnd" || cls.StartsWith("Windows.UI.Core") || cls == "XamlExplorerHostIslandWindow") return;
+            commandTarget=h;
             string exe = Windows.ExeOf(h);
             if (exe == null) return;
             if (exe.EndsWith("ApplicationFrameHost.exe", StringComparison.OrdinalIgnoreCase))
@@ -252,16 +255,18 @@ namespace OpenDock
         {
             appMenu.Items.Clear();
             string exe = TargetExe();
-            Func<WinInfo, bool> mine = w => exe != null && string.Equals(w.Exe, exe, StringComparison.OrdinalIgnoreCase);
+            IntPtr target=TargetHandle(); uint pid; Native.GetWindowThreadProcessId(target,out pid); bool own=pid==(uint)Process.GetCurrentProcess().Id;
+            Func<WinInfo, bool> mine = w => own?w.Hwnd==target:exe != null && string.Equals(w.Exe, exe, StringComparison.OrdinalIgnoreCase);
+            var related=own?new[]{target}:App.Wins.Where(mine).Select(w=>w.Hwnd).ToArray();
             appMenu.Items.Add(Cmd("About " + current, null, () => { if (exe != null) App.ShowInFinder(exe); }, exe != null));
             appMenu.Items.Add(new Separator());
             appMenu.Items.Add(Cmd("Settings…", null, App.OpenSettings));
             appMenu.Items.Add(new Separator());
-            appMenu.Items.Add(Cmd("Hide " + current, null, () => { foreach (var w in App.Wins.Where(mine)) Native.ShowWindow(w.Hwnd, Native.SW_MINIMIZE); }, exe != null));
+            appMenu.Items.Add(Cmd("Hide " + current, null, () => { foreach (var h in related) Native.ShowWindow(h, Native.SW_MINIMIZE); }, exe != null));
             appMenu.Items.Add(Cmd("Hide Others", null, () => { foreach (var w in App.Wins.Where(w => !mine(w))) Native.ShowWindow(w.Hwnd, Native.SW_MINIMIZE); }));
             appMenu.Items.Add(Cmd("Show All", null, () => { foreach (var w in App.Wins.Where(w => Native.IsIconic(w.Hwnd))) Native.ShowWindow(w.Hwnd, Native.SW_SHOWNOACTIVATE); }));
             appMenu.Items.Add(new Separator());
-            appMenu.Items.Add(Cmd("Quit " + current, "Alt+F4", () => { foreach (var w in App.Wins.Where(mine)) Native.PostMessage(w.Hwnd, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero); }, exe != null));
+            appMenu.Items.Add(Cmd("Quit " + current, "Alt+F4", () => { foreach (var h in related) Native.PostMessage(h, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero); }, exe != null));
         }
         void ShowBackgroundApps()
         {
@@ -285,26 +290,27 @@ namespace OpenDock
 
         static string TargetExe()
         {
-            var h = App.LastForeground;
+            var h = TargetHandle();
             return h != IntPtr.Zero && Native.IsWindow(h) ? Windows.ExeOf(h) : null;
         }
 
         static void Target(Action<IntPtr> a)
         {
-            var h = App.LastForeground;
+            var h = TargetHandle();
             if (h != IntPtr.Zero && Native.IsWindow(h)) a(h);
         }
 
         // Menu commands are delivered as the matching keyboard shortcut to the app you were using.
         static void SendTo(byte[] vks)
         {
-            var h = App.LastForeground;
+            var h = TargetHandle();
             if (h == IntPtr.Zero || !Native.IsWindow(h)) return;
             Native.Activate(h);
             var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
-            t.Tick += delegate { t.Stop(); Native.SendKeys(vks); };
+            t.Tick += delegate { t.Stop(); if(Native.GetAncestor(Native.GetForegroundWindow(),2)==h) Native.SendKeys(vks); };
             t.Start();
         }
+        internal static IntPtr TargetHandle() { return Native.IsWindow(commandTarget)?commandTarget:App.LastForeground; }
 
         static void Win(char key) { Native.SendKeys(0x5B, (byte)key); }
 
