@@ -437,7 +437,10 @@ namespace OpenDock
             Hook(0x8001, 0x8003, onWindow);  // destroy / show / hide
             Hook(0x8017, 0x8018, onWindow);  // cloaked / uncloaked (Store apps)
             Hook(0x800C, 0x800C, onWindow);  // title change
-            Hook(0x800B, 0x800B, onWindow);  // location/size changes, including browser fullscreen transitions
+            // Location/size changes (e.g. a browser going full screen) arrive many times a second while anything
+            // moves, so they only restart the refresh countdown: one refresh after the moving stops.
+            Native.WinEventProc onMove = (hk, ev, h, obj, child, t, time) => { if (obj == 0 && child == 0 && refresh != null) { refresh.Stop(); refresh.Start(); } };
+            Hook(0x800B, 0x800B, onMove);
 
             refresh = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
             refresh.Tick += delegate { refresh.Stop(); RefreshWindows(); };

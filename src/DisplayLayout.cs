@@ -7,13 +7,24 @@ namespace OpenDock
     // Screen coordinates stay in Windows' system-DPI coordinate space, just like WPF in this app.
     static class DisplayLayout
     {
+        // During sleep, a driver reset or a monitor swap Windows can briefly report no displays: keep using the
+        // last one we saw (or the primary screen's size) instead of throwing.
+        static Sys.Display last;
         public static Sys.Display Selected
         {
             get
             {
                 var screens = Sys.Screens();
-                return screens.FirstOrDefault(s => s.Device == Settings.DisplayDevice) ?? screens.FirstOrDefault(s => s.Primary) ?? screens.First();
+                if (screens.Count == 0) return last ?? Fallback();
+                return last = screens.FirstOrDefault(s => s.Device == Settings.DisplayDevice) ?? screens.FirstOrDefault(s => s.Primary) ?? screens[0];
             }
+        }
+
+        static Sys.Display Fallback()
+        {
+            int w = (int)Math.Round(SystemParameters.PrimaryScreenWidth * App.Dpi), h = (int)Math.Round(SystemParameters.PrimaryScreenHeight * App.Dpi);
+            var r = new Native.RECT { Left = 0, Top = 0, Right = w, Bottom = h };
+            return new Sys.Display { Device = "", Primary = true, Width = w, Height = h, Bounds = r, Work = r };
         }
 
         public static Rect Dip(Native.RECT r)

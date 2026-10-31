@@ -15,7 +15,7 @@ namespace OpenDock
 {
     static class Updater
     {
-        public const string CurrentTag = "v0.3.0-preview.5";
+        public const string CurrentTag = "v0.3.0-preview.6";
         public const string ReleasesPage = "https://github.com/leemadov/OpenDock/releases";
         const int MaximumBuild = 32 * 1024 * 1024;
         const string AssetPrefix = "https://github.com/leemadov/OpenDock/releases/download/";

@@ -211,7 +211,8 @@ namespace OpenDock
         public static void MoveWindow(IntPtr window, bool next, bool leftHalf)
         {
             if (window == IntPtr.Zero || !Native.IsWindow(window)) return;
-            var screens=Sys.Screens(); int current=screens.FindIndex(s=>s.Monitor==Native.MonitorFromWindow(window,2));
+            var screens=Sys.Screens(); if(screens.Count==0) return;
+            int current=screens.FindIndex(s=>s.Monitor==Native.MonitorFromWindow(window,2));
             var b=screens[next ? (Math.Max(0,current)+1)%screens.Count : Math.Max(0,current)].Work;
             int width=next ? b.Right-b.Left : (b.Right-b.Left)/2;
             Native.ShowWindow(window,Native.SW_RESTORE);

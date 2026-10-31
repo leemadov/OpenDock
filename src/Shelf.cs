@@ -40,22 +40,6 @@ namespace OpenDock
             if(text.Length>0) data.SetText(text);
             return data;
         }
-        [DllImport("kernel32.dll")] static extern IntPtr GlobalAlloc(uint flags,UIntPtr size);
-        [DllImport("kernel32.dll")] static extern IntPtr GlobalLock(IntPtr memory);
-        [DllImport("kernel32.dll")] static extern bool GlobalUnlock(IntPtr memory);
-        [DllImport("kernel32.dll")] static extern IntPtr GlobalFree(IntPtr memory);
-        public static bool Deliver(IntPtr window,string[] files)
-        {
-            if(!Native.IsWindow(window)) return false;
-            Native.Activate(window);
-            if((Native.GetWindowLong(window,Native.GWL_EXSTYLE)&0x10)==0) return false;
-            var text=System.Text.Encoding.Unicode.GetBytes(string.Join("\0",files)+"\0\0");
-            var memory=GlobalAlloc(0x42,new UIntPtr((uint)(20+text.Length))); if(memory==IntPtr.Zero) return false;
-            var pointer=GlobalLock(memory); if(pointer==IntPtr.Zero) { GlobalFree(memory); return false; }
-            Marshal.WriteInt32(pointer,0,20); Marshal.WriteInt32(pointer,16,1); Marshal.Copy(text,0,IntPtr.Add(pointer,20),text.Length); GlobalUnlock(memory);
-            if(Native.PostMessage(window,0x233,memory,IntPtr.Zero)) return true;
-            GlobalFree(memory); return false;
-        }
     }
     class ShelfWindow : MacWindow
     {
@@ -111,34 +95,50 @@ namespace OpenDock
     }
     static class Living
     {
-        static System.Windows.Threading.DispatcherTimer clock;
-        static bool scanning;
-        static DateTime scanAfter;
+        // Nothing here polls while idle: the clock only runs while a countdown is going, and the Downloads count
+        // is recounted when that folder changes (debounced), not on a timer.
+        static System.Windows.Threading.DispatcherTimer clock, recount;
+        static FileSystemWatcher downloadsWatcher;
+        static bool scanning, rescan;
         public static void Start()
         {
             if(clock!=null) return;
-            clock=new System.Windows.Threading.DispatcherTimer { Interval=TimeSpan.FromSeconds(1) }; clock.Tick+=delegate { Tick(); }; clock.Start();
+            clock=new System.Windows.Threading.DispatcherTimer { Interval=TimeSpan.FromSeconds(1) }; clock.Tick+=delegate { Tick(); };
+            recount=new System.Windows.Threading.DispatcherTimer { Interval=TimeSpan.FromSeconds(1) }; recount.Tick+=delegate { recount.Stop(); ScanDownloads(); };
+            try
+            {
+                downloadsWatcher=new FileSystemWatcher(Launcher.Downloads) { NotifyFilter=NotifyFilters.FileName };
+                FileSystemEventHandler changed=delegate { var ui=System.Windows.Application.Current; if(ui!=null) ui.Dispatcher.BeginInvoke(new Action(()=> { recount.Stop(); recount.Start(); })); };
+                downloadsWatcher.Created+=changed; downloadsWatcher.Deleted+=changed; downloadsWatcher.Renamed+=(s,e)=>changed(s,e);
+                downloadsWatcher.EnableRaisingEvents=true;
+            }
+            catch(Exception ex) { App.Log(ex); }
+            ScanDownloads();
         }
         static DateTime? end; static TimeSpan paused;
         public static int Downloads;
         public static string TimerText { get { var t=end.HasValue ? end.Value-DateTime.UtcNow : paused; return t>TimeSpan.Zero ? ((int)t.TotalMinutes)+":"+t.Seconds.ToString("00") : ""; } }
-        public static void StartTimer(int minutes) { paused=TimeSpan.Zero; end=DateTime.UtcNow.AddMinutes(Math.Max(1,Math.Min(1440,minutes))); Workspace.Notify(); }
-        public static void PauseTimer() { if(end.HasValue) { paused=end.Value-DateTime.UtcNow; end=null; } else if(paused>TimeSpan.Zero) { end=DateTime.UtcNow+paused; paused=TimeSpan.Zero; } Workspace.Notify(); }
+        public static void StartTimer(int minutes) { paused=TimeSpan.Zero; end=DateTime.UtcNow.AddMinutes(Math.Max(1,Math.Min(1440,minutes))); Clock(); Workspace.Notify(); }
+        public static void PauseTimer() { if(end.HasValue) { paused=end.Value-DateTime.UtcNow; end=null; } else if(paused>TimeSpan.Zero) { end=DateTime.UtcNow+paused; paused=TimeSpan.Zero; } Clock(); Workspace.Notify(); }
+        static void Clock() { if(clock==null) return; if(end.HasValue) clock.Start(); else clock.Stop(); }
         public static void Tick()
         {
             if(end.HasValue&&end.Value<=DateTime.UtcNow) { end=null; paused=TimeSpan.Zero; System.Media.SystemSounds.Asterisk.Play(); Workspace.Status="Timer finished."; }
-            if(!scanning&&DateTime.UtcNow>=scanAfter) ScanDownloads();
+            Clock();
             foreach(var dock in App.Docks) dock.RefreshBadges();
         }
         static async void ScanDownloads()
         {
+            if(scanning) { rescan=true; return; }
             scanning=true; string folder=Launcher.Downloads;
-            Downloads=await System.Threading.Tasks.Task.Run(()=>
+            int count=await System.Threading.Tasks.Task.Run(()=>
             {
                 try { return Directory.EnumerateFiles(folder).Count(f=>new[]{".crdownload",".part",".download",".partial"}.Contains(Path.GetExtension(f).ToLowerInvariant())); }
                 catch { return 0; }
             });
-            scanAfter=DateTime.UtcNow.AddSeconds(5); scanning=false;
+            scanning=false;
+            if(count!=Downloads) { Downloads=count; foreach(var dock in App.Docks) dock.RefreshBadges(); }
+            if(rescan) { rescan=false; ScanDownloads(); }
         }
     }
 }

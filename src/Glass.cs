@@ -39,7 +39,20 @@ namespace OpenDock
             return Settings.LiveGlass && ok;
         }
 
-        public static Brush WallpaperPane(Brush tint) { return Pane(Wallpaper.Blurred, tint); }
+        // The part of the (primary screen's) blurred wallpaper behind `area` (screen DIPs), under the tint.
+        public static Brush WallpaperPane(Brush tint, Rect area)
+        {
+            double sw = Math.Max(1, SystemParameters.PrimaryScreenWidth), sh = Math.Max(1, SystemParameters.PrimaryScreenHeight);
+            var r = new RectangleGeometry(new Rect(0, 0, 1, 1));
+            var g = new DrawingGroup();
+            if (Wallpaper.Blurred != null)
+                g.Children.Add(new GeometryDrawing(new ImageBrush(Wallpaper.Blurred) { Stretch = Stretch.Fill, ViewboxUnits = BrushMappingMode.RelativeToBoundingBox,
+                    Viewbox = new Rect(area.X / sw, area.Y / sh, Math.Max(0.001, area.Width / sw), Math.Max(0.001, area.Height / sh)) }, null, r));
+            g.Children.Add(new GeometryDrawing(tint, null, r));
+            var b = new DrawingBrush(g) { Stretch = Stretch.Fill };
+            b.Freeze();
+            return b;
+        }
 
         static Brush Pane(ImageSource img, Brush tint)
         {
@@ -72,8 +85,14 @@ namespace OpenDock
                 t.Interval = TimeSpan.FromMilliseconds(80);
                 w.Background = Pane(img, (Brush)w.FindResource(tintKey));
             };
+            // Wallpaper frost: the slice of wallpaper behind the window, so it follows the window like glass.
+            Action frost = delegate
+            {
+                Native.RECT rc;
+                if (Native.GetWindowRect(new WindowInteropHelper(w).Handle, out rc)) w.Background = WallpaperPane((Brush)w.FindResource(tintKey), DisplayLayout.Dip(rc));
+            };
             // Moves arrive faster than the screen refreshes; one redraw per ~frame is enough.
-            EventHandler moved = delegate { if (since.ElapsedMilliseconds >= 12) update(); };
+            EventHandler moved = delegate { if (since.ElapsedMilliseconds < 12) return; if (live) update(); else { since.Restart(); frost(); } };
             Action configure = delegate
             {
                 var hwnd = new WindowInteropHelper(w).Handle;
@@ -81,7 +100,7 @@ namespace OpenDock
                 live = Exclude(hwnd);
                 sum = 0;
                 if (live) { t.Start(); update(); }
-                else { t.Stop(); w.Background = WallpaperPane((Brush)w.FindResource(tintKey)); }
+                else { t.Stop(); frost(); }
             };
             t.Tick += delegate { update(); };
             w.SourceInitialized += delegate { configure(); };
@@ -117,8 +136,8 @@ namespace OpenDock
             var panel = root as Border ?? (VisualTreeHelper.GetChildrenCount(root) > 0 ? VisualTreeHelper.GetChild(root, 0) as Border : null);
             var src = PresentationSource.FromVisual(root) as HwndSource;
             if (panel == null || src == null || !panel.IsVisible) return;
-            if (!Exclude(src.Handle)) { panel.Background = WallpaperPane((Brush)panel.FindResource("MenuGlass")); return; }
             var p = panel.PointToScreen(new Point(0, 0));
+            if (!Exclude(src.Handle)) { panel.Background = WallpaperPane((Brush)panel.FindResource("MenuGlass"), new Rect(p.X / App.Dpi, p.Y / App.Dpi, panel.ActualWidth, panel.ActualHeight)); return; }
             long sum = 0;
             var img = Behind((int)p.X, (int)p.Y, (int)(panel.ActualWidth * App.Dpi), (int)(panel.ActualHeight * App.Dpi), 2, ref sum);
             if (img != null) panel.Background = Pane(img, (Brush)panel.FindResource("MenuGlass"));

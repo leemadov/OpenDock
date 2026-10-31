@@ -301,7 +301,10 @@ namespace OpenDock
         {
             if (closed) return;
             var target=MonitorBounds; Native.RECT actual;
-            if(Bar!=null&&!Bar.IsPlacing&&!repairingPlacement&&(monitor!=target||Native.GetWindowRect(new WindowInteropHelper(this).Handle,out actual)&&!target.Contains(DisplayLayout.Dip(actual))))
+            // Allow a pixel of slack: at 125%/150% scaling the DIP conversion rounds, and a false "moved" here
+            // would re-register the appbar (reflowing every maximized window) and close open menus.
+            var slack=target; slack.Inflate(1.5/App.Dpi,1.5/App.Dpi);
+            if(Bar!=null&&!Bar.IsPlacing&&!repairingPlacement&&(monitor!=target||Native.GetWindowRect(new WindowInteropHelper(this).Handle,out actual)&&!slack.Contains(DisplayLayout.Dip(actual))))
             {
                 // A display reconnect or Explorer can relocate the native window without changing our assigned device.
                 repairingPlacement=true;
@@ -516,7 +519,7 @@ namespace OpenDock
         {
             foreach(var it in items.Where(i=>!i.IsSep))
             {
-                string text=it.Kind=="shelf" && Workspace.Data.Shelf.Count>0 ? Workspace.Data.Shelf.Count.ToString() : it.Kind=="stack" && Living.Downloads>0 ? "↓"+Living.Downloads : it.Kind=="launchpad" ? Living.TimerText : it.Wins.Count>1 ? it.Wins.Count.ToString() : "";
+                string text=it.Kind=="shelf" && Workspace.Data.Shelf.Count>0 ? Workspace.Data.Shelf.Count.ToString() : it.Kind=="stack" && Living.Downloads>0 ? "↓"+Living.Downloads : it.Kind=="launchpad" ? Living.TimerText : "";   // red badge = something waiting, not a window count
                 if(Workspace.Restoring&&it.Kind=="finder") text="…";
                 it.BadgeText.Text=text; it.Badge.Visibility=Workspace.Data.LivingIcons&&text.Length>0?Visibility.Visible:Visibility.Collapsed;
             }
@@ -910,18 +913,19 @@ namespace OpenDock
             else if (it.Kind == "trash") { Launcher.Recycle(files); UpdateTrash(); }
             else if (it.Kind == "shelf") { foreach(var file in files) Shelf.Add("file",file); ShelfWindow.Open(); }
             else if (it.Kind == "finder") foreach (var f in files) App.ShowInFinder(f);
-            else if (it.Kind == "app" && it.Wins.Count>1)
+            // Shift+drop on an app with several windows picks a window: the files are copied (clipboard + Shelf) and
+            // that window comes forward, ready to paste. A plain drop opens the files with the app, as always.
+            else if (it.Kind == "app" && it.Wins.Count>1 && (Keyboard.Modifiers & ModifierKeys.Shift) != 0)
             {
                 var menu=new ContextMenu();
                 foreach(var value in it.Wins)
                 {
                     var target=value;
-                    menu.Items.Add(Item(((Native.GetWindowLong(target.Hwnd,Native.GWL_EXSTYLE)&0x10)!=0?"Send files to: ":"Activate & copy for: ")+(target.Title.Length>60?target.Title.Substring(0,60)+"…":target.Title),()=>
+                    menu.Items.Add(Item("Copy files and switch to: "+(target.Title.Length>60?target.Title.Substring(0,60)+"…":target.Title),()=>
                     {
-                        if(Shelf.Deliver(target.Hwnd,files)) return;
                         foreach(var file in files) Shelf.Add("file",file);
-                        var paths=new System.Collections.Specialized.StringCollection(); paths.AddRange(files); Clipboard.SetFileDropList(paths);
-                        Workspace.Status="Selected window activated. Files are copied and stored in Shelf; paste or drag them into apps that do not accept Windows file-drop messages.";
+                        var paths=new System.Collections.Specialized.StringCollection(); paths.AddRange(files);
+                        try { Clipboard.SetFileDropList(paths); } catch(Exception ex) { App.Log(ex); }
                         Native.Activate(target.Hwnd);
                     }));
                 }

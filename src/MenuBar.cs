@@ -278,9 +278,16 @@ namespace OpenDock
             foreach (var a in apps)
             {
                 var app = a;
-                // Opens the app's own tray menu, the same one the Windows taskbar shows on right-click.
-                var mi = Cmd(a.Name, null, app.ShowTrayMenu);
-                mi.Icon = new Image { Source = a.Icon, Width = 16, Height = 16 };
+                // Each app opens a submenu (hover or click) with OpenDock's own options for it.
+                var mi = new MenuItem { Header = a.Name, Icon = new Image { Source = a.Icon, Width = 16, Height = 16 } };
+                mi.Items.Add(Cmd("Resume", null, app.Open));
+                if (app.Exe != null && app.Exe.IndexOf(@"\WindowsApps\", StringComparison.OrdinalIgnoreCase) < 0) mi.Items.Add(Cmd("Show in Finder", null, () => App.ShowInFinder(app.Exe)));
+                mi.Items.Add(new Separator());
+                mi.Items.Add(Cmd("Close", null, app.Quit));
+                mi.Items.Add(Cmd("Force Close…", null, () =>
+                {
+                    if (MessageBox.Show("Force close " + app.Name + "? Unsaved work in it will be lost.", "OpenDock", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) app.Kill();
+                }));
                 cm.Items.Add(mi);
             }
             cm.Items.Add(new Separator());
