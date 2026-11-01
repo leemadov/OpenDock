@@ -419,7 +419,10 @@ namespace OpenDock
         // A solid play / pause / skip button.
         protected static Border Transport(string shape, double height, Action click)
         {
-            var path = new System.Windows.Shapes.Path { Data = Geometry.Parse(shape), Stretch = Stretch.Uniform, Height = height, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            // Both sides set from the shape's own proportions: with only a height, a star-sized column could clip it.
+            var data = Geometry.Parse(shape);
+            var path = new System.Windows.Shapes.Path { Data = data, Stretch = Stretch.Fill, Height = height, Width = height * data.Bounds.Width / data.Bounds.Height,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             path.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "CcFg");
             var b = new Border { Background = Brushes.Transparent, Cursor = Cursors.Hand, MinWidth = height + 16, Height = height + 14, Child = path };
             b.MouseLeftButtonUp += (s, e) => { e.Handled = true; click(); };

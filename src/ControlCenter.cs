@@ -249,18 +249,19 @@ namespace OpenDock
         {
             var body = musicTile.Body;
             body.Children.Clear();
-            var stack = new StackPanel { Margin = new Thickness(16, 16, 12, 10) };
-            var art = new Border { Width = 48, Height = 48, CornerRadius = new CornerRadius(10), HorizontalAlignment = HorizontalAlignment.Left };
+            // 140 tall inside: 14 + 44 art + 6 + title + artist + 26 controls + 8 fits without spilling over the edge
+            var stack = new StackPanel { Margin = new Thickness(16, 14, 12, 8) };
+            var art = new Border { Width = 44, Height = 44, CornerRadius = new CornerRadius(10), HorizontalAlignment = HorizontalAlignment.Left };
             art.SetResourceReference(Border.BackgroundProperty, "CcInner");
             if (NowPlaying.Art != null) art.Background = new ImageBrush(NowPlaying.Art) { Stretch = Stretch.UniformToFill };
             else art.Child = Glyph("\uE8D6", 20);
             stack.Children.Add(art);
             bool active = NowPlaying.Active;
             var title = Text(active ? NowPlaying.Title : "Not Playing", 14, FontWeights.SemiBold);
-            title.Margin = new Thickness(0, 9, 0, 0);
+            title.Margin = new Thickness(0, 6, 0, 0);
             stack.Children.Add(title);
             stack.Children.Add(Text(active ? NowPlaying.Artist ?? "" : "", 12, FontWeights.Normal, true));
-            var controls = new Grid { Margin = new Thickness(0, 4, 0, 0), Opacity = active ? 1 : 0.45 };
+            var controls = new Grid { Margin = new Thickness(0, 2, 0, 0), Height = 26, Opacity = active ? 1 : 0.45 };
             for (int i = 0; i < 3; i++) controls.ColumnDefinitions.Add(new ColumnDefinition());
             string[] shapes = { PreviousShape, NowPlaying.Playing ? PauseShape : PlayShape, NextShape };
             Action[] acts = { NowPlaying.Previous, NowPlaying.Toggle, NowPlaying.Next };
@@ -364,12 +365,13 @@ namespace OpenDock
             DockPanel.SetDock(lo, Dock.Left); row2.Children.Add(lo);
             if (name == "Sound")
             {
-                var outBtn = new Grid { Margin = new Thickness(8, 0, 0, 0) };
-                var mute = new Border { Width = 26, Height = 26, CornerRadius = new CornerRadius(13), Background = Brushes.Transparent, Cursor = Cursors.Hand, Child = Glyph(high, 15) };
+                // side by side, each in its own 24px circle (the row is ~23px), so the loud-speaker icon can't run into the output button
+                var outBtn = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 0, 0, 0) };
+                var mute = new Border { Width = 24, Height = 24, CornerRadius = new CornerRadius(12), Background = Brushes.Transparent, Cursor = Cursors.Hand, Child = Glyph(high, 14) };
                 muteGlyph = (TextBlock)mute.Child;
                 mute.MouseLeftButtonUp += (s, e) => { e.Handled = true; Sys.SetMute(true, !Sys.GetMute(true)); ShowVolume(); };
                 outBtn.Children.Add(mute);
-                var route = new Border { Width = 26, Height = 26, CornerRadius = new CornerRadius(13), Cursor = Cursors.Hand, Margin = new Thickness(34, 0, 0, 0), Child = Glyph("\uE7F5", 12), ToolTip = "Sound output" };
+                var route = new Border { Width = 24, Height = 24, CornerRadius = new CornerRadius(12), Cursor = Cursors.Hand, Margin = new Thickness(6, 0, 0, 0), Child = Glyph("\uE7F5", 12), ToolTip = "Sound output" };
                 route.SetResourceReference(Border.BackgroundProperty, "CcInner");
                 route.MouseLeftButtonUp += (s, e) => { e.Handled = true; OutputMenu(route); };
                 outBtn.Children.Add(route);
