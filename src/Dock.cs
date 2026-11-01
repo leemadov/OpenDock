@@ -321,6 +321,7 @@ namespace OpenDock
             Visibility = covered ? Visibility.Hidden : Visibility.Visible;
             if (!covered) StartLoop();
             if (App.MenuBar != null && Settings.ShowMenuBar && Screen.Device == DisplayLayout.Selected.Device) App.MenuBar.Visibility = Visibility;
+            if (Screen.Device == DisplayLayout.Selected.Device) Island.SetCovered(covered);
         }
 
         public void BringToFront()

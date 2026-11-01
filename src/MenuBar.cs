@@ -121,13 +121,19 @@ namespace OpenDock
             // status area
             bgApps = Status(Glyph(""), ShowBackgroundApps, "Background Apps");
             right.Children.Add(bgApps);
-            right.Children.Add(Status(Glyph(""), () => Win('A'), "Sound"));
-            batteryButton = Status(Battery(), () => Win('A'), "Battery");
+            Border sound = null;
+            sound = Status(Glyph(""), () => SoundPanel.Toggle(sound), "Sound");
+            right.Children.Add(sound);
+            batteryButton = Status(Battery(), () => App.OpenSettings("Battery"), "Battery");
             right.Children.Add(batteryButton);
-            right.Children.Add(Status(net, () => Launcher.Shell("ms-availablenetworks:"), "Network"));
+            Border network = null;
+            network = Status(net, () => WifiPanel.Toggle(network), "Wi-Fi");
+            right.Children.Add(network);
             right.Children.Add(Status(Glyph(""), App.ToggleSpotlight, "Spotlight"));
-            right.Children.Add(Status(ControlCenter(), () => Win('A'), "Control Center"));
-            right.Children.Add(Status(clock, () => Win('N'), null));
+            right.Children.Add(Status(ControlCenter(), ControlCenterWindow.Toggle, "Control Center"));
+            Border date = null;
+            date = Status(clock, () => ClockPanel.Toggle(date), null);
+            right.Children.Add(date);
 
             var root = new Grid { Effect = glow };
             root.Children.Add(menu);
@@ -157,7 +163,7 @@ namespace OpenDock
             UpdateStatus();
             Closed+=delegate { minute.Stop(); slow.Stop(); Settings.Changed-=OnSettings; App.ForegroundChanged-=OnForeground; Wallpaper.Changed-=Recolor; if(Bar!=null) Bar.Remove(); };
         }
-        void OnSettings() { Height=H; Place(); }
+        void OnSettings() { Height=H; Place(); Island.Place(); }
 
         public void Place()
         {

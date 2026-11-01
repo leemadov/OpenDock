@@ -29,6 +29,7 @@ namespace OpenDock
         public static bool AutoHide = false;
         public static bool HideTaskbar = true;
         public static bool ShowMenuBar = true;
+        public static bool DynamicIsland = false;  // optional: a black pill in the menu bar for media, timers and alerts
         public static int MenuBarHeight = 30;     // menu bar height (DIP)
         public static int DockSpacing = 0;        // extra space between dock icons (DIP)
         public static int ColorProfile = 0;       // index into ColorProfiles.Presets, or -1 = Custom
@@ -354,6 +355,7 @@ namespace OpenDock
                     {
                         Wallpaper.Load();
                         if (MenuBar != null) MenuBar.Place();
+                        Island.Place();
                         ReconcileDocks();
                         foreach (var dock in Docks) dock.Place();
                         if (Launchpad != null && Launchpad.IsOpen) Launchpad.Close2(null);
@@ -451,6 +453,7 @@ namespace OpenDock
             slow.Start();
             RefreshWindows();
             Living.Start();
+            Island.Start();
             LastForeground = Native.GetForegroundWindow();
         }
 

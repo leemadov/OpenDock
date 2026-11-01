@@ -24,11 +24,13 @@ namespace OpenDock
         {
             var version = (AssemblyInformationalVersionAttribute)Assembly.GetExecutingAssembly().GetCustomAttributes(typeof(AssemblyInformationalVersionAttribute), false).Single();
             if (version.InformationalVersion != Updater.CurrentTag) throw new Exception("binary and updater versions differ");
+            if (typeof(Settings).GetField("DynamicIsland").GetValue(null) as bool? != false) throw new Exception("the Dynamic Island must be off until someone turns it on");
             if (Updater.CompareVersions("v0.4.0-preview.10", "v0.4.0-preview.2") <= 0 || Updater.CompareVersions("v0.4.0", "v0.4.0-preview.10") <= 0 || Updater.CompareVersions("v0.1.9", "v0.4.0-preview.1") >= 0 || Updater.CompareVersions("v0.4.0+build", "0.4.0") != 0) throw new Exception("update version ordering");
             var stable = Release("v0.4.0"); var preview = Release("v0.5.0-preview.1", true); var draft = Release("v9.0.0"); draft.draft = true;
             var hostile = Release("v8.0.0"); hostile.assets[0].browser_download_url = "https://example.com/OpenDock.exe";
             string json = new JavaScriptSerializer().Serialize(new[] { preview, stable, draft, hostile, Release("v0.1.0") });
-            if (Updater.SelectRelease(json, false).tag_name != stable.tag_name || Updater.SelectRelease(json, true).tag_name != preview.tag_name || Updater.SelectRelease(json, false, "v1.0.0") != null) throw new Exception("update channel, draft or downgrade filtering");
+            // judged from a fixed older version, so the check doesn't depend on which version this build is
+            if (Updater.SelectRelease(json, false, "v0.3.0").tag_name != stable.tag_name || Updater.SelectRelease(json, true, "v0.3.0").tag_name != preview.tag_name || Updater.SelectRelease(json, false, "v1.0.0") != null) throw new Exception("update channel, draft or downgrade filtering");
             var badHash = Release("v4.0.0"); badHash.assets[0].digest = null;
             if (Updater.SelectRelease(new JavaScriptSerializer().Serialize(new[] { badHash }), true) != null) throw new Exception("unsigned digest accepted");
             var bytes = File.ReadAllBytes(Assembly.GetExecutingAssembly().Location); string digest = "sha256:" + Updater.Hash(bytes);

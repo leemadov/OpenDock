@@ -15,12 +15,12 @@ namespace OpenDock
     {
         const uint ExcludeFromCapture = 0x11;   // WDA_EXCLUDEFROMCAPTURE, Windows 10 2004+
 
-        // What is behind a screen rectangle (physical px), at quarter size and blurred. Null when it looks the
+        // What is behind a screen rectangle (physical px), at 1/scale size and blurred. Null when it looks the
         // same as last time (sum), so callers can skip redrawing.
-        public static BitmapSource Behind(int x, int y, int w, int h, int blur, ref long sum)
+        public static BitmapSource Behind(int x, int y, int w, int h, int blur, ref long sum, int scale = 4)
         {
             if (w <= 0 || h <= 0) return null;
-            int sw = Math.Max(1, w / 4), sh = Math.Max(1, h / 4);
+            int sw = Math.Max(1, w / scale), sh = Math.Max(1, h / scale);
             var px = Icons.CaptureScaled(x, y, w, h, sw, sh);
             if (px == null) return null;
             FillDesktop(px, x, y, w, h, sw, sh);
@@ -84,6 +84,18 @@ namespace OpenDock
             if (Wallpaper.Blurred != null)
                 g.Children.Add(new GeometryDrawing(new ImageBrush(Wallpaper.Blurred) { Stretch = Stretch.Fill, ViewboxUnits = BrushMappingMode.RelativeToBoundingBox,
                     Viewbox = new Rect(area.X / sw, area.Y / sh, Math.Max(0.001, area.Width / sw), Math.Max(0.001, area.Height / sh)) }, null, r));
+            g.Children.Add(new GeometryDrawing(tint, null, r));
+            var b = new DrawingBrush(g) { Stretch = Stretch.Fill };
+            b.Freeze();
+            return b;
+        }
+
+        // The part of a captured backdrop under one piece of a panel (`part` relative to the capture, 0..1), under the tint.
+        public static Brush Slice(BitmapSource img, Rect part, Brush tint)
+        {
+            var r = new RectangleGeometry(new Rect(0, 0, 1, 1));
+            var g = new DrawingGroup();
+            g.Children.Add(new GeometryDrawing(new ImageBrush(img) { Stretch = Stretch.Fill, ViewboxUnits = BrushMappingMode.RelativeToBoundingBox, Viewbox = part }, null, r));
             g.Children.Add(new GeometryDrawing(tint, null, r));
             var b = new DrawingBrush(g) { Stretch = Stretch.Fill };
             b.Freeze();

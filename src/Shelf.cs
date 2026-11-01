@@ -109,7 +109,12 @@ namespace OpenDock
             {
                 downloadsWatcher=new FileSystemWatcher(Launcher.Downloads) { NotifyFilter=NotifyFilters.FileName };
                 FileSystemEventHandler changed=delegate { var ui=System.Windows.Application.Current; if(ui!=null) ui.Dispatcher.BeginInvoke(new Action(()=> { recount.Stop(); recount.Start(); })); };
-                downloadsWatcher.Created+=changed; downloadsWatcher.Deleted+=changed; downloadsWatcher.Renamed+=(s,e)=>changed(s,e);
+                downloadsWatcher.Created+=changed; downloadsWatcher.Deleted+=changed; downloadsWatcher.Renamed+=(s,e)=>
+                {
+                    changed(s,e);
+                    // A browser renames file.zip.crdownload (or .part) to file.zip once the download is complete.
+                    if(Partial(e.OldFullPath)&&!Partial(e.FullPath)) { var ui=System.Windows.Application.Current; string name=Path.GetFileName(e.FullPath); if(ui!=null) ui.Dispatcher.BeginInvoke(new Action(()=>Island.Downloaded(name))); }
+                };
                 downloadsWatcher.EnableRaisingEvents=true;
             }
             catch(Exception ex) { App.Log(ex); }
@@ -117,15 +122,19 @@ namespace OpenDock
         }
         static DateTime? end; static TimeSpan paused;
         public static int Downloads;
+        public static bool TimerRunning { get { return end.HasValue; } }
+        static readonly string[] partials={".crdownload",".part",".download",".partial"};
+        static bool Partial(string path) { return partials.Contains(Path.GetExtension(path).ToLowerInvariant()); }
         public static string TimerText { get { var t=end.HasValue ? end.Value-DateTime.UtcNow : paused; return t>TimeSpan.Zero ? ((int)t.TotalMinutes)+":"+t.Seconds.ToString("00") : ""; } }
-        public static void StartTimer(int minutes) { paused=TimeSpan.Zero; end=DateTime.UtcNow.AddMinutes(Math.Max(1,Math.Min(1440,minutes))); Clock(); Workspace.Notify(); }
-        public static void PauseTimer() { if(end.HasValue) { paused=end.Value-DateTime.UtcNow; end=null; } else if(paused>TimeSpan.Zero) { end=DateTime.UtcNow+paused; paused=TimeSpan.Zero; } Clock(); Workspace.Notify(); }
+        public static void StartTimer(int minutes) { paused=TimeSpan.Zero; end=DateTime.UtcNow.AddMinutes(Math.Max(1,Math.Min(1440,minutes))); Clock(); Workspace.Notify(); Island.Refresh(); }
+        public static void PauseTimer() { if(end.HasValue) { paused=end.Value-DateTime.UtcNow; end=null; } else if(paused>TimeSpan.Zero) { end=DateTime.UtcNow+paused; paused=TimeSpan.Zero; } Clock(); Workspace.Notify(); Island.Refresh(); }
         static void Clock() { if(clock==null) return; if(end.HasValue) clock.Start(); else clock.Stop(); }
         public static void Tick()
         {
-            if(end.HasValue&&end.Value<=DateTime.UtcNow) { end=null; paused=TimeSpan.Zero; System.Media.SystemSounds.Asterisk.Play(); Workspace.Status="Timer finished."; }
+            if(end.HasValue&&end.Value<=DateTime.UtcNow) { end=null; paused=TimeSpan.Zero; System.Media.SystemSounds.Asterisk.Play(); Workspace.Status="Timer finished."; Island.TimerDone(); }
             Clock();
             foreach(var dock in App.Docks) dock.RefreshBadges();
+            Island.Refresh();
         }
         static async void ScanDownloads()
         {
@@ -133,7 +142,7 @@ namespace OpenDock
             scanning=true; string folder=Launcher.Downloads;
             int count=await System.Threading.Tasks.Task.Run(()=>
             {
-                try { return Directory.EnumerateFiles(folder).Count(f=>new[]{".crdownload",".part",".download",".partial"}.Contains(Path.GetExtension(f).ToLowerInvariant())); }
+                try { return Directory.EnumerateFiles(folder).Count(Partial); }
                 catch { return 0; }
             });
             scanning=false;

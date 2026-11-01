@@ -1037,6 +1037,7 @@ namespace OpenDock
             var bar = Group(body);
             AddSwitch(bar, "Show menu bar", Settings.ShowMenuBar, v => { Settings.ShowMenuBar = v; App.MenuBar.SetShown(v); });
             AddSlider(bar, "Menu bar height", 24, 48, Settings.MenuBarHeight, v => Settings.MenuBarHeight = (int)Math.Round(v));
+            AddSwitch(bar, "Dynamic Island", Settings.DynamicIsland, v => Settings.DynamicIsland = v);
             InfoRow(bar, "Background Apps", "Click ^ in the menu bar");
 
             body.Children.Add(Heading("More"));
