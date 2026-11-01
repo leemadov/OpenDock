@@ -564,6 +564,8 @@ namespace OpenDock
     static class Wallpaper
     {
         public static BitmapSource Blurred;
+        public static byte[] Flat;   // the unblurred wallpaper (Bgra, FlatW x FlatH) as laid out on the primary screen
+        public static int FlatW, FlatH;
         public static bool TopIsLight;
         public static event Action Changed;
 
@@ -603,8 +605,10 @@ namespace OpenDock
                 double lum = 0;
                 for (int i = 0; i < px.Length; i += 4) lum += 0.0722 * px[i] + 0.7152 * px[i + 1] + 0.2126 * px[i + 2];
                 bool light = lum / (px.Length / 4) > 165;
+                var all = new byte[w * h * 4];
+                flat.CopyPixels(all, w * 4, 0);
                 var blurred = Icons.Blur(flat, w, h, 10);   // heavy frost: shapes and colour show through, no detail
-                Icons.Ui.BeginInvoke(new Action(() => { Blurred = blurred; TopIsLight = light; if (Changed != null) Changed(); }));
+                Icons.Ui.BeginInvoke(new Action(() => { Blurred = blurred; Flat = all; FlatW = w; FlatH = h; TopIsLight = light; if (Changed != null) Changed(); }));
             });
         }
 

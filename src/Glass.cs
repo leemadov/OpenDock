@@ -23,6 +23,7 @@ namespace OpenDock
             int sw = Math.Max(1, w / 4), sh = Math.Max(1, h / 4);
             var px = Icons.CaptureScaled(x, y, w, h, sw, sh);
             if (px == null) return null;
+            FillDesktop(px, x, y, w, h, sw, sh);
             long s = x * 7919L + y * 31L + w;
             for (int i = 0; i < px.Length; i += 4) s = s * 31 + BitConverter.ToInt32(px, i);
             if (s == sum) return null;
@@ -31,6 +32,41 @@ namespace OpenDock
             var b = BitmapSource.Create(sw, sh, 96, 96, PixelFormats.Bgr32, null, px, sw * 4);
             b.Freeze();
             return b;
+        }
+
+        static System.Collections.Generic.List<Sys.Display> screens;
+        static readonly System.Diagnostics.Stopwatch screensAge = new System.Diagnostics.Stopwatch();
+
+        // Newer Windows builds draw the wallpaper where screen capture can't see it: the bare desktop comes back
+        // pure black. Paint those pixels from the wallpaper we already loaded, so the glass still shows it.
+        static void FillDesktop(byte[] px, int x, int y, int w, int h, int sw, int sh)
+        {
+            var wp = Wallpaper.Flat;
+            if (wp == null) return;
+            int k = 0;
+            while (k < px.Length && (px[k] | px[k + 1] | px[k + 2]) != 0) k += 4;
+            if (k >= px.Length) return;   // nothing blank: the usual case costs one pass
+            if (screens == null || screensAge.ElapsedMilliseconds > 5000) { screens = Sys.Screens(); screensAge.Restart(); }
+            int cx = x + w / 2, cy = y + h / 2;
+            var d = screens.Find(s => cx >= s.Bounds.Left && cx < s.Bounds.Right && cy >= s.Bounds.Top && cy < s.Bounds.Bottom);
+            if (d == null) return;
+            var m = d.Bounds;
+            int fw = Wallpaper.FlatW, fh = Wallpaper.FlatH;
+            double mw = Math.Max(1, m.Right - m.Left), mh = Math.Max(1, m.Bottom - m.Top);
+            for (int j = 0; j < sh; j++)
+            {
+                int fy = (int)((y + (j + 0.5) * h / sh - m.Top) * fh / mh);
+                if (fy < 0 || fy >= fh) continue;
+                for (int i = 0; i < sw; i++)
+                {
+                    int o = (j * sw + i) * 4;
+                    if ((px[o] | px[o + 1] | px[o + 2]) != 0) continue;
+                    int fx = (int)((x + (i + 0.5) * w / sw - m.Left) * fw / mw);
+                    if (fx < 0 || fx >= fw) continue;
+                    int f = (fy * fw + fx) * 4;
+                    px[o] = wp[f]; px[o + 1] = wp[f + 1]; px[o + 2] = wp[f + 2];
+                }
+            }
         }
 
         public static bool Exclude(IntPtr hwnd)
