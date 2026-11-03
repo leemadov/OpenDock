@@ -395,9 +395,10 @@ namespace OpenDock
 
         FrameworkElement MediaView(bool timer)
         {
-            var root = new StackPanel { Margin = new Thickness(18, 16, 18, 12) };
+            // 14 + 52 cover + 6 + 38 play button + 10 = 120, inside the 128-tall pill (the timer row adds ~30 of its 32)
+            var root = new StackPanel { Margin = new Thickness(18, 14, 18, 10) };
             var top = new DockPanel();
-            var cover = Cover(56, 12);
+            var cover = Cover(52, 12);
             DockPanel.SetDock(cover, Dock.Left);
             top.Children.Add(cover);
             var wave = Waveform(NowPlaying.Playing, NowPlaying.Accent, 20);
@@ -412,7 +413,7 @@ namespace OpenDock
             top.Children.Add(words);
             root.Children.Add(top);
 
-            var controls = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 10, 0, 0) };
+            var controls = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 6, 0, 0) };
             controls.Children.Add(Button("\uE892", 18, NowPlaying.Previous));
             controls.Children.Add(Button(NowPlaying.Playing ? "\uE769" : "\uE768", 24, NowPlaying.Toggle));
             controls.Children.Add(Button("\uE893", 18, NowPlaying.Next));
@@ -496,7 +497,7 @@ namespace OpenDock
 
         static FrameworkElement Button(string glyph, double size, Action click)
         {
-            var b = new Border { Width = size + 22, Height = size + 16, CornerRadius = new CornerRadius((size + 16) / 2), Background = Brushes.Transparent, Cursor = Cursors.Hand };
+            var b = new Border { Width = size + 14, Height = size + 14, CornerRadius = new CornerRadius((size + 14) / 2), Background = Brushes.Transparent, Cursor = Cursors.Hand, Margin = new Thickness(3, 0, 3, 0) };   // a round hover glow
             b.Child = Glyph(glyph, size, Colors.White);
             b.MouseEnter += delegate { b.Background = new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF)); };
             b.MouseLeave += delegate { b.Background = Brushes.Transparent; };

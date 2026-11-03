@@ -147,7 +147,7 @@ namespace OpenDock
     // and a click anywhere else shrinks it away. One is open at a time, like macOS menus.
     abstract class GlassPanel : Window
     {
-        protected const double U = 64, G = 12, Pad = 16;
+        protected const double U = 64, G = 12, Pad = 30;   // the transparent margin holds the whole soft shadow
         public static readonly Brush White = Theme.B("#F2FFFFFF");
         protected static readonly Color Blue = Color.FromRgb(0x0A, 0x84, 0xFF), Orange = Color.FromRgb(0xFF, 0x9F, 0x0A),
             Purple = Color.FromRgb(0x5E, 0x5C, 0xE6), Red = Color.FromRgb(0xFF, 0x3B, 0x30);

@@ -286,7 +286,7 @@ namespace OpenDock
                 var app = a;
                 // Each app opens a submenu (hover or click) with OpenDock's own options for it.
                 var mi = new MenuItem { Header = a.Name, Icon = new Image { Source = a.Icon, Width = 16, Height = 16 } };
-                mi.Items.Add(Cmd("Resume", null, app.Open));
+                mi.Items.Add(Cmd("Open", null, app.Open));
                 if (app.Exe != null && app.Exe.IndexOf(@"\WindowsApps\", StringComparison.OrdinalIgnoreCase) < 0) mi.Items.Add(Cmd("Show in Finder", null, () => App.ShowInFinder(app.Exe)));
                 mi.Items.Add(new Separator());
                 mi.Items.Add(Cmd("Close", null, app.Quit));

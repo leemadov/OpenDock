@@ -337,16 +337,17 @@ namespace OpenDock
         GlassTile Pill(int row, int col, out Border dot, out TextBlock glyph, string icon, string name, out TextBlock sub)
         {
             var t = Add(new GlassTile(new Rect(X(col), Y(row), 2 * U + G, U), U / 2) { Cursor = Cursors.Hand, Interactive = true });
-            var dock = new DockPanel { Margin = new Thickness(10, 0, 10, 0) };
-            dot = new Border { Width = 44, Height = 44, CornerRadius = new CornerRadius(22), VerticalAlignment = VerticalAlignment.Center };
+            // a 40px switch and tight gaps leave ~78px for the words, enough for a typical network name
+            var dock = new DockPanel { Margin = new Thickness(10, 0, 6, 0) };
+            dot = new Border { Width = 40, Height = 40, CornerRadius = new CornerRadius(20), VerticalAlignment = VerticalAlignment.Center };
             dot.SetResourceReference(Border.BackgroundProperty, "CcInner");
-            glyph = Glyph(icon, 18);
+            glyph = Glyph(icon, 17);
             dot.Child = glyph;
             DockPanel.SetDock(dot, Dock.Left);
             dock.Children.Add(dot);
-            var words = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
+            var words = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
             words.Children.Add(Text(name, 14, FontWeights.SemiBold));
-            sub = Text("", 12, FontWeights.Normal, true);
+            sub = Text("", 11.5, FontWeights.Normal, true);
             words.Children.Add(sub);
             dock.Children.Add(words);
             t.Body.Children.Add(dock);
