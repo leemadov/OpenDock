@@ -28,7 +28,16 @@ namespace OpenDock
         readonly Rectangle batteryFill = new Rectangle { RadiusX = 1.5, RadiusY = 1.5, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(2.2, 2.2, 0, 2.2) };
         readonly Path bolt = new Path { Data = Geometry.Parse("M7,0 L2,7 L5.5,7 L4,13 L10,5 L6.5,5 Z"), Width = 8, Height = 10, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 3, 0) };
         readonly TextBlock net = new TextBlock { FontFamily = Theme.Glyphs, FontSize = 15, VerticalAlignment = VerticalAlignment.Center };
-        Border batteryButton, bgApps;
+        Border batteryButton, bgApps, spotlightItem, focusItem;
+        readonly TextBlock focusGlyph = new TextBlock { FontFamily = Theme.Glyphs, FontSize = 14, VerticalAlignment = VerticalAlignment.Center };
+
+        void ShowFocus()
+        {
+            focusItem.Visibility = FocusMode.Active ? Visibility.Visible : Visibility.Collapsed;
+            focusGlyph.Text = FocusMode.Glyph;
+            focusItem.ToolTip = FocusMode.Name;
+        }
+        MenuItem searchItem;
         Brush fg;
         string current = "Finder", displayDevice;
 
@@ -107,15 +116,32 @@ namespace OpenDock
             var window = Bar0("Window");
             window.Items.Add(Cmd("Minimize", null, () => Target(h => Native.ShowWindow(h, Native.SW_MINIMIZE))));
             window.Items.Add(Cmd("Zoom", null, () => Target(h => Native.ShowWindow(h, Native.IsZoomed(h) ? Native.SW_RESTORE : Native.SW_MAXIMIZE))));
+            window.Items.Add(Cmd("Fill", "Ctrl+Alt+Enter", () => Tiling.Move(TargetHandle(), Tiling.Spot.Fill)));
+            window.Items.Add(Cmd("Center", null, () => Tiling.Move(TargetHandle(), Tiling.Spot.Center)));
+            // macOS 15's Move & Resize: halves, quarters, and arranging the two front windows together.
+            var tile = new MenuItem { Header = "Move & Resize" };
+            foreach (var spot in Tiling.MoveSpots)
+            {
+                var s = spot;
+                if (s == Tiling.Spot.TopLeft) tile.Items.Add(new Separator());
+                tile.Items.Add(Cmd(Tiling.Name(s), s == Tiling.Spot.Left ? "Ctrl+Alt+←" : s == Tiling.Spot.Right ? "Ctrl+Alt+→" : null, () => Tiling.Move(TargetHandle(), s)));
+            }
+            tile.Items.Add(new Separator());
+            tile.Items.Add(Cmd("Left & Right", null, () => Tiling.Arrange(Tiling.Spot.Left, Tiling.Spot.Right)));
+            tile.Items.Add(Cmd("Right & Left", null, () => Tiling.Arrange(Tiling.Spot.Right, Tiling.Spot.Left)));
+            tile.Items.Add(Cmd("Top & Bottom", null, () => Tiling.Arrange(Tiling.Spot.Top, Tiling.Spot.Bottom)));
+            tile.Items.Add(Cmd("Quarters", null, Tiling.Quarters));
+            tile.Items.Add(new Separator());
+            tile.Items.Add(Cmd("Return to Previous Size", "Ctrl+Alt+Backspace", () => Tiling.Move(TargetHandle(), Tiling.Spot.Restore)));
+            window.Items.Add(tile);
             window.Items.Add(new Separator());
-            window.Items.Add(Keys("Move to Left Half", "Win+←", 0x5B, 0x25));
-            window.Items.Add(Keys("Move to Right Half", "Win+→", 0x5B, 0x27));
-            window.Items.Add(new Separator());
-            window.Items.Add(Keys("Mission Control", "Win+Tab", 0x5B, 0x09));
+            window.Items.Add(Cmd("Mission Control", "Ctrl+Alt+↑", () => MissionControl.Toggle(IntPtr.Zero)));
+            window.Items.Add(Cmd("Show All Windows", "Ctrl+Alt+↓", () => MissionControl.Toggle(TargetHandle())));
             window.Items.Add(Cmd("Close Window", "Alt+F4", () => Target(h => Native.PostMessage(h, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero))));
 
             var help = Bar0("Help");
-            help.Items.Add(Cmd("Search", "Alt+Space", App.ToggleSpotlight));
+            searchItem = Cmd("Search", "Alt+Space", App.ToggleSpotlight);
+            help.Items.Add(searchItem);
             help.Items.Add(Keys("App Help", "F1", 0x70));
 
             // status area
@@ -129,7 +155,13 @@ namespace OpenDock
             Border network = null;
             network = Status(net, () => WifiPanel.Toggle(network), "Wi-Fi");
             right.Children.Add(network);
-            right.Children.Add(Status(Glyph(""), App.ToggleSpotlight, "Spotlight"));
+            spotlightItem = Status(Glyph(""), App.ToggleSpotlight, "Spotlight");
+            right.Children.Add(spotlightItem);
+            // While a Focus is on, its symbol sits next to Control Center, as on macOS.
+            focusItem = Status(focusGlyph, () => { var cm = FocusMode.Menu(); cm.PlacementTarget = focusItem; cm.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom; cm.HorizontalOffset = -12; cm.IsOpen = true; }, "Focus");
+            right.Children.Add(focusItem);
+            ShowFocus();
+            FocusMode.Changed += ShowFocus;
             right.Children.Add(Status(ControlCenter(), ControlCenterWindow.Toggle, "Control Center"));
             Border date = null;
             date = Status(clock, () => ClockPanel.Toggle(date), null);
@@ -161,9 +193,16 @@ namespace OpenDock
             slow.Tick += delegate { UpdateStatus(); };
             slow.Start();
             UpdateStatus();
+            ShowSpotlight();
             Closed+=delegate { minute.Stop(); slow.Stop(); Settings.Changed-=OnSettings; App.ForegroundChanged-=OnForeground; Wallpaper.Changed-=Recolor; if(Bar!=null) Bar.Remove(); };
         }
-        void OnSettings() { Height=H; Place(); Island.Place(); }
+        void OnSettings() { Height=H; Place(); Island.Place(); ShowSpotlight(); }
+
+        void ShowSpotlight()
+        {
+            var v = Settings.Spotlight ? Visibility.Visible : Visibility.Collapsed;
+            spotlightItem.Visibility = v; searchItem.Visibility = v;
+        }
 
         public void Place()
         {

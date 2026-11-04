@@ -25,6 +25,28 @@ namespace OpenDock
                 Apply();
                 if (Changed != null) Changed();
             };
+            // The Liquid Glass slider only re-tints: brushes update in place, nothing has to reload.
+            int shownTint = Settings.GlassTint;
+            Settings.Changed += delegate { if (Settings.GlassTint != shownTint) { shownTint = Settings.GlassTint; Apply(); } };
+        }
+
+        // macOS 27's Liquid Glass slider: 0 = clear, 50 = the standard look, 100 = tinted (nearly solid).
+        // `a` is a glass tint's standard opacity; returns its opacity at `tint`.
+        public static byte GlassAlpha(byte a, int tint)
+        {
+            double t = Math.Max(0, Math.Min(100, tint)) / 100.0, top = Math.Max(a, (byte)242);
+            double v = t <= 0.5 ? a * (0.12 + 0.88 * t / 0.5) : a + (top - a) * ((t - 0.5) / 0.5);
+            return (byte)Math.Round(Math.Max(0, Math.Min(255, v)));
+        }
+
+        // A glass tint at the current Liquid Glass setting.
+        public static Brush Tint(string argb)
+        {
+            var c = (Color)ColorConverter.ConvertFromString(argb);
+            c.A = GlassAlpha(c.A, Settings.GlassTint);
+            var b = new SolidColorBrush(c);
+            b.Freeze();
+            return b;
         }
 
         static bool IsDarkMode()
@@ -58,13 +80,17 @@ namespace OpenDock
             string[] dark = { "#F72B2B2D", "#33FFFFFF", "#F2FFFFFF", "#73FFFFFF", "#1FFFFFFF", "#0A84FF", "#1E1E1E", "#402A2A2C", "#59262628", "#EBFFFFFF", "#8CFFFFFF", "#14FFFFFF", "#29FFFFFF", "#1AFFFFFF", "#59FFFFFF", "#45FFFFFF", "#4716181C", "#38FFFFFF", "#E62A2A2C", "#F2FFFFFF", "#C72A2A2D" };
             string[] light = { "#F5F6F6F6", "#1F000000", "#E6000000", "#59000000", "#1A000000", "#007AFF", "#FFFFFF", "#40ECECEE", "#59F6F6F6", "#E6000000", "#80000000", "#0F000000", "#1A000000", "#0F000000", "#59000000", "#24000000", "#40E2E3E8", "#73FFFFFF", "#F2F4F4F4", "#E6000000", "#CCF4F4F6" };
             for (int i = 0; i < keys.Length; i++) r[keys[i]] = B(Dark ? dark[i] : light[i]);
+            // macOS 27's dock is close to clear glass: little tint, so the wallpaper shows through, held together
+            // by a bright rim along the top. The Liquid Glass slider sets how much tint every glass surface gets.
+            r["DockTint"] = Tint(Dark ? "#3016181C" : "#30E6E7EC");
+            r["Glass"] = Tint(Dark ? "#C72A2A2D" : "#CCF4F4F6");
             // Dock glass: a thin rim that catches light along the top, and a soft sheen fading down the pane.
-            r["DockBorder"] = Fade(Dark ? "#5CFFFFFF" : "#C2FFFFFF", Dark ? "#12FFFFFF" : "#2EFFFFFF", 1);
+            r["DockBorder"] = Fade(Dark ? "#7AFFFFFF" : "#D9FFFFFF", Dark ? "#12FFFFFF" : "#2EFFFFFF", 1);
             r["DockOutline"] = B(Dark ? "#59000000" : "#1F000000");   // hairline that separates the pane from a pale backdrop
             // Glass tints for windows and menus (laid over the blurred backdrop, so they must let it through).
-            r["WinGlass"] = B(Dark ? "#991E1E1E" : "#8CFFFFFF");
+            r["WinGlass"] = Tint(Dark ? "#991E1E1E" : "#8CFFFFFF");
             r["Card"] = B(Dark ? "#4D3A3A3C" : "#B3FFFFFF");   // grouped rows in System Settings
-            r["MenuGlass"] = B(Dark ? "#8C2B2B2D" : "#80F6F6F6");
+            r["MenuGlass"] = Tint(Dark ? "#8C2B2B2D" : "#80F6F6F6");
             r["DockSheen"] = Fade(Dark ? "#1AFFFFFF" : "#3DFFFFFF", "#00FFFFFF", 0.6);
         }
 

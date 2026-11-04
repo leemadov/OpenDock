@@ -19,8 +19,8 @@ namespace OpenDock
         bool workspaceClosing;
         protected override FrameworkElement ChromeBody { get { return workspaceRoot??Layout; } }
         protected override void CloseFromChrome() { (host??this).Close(); }
-        protected override void MinimizeFromChrome() { (host??this).WindowState=WindowState.Minimized; }
-        protected override void ZoomFromChrome() { var owner=host??this; owner.WindowState=owner.WindowState==WindowState.Maximized?WindowState.Normal:WindowState.Maximized; }
+        protected override void MinimizeFromChrome() { (host??this).AnimatedMinimize(); }
+        protected override void ZoomFromChrome() { (host??this).AnimatedZoom(); }
         public IEnumerable<string> OpenPaths()
         {
             var owner=host??this;

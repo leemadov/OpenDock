@@ -29,7 +29,25 @@ namespace OpenDock
         public static bool AutoHide = false;
         public static bool HideTaskbar = true;
         public static bool ShowMenuBar = true;
+        public static bool Spotlight = true;       // Alt+Space search; off gives the key back to Windows
+        public static bool OpenAnimation = true;   // windows open with a macOS-style zoom
+        public static bool CloseAnimation = true;  // ...fade as they close
+        public static bool MinimizeAnimation = true;   // ...Genie into the Dock and zoom when maximizing
         public static bool DynamicIsland = false;  // optional: a black pill in the menu bar for media, timers and alerts
+        public static int GlassTint = 50;          // Liquid Glass slider: 0 = clear, 50 = standard, 100 = tinted
+        public static int MinimizeEffect = 0;      // 0 = Genie, 1 = Scale
+        public static bool AppGenie = true;        // other apps' windows get the Genie and the close animation too
+        public static bool Widgets = true;         // macOS desktop widgets
+        public static string WidgetList = "";      // which, in order ("" = the starter set, "none" = none)
+        public static string WidgetPos = "";       // "kind:fromRight,fromTop;..." in DIPs from the work area's top-right
+        public static string WeatherPlace = "";    // "Name|lat|lon" for the weather widget
+        public static bool TilingKeys = true;      // Ctrl+Alt+arrows tile the front window; Ctrl+Alt+Up/Down = Mission Control / App Exposé
+        public static bool AppSwitcher = true;     // Alt+Tab shows OpenDock's app switcher instead of Windows'
+        public static int CornerTopLeft = 0, CornerTopRight = 0, CornerBottomLeft = 0, CornerBottomRight = 0;   // Hot Corners (HotCorners.Actions)
+        public static bool Banners = true;         // app notifications also appear as OpenDock banners at the top right
+        public static int Focus = 0;               // 0 = off, else Focus.Modes
+        public static string FocusUntil = "";      // when the Focus turns itself off (UTC ticks), empty = until turned off
+        public static int FocusSavedToasts = -1;   // Windows' notification switch before a Focus turned it off
         public static int MenuBarHeight = 30;     // menu bar height (DIP)
         public static int DockSpacing = 0;        // extra space between dock icons (DIP)
         public static int ColorProfile = 0;       // index into ColorProfiles.Presets, or -1 = Custom
@@ -407,6 +425,7 @@ namespace OpenDock
             msgWindow.AddHook((IntPtr h, int m, IntPtr w, IntPtr l, ref bool handled) =>
             {
                 if (m == Native.WM_HOTKEY && (int)w == 1) ToggleSpotlight();
+                if (m == Native.WM_HOTKEY && Hotkeys.Handle((int)w)) handled = true;
                 if (m == shellHook && (int)w.ToInt64() == 0x8006 /* HSHELL_FLASH */ && WindowFlashed != null) WindowFlashed(l);
                 if (m == Native.WM_CLOSE) { handled = true; Quit(); }
                 if (m == taskbarCreated) Dispatcher.CurrentDispatcher.BeginInvoke(new Action(() =>
@@ -418,7 +437,11 @@ namespace OpenDock
                 return IntPtr.Zero;
             });
             Native.RegisterShellHookWindow(msgWindow.Handle);
-            Native.RegisterHotKey(msgWindow.Handle, 1, 0x1 /* MOD_ALT */ | 0x4000 /* NOREPEAT */, 0x20 /* Space */);
+            SyncSpotlightKey();
+            Settings.Changed += SyncSpotlightKey;
+            Hotkeys.Host = msgWindow.Handle;
+            Hotkeys.Sync(); HotCorners.Sync();
+            Settings.Changed += Hotkeys.Sync; Settings.Changed += HotCorners.Sync;
 
             if (Settings.HideTaskbar || Settings.TaskbarStateToRestore >= 0) { if (Settings.HideTaskbar) Taskbar.Hide(); else Taskbar.Restore(); }
             MenuBar = new MenuBarWindow();
@@ -454,6 +477,11 @@ namespace OpenDock
             RefreshWindows();
             Living.Start();
             Island.Start();
+            FocusMode.Start();
+            Notify.Start();
+            AppSwitcher.Start();
+            AppEffects.Start();
+            Widgets.Start();
             LastForeground = Native.GetForegroundWindow();
         }
 
@@ -515,7 +543,17 @@ namespace OpenDock
             foreach (var dock in Docks) dock.OnFullScreen(true);
         }
 
-        public static void ToggleSpotlight() { SelectDockAtCursor(); if (Spotlight.IsVisible) Spotlight.Close2(); else Spotlight.Open(); }
+        public static void ToggleSpotlight() { if (!Settings.Spotlight) return; SelectDockAtCursor(); if (Spotlight.IsVisible) Spotlight.Close2(); else Spotlight.Open(); }
+
+        // Alt+Space belongs to Spotlight only while Spotlight is on; turned off, the key goes back to Windows.
+        static bool spotlightKey;
+        static void SyncSpotlightKey()
+        {
+            if (msgWindow == null || Settings.Spotlight == spotlightKey) return;
+            spotlightKey = Settings.Spotlight;
+            if (spotlightKey) Native.RegisterHotKey(msgWindow.Handle, 1, 0x1 /* MOD_ALT */ | 0x4000 /* NOREPEAT */, 0x20 /* Space */);
+            else { Native.UnregisterHotKey(msgWindow.Handle, 1); if (Spotlight != null && Spotlight.IsVisible) Spotlight.Close2(); }
+        }
         public static void ToggleLaunchpad() { SelectDockAtCursor(); if (Launchpad.IsOpen) Launchpad.Close2(null); else Launchpad.Open(); }
 
         public static void NewFinder(string path = null)

@@ -607,6 +607,29 @@ namespace OpenDock
             StartLoop();
         }
 
+        // Where a window's Dock icon is on screen (DIPs), for the Genie effect; null while the Dock is hidden.
+        public Rect? IconRect(IntPtr hwnd, bool finder)
+        {
+            var it = finder ? items.FirstOrDefault(i => i.Kind == "finder") : items.FirstOrDefault(i => i.Wins.Any(w => w.Hwnd == hwnd));
+            if (it == null || it.Root == null || !IsVisible || hide > 0.5 || it.P < 0.5) return null;
+            try
+            {
+                var a = it.Root.PointToScreen(new Point(0, 0));
+                var b = it.Root.PointToScreen(new Point(it.Root.ActualWidth, it.Root.ActualHeight));
+                return new Rect(new Point(a.X / App.Dpi, a.Y / App.Dpi), new Point(b.X / App.Dpi, b.Y / App.Dpi));
+            }
+            catch (InvalidOperationException) { return null; }
+        }
+
+        // The Dock's name and icon for an app window (the app switcher and Mission Control show them).
+        public bool Describe(IntPtr hwnd, out string name, out ImageSource icon)
+        {
+            var it = items.FirstOrDefault(i => !i.IsSep && i.Wins.Any(w => w.Hwnd == hwnd));
+            name = it != null ? it.Name : null;
+            icon = it != null && it.Img != null ? it.Img.Source : null;
+            return it != null;
+        }
+
         List<IntPtr> WindowsOf(DockItem it)
         {
             if (it.Kind == "finder") return App.Finders.Select(f => new WindowInteropHelper(f).Handle).ToList();
@@ -669,12 +692,25 @@ namespace OpenDock
             var fg = Native.GetForegroundWindow();
             if (it.Wins.Any(w => w.Hwnd == fg && !Native.IsIconic(w.Hwnd)))   // a minimized window can still be "foreground"; that should restore, not minimize
             {
-                foreach (var w in it.Wins) Native.ShowWindow(w.Hwnd, Native.SW_MINIMIZE);
+                // The window you're in pours into the icon (Genie); the app's others just go.
+                var front = it.Wins.FirstOrDefault(w => w.Hwnd == fg) ?? it.Wins[0];
+                foreach (var w in it.Wins) if (w != front) Native.ShowWindow(w.Hwnd, Native.SW_MINIMIZE);
+                if (front.InternalKind != null) MinimizeOurs(front.Hwnd); else AppEffects.Minimize(front.Hwnd);
                 return;
             }
             if (it.Wins.All(w => Native.IsIconic(w.Hwnd)))
+            {
                 for (int i = it.Wins.Count - 1; i > 0; i--) Native.ShowWindow(it.Wins[i].Hwnd, Native.SW_SHOWNOACTIVATE);
+                if (it.Wins[0].InternalKind == null) { AppEffects.Restore(it.Wins[0].Hwnd); return; }   // the Genie, backwards
+            }
             Native.Activate(it.Wins[0].Hwnd);
+        }
+
+        static void MinimizeOurs(IntPtr h)
+        {
+            var src = HwndSource.FromHwnd(h);
+            var mw = src == null ? null : src.RootVisual as MacWindow;
+            if (mw != null) mw.AnimatedMinimize(); else Native.ShowWindow(h, Native.SW_MINIMIZE);
         }
 
         void ToggleStack(DockItem it)
@@ -737,6 +773,7 @@ namespace OpenDock
                     if (it.Wins.Count > 0)
                     {
                         cm.Items.Add(new Separator());
+                        cm.Items.Add(Item("Show All Windows", () => MissionControl.Toggle(it.Wins[0].Hwnd)));
                         cm.Items.Add(Item("Hide", () => { foreach (var w in it.Wins) Native.ShowWindow(w.Hwnd, Native.SW_MINIMIZE); }));
                         cm.Items.Add(Item("Quit", () => { foreach (var w in it.Wins) Native.PostMessage(w.Hwnd, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero); }));
                     }

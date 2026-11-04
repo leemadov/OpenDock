@@ -245,6 +245,7 @@ namespace OpenDock
             };
             IsVisibleChanged += delegate { if (IsVisible) tick.Start(); else tick.Stop(); };
             NowPlaying.Changed += delegate { if (IsVisible) Relayout(Build); };
+            Notify.Changed += delegate { if (IsVisible) Relayout(Build); };
         }
 
         protected override void Prepare() { NowPlaying.Start(); Build(); }
@@ -255,6 +256,39 @@ namespace OpenDock
             ClearTiles();
             double w = Width - 2 * Pad, y = Pad;
             var now = DateTime.Now;
+
+            // Notifications first, newest on top, as macOS stacks them above the widgets.
+            if (Notify.History.Count > 0)
+            {
+                var clear = Add(new GlassTile(new Rect(Pad + w - 86, y, 86, 26), 13) { Interactive = true, Cursor = Cursors.Hand });
+                var ct = Text("Clear All", 12, FontWeights.Medium); ct.HorizontalAlignment = HorizontalAlignment.Center;
+                clear.Body.Children.Add(ct);
+                clear.MouseLeftButtonUp += delegate { Notify.Clear(); Relayout(Build); };
+                y += 26 + 8;
+                foreach (var n in Notify.History.Take(4))
+                {
+                    var note = n;
+                    var tile = Add(new GlassTile(new Rect(Pad, y, w, 66), 22) { Interactive = true, Cursor = Cursors.Hand });
+                    var row = new DockPanel { Margin = new Thickness(12, 0, 14, 0) };
+                    FrameworkElement icon = note.Icon != null || note.Glyph == null
+                        ? (FrameworkElement)new Image { Source = note.Icon, Width = 32, Height = 32 }
+                        : new Border { Width = 32, Height = 32, CornerRadius = new CornerRadius(8), Background = new SolidColorBrush(note.Tint), Child = new TextBlock { Text = note.Glyph, FontFamily = Theme.Glyphs, FontSize = 16, Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
+                    icon.VerticalAlignment = VerticalAlignment.Center; icon.Margin = new Thickness(0, 0, 10, 0);
+                    DockPanel.SetDock(icon, Dock.Left); row.Children.Add(icon);
+                    var words = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+                    var head = new DockPanel();
+                    var when = Text(Ago(note.At), 11, FontWeights.Normal, true); DockPanel.SetDock(when, Dock.Right);
+                    head.Children.Add(when); head.Children.Add(Text(note.App, 11, FontWeights.Normal, true));
+                    words.Children.Add(head);
+                    words.Children.Add(Text(note.Title, 13, FontWeights.SemiBold));
+                    if (!string.IsNullOrEmpty(note.Body)) words.Children.Add(Text(note.Body.Replace("\n", " "), 12.5, FontWeights.Normal));
+                    row.Children.Add(words);
+                    tile.Body.Children.Add(row);
+                    tile.MouseLeftButtonUp += delegate { Dismiss(false); if (note.Open != null) note.Open(); };
+                    y += 66 + 8;
+                }
+                y += G - 8;
+            }
 
             var date = Add(new GlassTile(new Rect(Pad, y, w, 86), 28));
             var dg = new Grid { Margin = new Thickness(20, 0, 20, 0) };
@@ -317,6 +351,14 @@ namespace OpenDock
             link.Body.Children.Add(lt);
             link.MouseLeftButtonUp += delegate { Dismiss(true); Native.SendKeys(0x5B, 0x4E); };
             Height = y + 30 + Pad;
+        }
+
+        static string Ago(DateTime at)
+        {
+            var span = DateTime.Now - at;
+            if (span.TotalMinutes < 1) return "now";
+            if (span.TotalHours < 1) return (int)span.TotalMinutes + "m ago";
+            return at.Date == DateTime.Today ? at.ToString("t") : at.ToString("ddd t");
         }
 
         // This month, weeks starting on the day your region starts them; today in a red circle.

@@ -166,8 +166,16 @@ namespace OpenDock
             musicTile = Add(new GlassTile(new Rect(X(2), Y(0), 2 * U + G, 2 * U + G), 32));
 
             focusTile = Pill(2, 0, out focusDot, out focusGlyph, "\uE708", "Focus", out focusSub);
-            focusTile.MouseLeftButtonUp += delegate { Sys.Toasts = !Sys.Toasts; ShowFocus(); };
-            Circle(2, 2, "\uE7C4", "Task View", delegate { Dismiss(true); Native.SendKeys(0x5B, 0x09); });
+            // The round switch turns Do Not Disturb on and off; the rest of the tile lists every Focus.
+            focusDot.MouseLeftButtonUp += (s, e) => { e.Handled = true; FocusMode.Set(FocusMode.Active ? 0 : 1, null); ShowFocus(); };
+            focusTile.MouseLeftButtonUp += delegate
+            {
+                var cm = FocusMode.Menu();
+                cm.PlacementTarget = focusTile; cm.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+                cm.Closed += delegate { ShowFocus(); };
+                cm.IsOpen = true;
+            };
+            Circle(2, 2, "\uE7C4", "Mission Control", delegate { Dismiss(true); Later(200, () => MissionControl.Toggle(IntPtr.Zero)); });
             Circle(3, 2, "\uEC15", "Cast to a display", delegate { Dismiss(true); Native.SendKeys(0x5B, 0x4B); });
 
             displayTile = SliderTile(3, "Display", "\uEC8A", "\uE706", out brightness);
@@ -217,10 +225,11 @@ namespace OpenDock
 
         void ShowFocus()
         {
-            bool dnd = !Sys.Toasts;
-            Dot(focusDot, focusGlyph, dnd, Purple);
-            focusSub.Text = dnd ? "Do Not Disturb" : "";
-            focusSub.Visibility = dnd ? Visibility.Visible : Visibility.Collapsed;
+            bool on = FocusMode.Active;
+            Dot(focusDot, focusGlyph, on, on ? FocusMode.Colors2[Settings.Focus] : Purple);
+            focusGlyph.Text = on ? FocusMode.Glyph : "";
+            focusSub.Text = FocusMode.Name;
+            focusSub.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
         }
 
         void ShowDark()

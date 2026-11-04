@@ -113,7 +113,7 @@ namespace OpenDock
                 {
                     changed(s,e);
                     // A browser renames file.zip.crdownload (or .part) to file.zip once the download is complete.
-                    if(Partial(e.OldFullPath)&&!Partial(e.FullPath)) { var ui=System.Windows.Application.Current; string name=Path.GetFileName(e.FullPath); if(ui!=null) ui.Dispatcher.BeginInvoke(new Action(()=>Island.Downloaded(name))); }
+                    if(Partial(e.OldFullPath)&&!Partial(e.FullPath)) { var ui=System.Windows.Application.Current; string name=Path.GetFileName(e.FullPath); if(ui!=null) ui.Dispatcher.BeginInvoke(new Action(()=>Notify.Downloaded(name))); }
                 };
                 downloadsWatcher.EnableRaisingEvents=true;
             }
@@ -131,7 +131,7 @@ namespace OpenDock
         static void Clock() { if(clock==null) return; if(end.HasValue) clock.Start(); else clock.Stop(); }
         public static void Tick()
         {
-            if(end.HasValue&&end.Value<=DateTime.UtcNow) { end=null; paused=TimeSpan.Zero; System.Media.SystemSounds.Asterisk.Play(); Workspace.Status="Timer finished."; Island.TimerDone(); }
+            if(end.HasValue&&end.Value<=DateTime.UtcNow) { end=null; paused=TimeSpan.Zero; System.Media.SystemSounds.Asterisk.Play(); Workspace.Status="Timer finished."; Notify.TimerDone(); }
             Clock();
             foreach(var dock in App.Docks) dock.RefreshBadges();
             Island.Refresh();

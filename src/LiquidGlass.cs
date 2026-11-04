@@ -276,6 +276,7 @@ namespace OpenDock
             string[] dark = { "#F2FFFFFF", "#B3FFFFFF", "#33FFFFFF", "#40FFFFFF", "#F2FFFFFF", "#14FFFFFF", "#1FFFFFFF", "#1FFFFFFF" };
             string[] pale = { "#E6000000", "#8C000000", "#17000000", "#21000000", "#80000000", "#0D000000", "#A6F7F7F9", "#12000000" };
             for (int i = 0; i < keys.Length; i++) Resources[keys[i]] = Theme.B(bright ? pale[i] : dark[i]);
+            Resources["CcTint"] = Theme.Tint(bright ? pale[6] : dark[6]);   // the Liquid Glass slider
             // The rim catches light at the top-left and bottom-right corners; the sheen fades down from the top.
             Resources["CcRim"] = Gradient(new Point(0, 0), new Point(1, 1), bright
                 ? new[] { "#FFFFFFFF", "#99FFFFFF", "#14000000", "#80FFFFFF", "#F2FFFFFF" }

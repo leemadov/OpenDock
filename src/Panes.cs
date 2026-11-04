@@ -236,6 +236,14 @@ namespace OpenDock
         {
             var top = Group(body);
             Toggle(top, "Allow notifications", Sys.Toasts, v => Sys.Toasts = v);
+            AddSwitch(top, "Show app notifications as macOS banners", Settings.Banners, v => Settings.Banners = v);
+            Note(body, "Banners slide in at the top right and stay in Notification Center (click the date and time). Windows still shows its own pop-up too: to see only OpenDock's, turn off \"Show notification banners\" for an app in Windows Settings.");
+            var win = Group(body);
+            var open = new DockPanel();
+            var go = Pill("Open Windows Settings", () => Launcher.Shell("ms-settings:notifications"));
+            DockPanel.SetDock(go, Dock.Right);
+            open.Children.Add(go); open.Children.Add(Text("Windows notification settings", 13, "Fg"));
+            Row(win, open);
             Load(body, Sys.NotifyApps, (ids, slot) =>
             {
                 var apps = ids.Select(id => new { Id = id, App = Apps.ById(id) }).Where(a => a.App != null).GroupBy(a => a.App.Name).Select(g => g.First()).OrderBy(a => a.App.Name).ToList();
@@ -249,8 +257,12 @@ namespace OpenDock
         void Focus(StackPanel body)
         {
             var g = Group(body);
-            Toggle(g, "Do Not Disturb", !Sys.Toasts, v => Sys.Toasts = !v);
-            Note(body, "Do Not Disturb silences every notification banner and sound until you turn it off. Choose which apps can notify you in Notifications.");
+            for (int i = 1; i < FocusMode.Names.Length; i++)
+            {
+                int mode = i;
+                Toggle(g, FocusMode.Names[i], Settings.Focus == i, v => { FocusMode.Set(v ? mode : 0, null); Show("Focus", false); });
+            }
+            Note(body, "A Focus holds back notification banners and sounds (they still collect in Notification Center) and shows its symbol in the menu bar. Turn one on for an hour or until tomorrow from Control Center or the menu bar.");
         }
 
         // ----- Sound -----

@@ -12,6 +12,8 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Shell;
 using System.Windows.Threading;
@@ -49,22 +51,164 @@ namespace OpenDock
             StateChanged += delegate { ChromeBody.Margin = WindowState == WindowState.Maximized ? new Thickness(7) : new Thickness(0); App.QueueRefresh(); };
             Activated += delegate { Paint(true); };
             Deactivated += delegate { Paint(false); };
+            // OpenDock's own switch only: many PCs have Windows' animation effects off, which would leave it never playing
+            SourceInitialized += delegate { if (Settings.OpenAnimation && WindowState == WindowState.Normal) zooming = Cloak(true); };
+            ContentRendered += delegate { if (zooming) ZoomOpen(); };
+            SourceInitialized += delegate
+            {
+                var h = new WindowInteropHelper(this).Handle;
+                int off = 1; Native.DwmSetWindowAttribute(h, 3 /* DWMWA_TRANSITIONS_FORCEDISABLED */, ref off, 4);   // our effects replace Windows'
+                HwndSource.FromHwnd(h).AddHook(WindowHook);
+            };
+            Closing += (s, e) => { if (!e.Cancel) CloseEffect(false); };
+            Closed += delegate { CloseEffect(true); };
         }
 
+        bool zooming, minimized;
+        BitmapSource closingShot; Rect closingFrame;
+
+        // Closing: a picture taken as it closes sinks back and fades where the window was.
+        void CloseEffect(bool closed)
+        {
+            if (!closed) { closingShot = Settings.CloseAnimation && IsVisible && WindowState == WindowState.Normal && !WindowFx.Busy ? WindowFx.Snapshot(this) : null; closingFrame = WindowFx.Frame(this); return; }
+            if (closingShot != null) WindowFx.Close(closingShot, closingFrame);
+            closingShot = null;
+        }
+
+        // Minimize / maximize from anywhere (the title bar, Win+Down, a double-click on the title) plays the macOS
+        // effect; restoring from the Dock plays the Genie backwards.
+        IntPtr WindowHook(IntPtr h, int msg, IntPtr w, IntPtr l, ref bool handled)
+        {
+            if (msg == 0x0112 /* WM_SYSCOMMAND */ && Settings.MinimizeAnimation)
+            {
+                int sc = (int)w.ToInt64() & 0xFFF0;
+                if (sc == 0xF020 /* SC_MINIMIZE */) { handled = true; AnimatedMinimize(); }
+                else if (sc == 0xF030 /* SC_MAXIMIZE */ || (sc == 0xF120 /* SC_RESTORE */ && WindowState == WindowState.Maximized)) { handled = true; AnimatedZoom(); }
+            }
+            else if (msg == 0x0005 /* WM_SIZE */)
+            {
+                int kind = (int)w.ToInt64();
+                if (kind == 1 /* SIZE_MINIMIZED */) minimized = true;
+                else if (minimized)
+                {
+                    minimized = false;
+                    if (Settings.MinimizeAnimation && !WindowFx.Busy && Cloak(true)) Dispatcher.BeginInvoke(new Action(PlayRestore), DispatcherPriority.Loaded);
+                }
+            }
+            return IntPtr.Zero;
+        }
+
+        Rect IconTarget()
+        {
+            var h = new WindowInteropHelper(this).Handle;
+            var frame = WindowFx.Frame(this);
+            var center = new Point(frame.Left + frame.Width / 2, frame.Top + frame.Height / 2);
+            var dock = App.Docks.FirstOrDefault(d => d.MonitorBounds.Contains(center)) ?? App.Dock;
+            var r = dock == null ? null : dock.IconRect(h, this is FinderWindow);
+            if (r.HasValue) return r.Value;
+            var screen = dock != null ? dock.MonitorBounds : DisplayLayout.Bounds;   // a hidden Dock: its middle, at the bottom
+            return new Rect(screen.Left + screen.Width / 2 - 24, screen.Bottom - 56, 48, 48);
+        }
+
+        public void AnimatedMinimize()
+        {
+            if (WindowState == WindowState.Minimized) return;
+            if (!Settings.MinimizeAnimation || WindowFx.Busy || !IsVisible) { WindowState = WindowState.Minimized; return; }
+            var shot = WindowFx.Snapshot(this);
+            var from = WindowFx.Frame(this);
+            var icon = IconTarget();
+            // The real window stays put until the effect's first frame covers it: no blink.
+            WindowFx.Minimize(shot, from, icon, false, Settings.MinimizeEffect == 0, () => { Cloak(true); WindowState = WindowState.Minimized; }, () => Cloak(false));
+        }
+
+        void PlayRestore()
+        {
+            UpdateLayout();
+            WindowFx.Minimize(WindowFx.Snapshot(this), WindowFx.Frame(this), IconTarget(), true, Settings.MinimizeEffect == 0, null, () => Cloak(false));
+        }
+
+        public void AnimatedZoom()
+        {
+            var target = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+            if (!Settings.MinimizeAnimation || WindowFx.Busy || !IsVisible) { WindowState = target; return; }
+            var shot = WindowFx.Snapshot(this);
+            var from = WindowFx.Frame(this);
+            Cloak(true);
+            WindowState = target;
+            Dispatcher.BeginInvoke(new Action(() => { UpdateLayout(); WindowFx.Zoom(shot, from, WindowFx.Frame(this), () => Cloak(false)); }), DispatcherPriority.Loaded);
+        }
+
+        // Cloaked: Windows keeps drawing the window but doesn't show it.
+        bool Cloak(bool on)
+        {
+            int v = on ? 1 : 0;
+            return Native.DwmSetWindowAttribute(new WindowInteropHelper(this).Handle, 13 /* DWMWA_CLOAK */, ref v, 4) == 0;
+        }
+
+        // macOS-style opening: the window grows out of a slightly smaller, see-through copy of itself, with a touch
+        // of overshoot. The real window stays cloaked while a snapshot of it plays the animation, then takes over.
+        void ZoomOpen()
+        {
+            zooming = false;
+            if (ActualWidth < 1 || ActualHeight < 1 || WindowFx.Busy) { Cloak(false); return; }
+            WindowFx.Open(WindowFx.Snapshot(this), WindowFx.Frame(this), () => Cloak(false));
+        }
+
+        // macOS 27's window buttons are drops of Liquid Glass: a glossy bead with a highlight on top. Pressed, a
+        // bead squishes; dragged, it stretches after the pointer like a drop on a rubber band; let go, it springs
+        // back with a wobble. Releasing over it still clicks it.
         protected FrameworkElement TrafficLights()
         {
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(20, 20, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Background = Brushes.Transparent };
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(19, 19, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Background = Brushes.Transparent };
             WindowChrome.SetIsHitTestVisibleInChrome(row, true);
             string[] glyphs = { "×", "−", "+" };
             Action[] acts = { CloseFromChrome, MinimizeFromChrome, ZoomFromChrome };
             for (int i = 0; i < 3; i++)
             {
                 var act = acts[i];
-                var e = new Ellipse { Width = 12, Height = 12, StrokeThickness = 0.8 };
-                var t = new TextBlock { Text = glyphs[i], FontSize = 11, FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Color.FromArgb(160, 60, 0, 0)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, -2, 0, 0), Opacity = 0, IsHitTestVisible = false };
-                var g = new Grid { Width = 12, Height = 12, Margin = new Thickness(0, 0, 8, 0), Background = Brushes.Transparent };
-                g.Children.Add(e); g.Children.Add(t);
-                g.MouseLeftButtonUp += delegate { act(); };
+                var e = new Ellipse { Width = 13, Height = 13, StrokeThickness = 0.7 };
+                var shine = new Ellipse { Width = 8, Height = 4.6, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 1.3, 0, 0), IsHitTestVisible = false,
+                    Fill = new LinearGradientBrush(Color.FromArgb(200, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), 90) };
+                var edge = new Ellipse { Width = 13, Height = 13, StrokeThickness = 0.6, IsHitTestVisible = false,
+                    Stroke = new LinearGradientBrush(Color.FromArgb(0x70, 255, 255, 255), Color.FromArgb(0x10, 255, 255, 255), 90) };
+                var t = new TextBlock { Text = glyphs[i], FontSize = 11, FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Color.FromArgb(170, 70, 0, 0)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, -2, 0, 0), Opacity = 0, IsHitTestVisible = false };
+                var squash = new ScaleTransform(1, 1); var move = new TranslateTransform();
+                var g = new Grid { Width = 13, Height = 13, Margin = new Thickness(0, 0, 8, 0), Background = Brushes.Transparent, RenderTransformOrigin = new Point(0.5, 0.5) };
+                var tg = new TransformGroup(); tg.Children.Add(squash); tg.Children.Add(move); g.RenderTransform = tg;
+                g.Children.Add(e); g.Children.Add(edge); g.Children.Add(shine); g.Children.Add(t);
+                bool pressed = false;
+                g.MouseLeftButtonDown += (s, a) =>
+                {
+                    pressed = true; g.CaptureMouse(); a.Handled = true;
+                    Bead(squash, move, 0.84, 0.84, 0, 0, 90, false);
+                };
+                g.MouseMove += (s, a) =>
+                {
+                    if (!pressed) return;
+                    var p = a.GetPosition(g); double dx = p.X - 6.5, dy = p.Y - 6.5, len = Math.Sqrt(dx * dx + dy * dy);
+                    if (len < 0.01) return;
+                    double pull = len / (1 + len / 14) * 0.55;   // rubber band: follows, then resists
+                    double ox = dx / len * pull, oy = dy / len * pull;
+                    Bead(squash, move, 0.88 + Math.Abs(ox) / 14, 0.88 + Math.Abs(oy) / 14, ox, oy, 0, false);
+                };
+                g.MouseLeftButtonUp += (s, a) =>
+                {
+                    if (!pressed) return;
+                    pressed = false; g.ReleaseMouseCapture();
+                    var p = a.GetPosition(g);
+                    Bead(squash, move, 1, 1, 0, 0, 620, true);
+                    if (p.X > -4 && p.Y > -4 && p.X < 17 && p.Y < 17) act();
+                };
+                g.LostMouseCapture += delegate { if (pressed) { pressed = false; Bead(squash, move, 1, 1, 0, 0, 620, true); } };
+                if (i == 2)
+                {
+                    // Resting on the green button offers macOS 15's tile layouts.
+                    var wait = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(650) };
+                    wait.Tick += delegate { wait.Stop(); if (g.IsMouseOver && !pressed) TileMenu(g); };
+                    g.MouseEnter += delegate { wait.Start(); };
+                    g.MouseLeave += delegate { wait.Stop(); };
+                    g.PreviewMouseLeftButtonDown += delegate { wait.Stop(); };
+                }
                 lights.Add(e); marks.Add(t);
                 row.Children.Add(g);
             }
@@ -74,16 +218,71 @@ namespace OpenDock
             return row;
         }
 
+        void TileMenu(FrameworkElement green)
+        {
+            var owner = Window.GetWindow(green) ?? this;
+            var h = new WindowInteropHelper(owner).Handle;
+            var cm = new ContextMenu { PlacementTarget = green, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom, HorizontalOffset = -16, VerticalOffset = -2 };
+            Action<Tiling.Spot> add = s =>
+            {
+                var mi = new MenuItem { Header = Tiling.Name(s), Icon = Diagram(s) };
+                mi.Click += delegate { Tiling.Move(h, s); };
+                cm.Items.Add(mi);
+            };
+            add(Tiling.Spot.Fill); add(Tiling.Spot.Center);
+            cm.Items.Add(new Separator());
+            foreach (var s in Tiling.MoveSpots) { if (s == Tiling.Spot.TopLeft) cm.Items.Add(new Separator()); add(s); }
+            cm.Items.Add(new Separator());
+            add(Tiling.Spot.Restore);
+            cm.IsOpen = true;
+        }
+
+        // A tiny screen with the spot a layout fills.
+        static FrameworkElement Diagram(Tiling.Spot s)
+        {
+            var c = new Grid { Width = 20, Height = 14 };
+            var frame = new Border { CornerRadius = new CornerRadius(2.5), BorderThickness = new Thickness(1.1) };
+            frame.SetResourceReference(Border.BorderBrushProperty, "MenuFg");
+            c.Children.Add(frame);
+            if (s == Tiling.Spot.Restore) return c;
+            var r = Tiling.Area(new Rect(0, 0, 20, 14), s, 2.2, new Size(10, 7));
+            var fill = new Border { CornerRadius = new CornerRadius(1), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(r.Left, r.Top, 0, 0), Width = r.Width, Height = r.Height };
+            fill.SetResourceReference(Border.BackgroundProperty, "MenuFg");
+            c.Children.Add(fill);
+            return c;
+        }
+
+        static void Bead(ScaleTransform s, TranslateTransform m, double sx, double sy, double x, double y, int ms, bool spring)
+        {
+            if (ms == 0)
+            {
+                s.BeginAnimation(ScaleTransform.ScaleXProperty, null); s.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+                m.BeginAnimation(TranslateTransform.XProperty, null); m.BeginAnimation(TranslateTransform.YProperty, null);
+                s.ScaleX = sx; s.ScaleY = sy; m.X = x; m.Y = y;
+                return;
+            }
+            IEasingFunction ease = spring ? (IEasingFunction)new ElasticEase { Oscillations = 2, Springiness = 4, EasingMode = EasingMode.EaseOut } : new CubicEase { EasingMode = EasingMode.EaseOut };
+            var time = TimeSpan.FromMilliseconds(ms);
+            s.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(sx, time) { EasingFunction = ease });
+            s.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(sy, time) { EasingFunction = ease });
+            m.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(x, time) { EasingFunction = ease });
+            m.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(y, time) { EasingFunction = ease });
+        }
+
         protected virtual void CloseFromChrome() { Close(); }
         protected virtual FrameworkElement ChromeBody { get { return Layout; } }
-        protected virtual void MinimizeFromChrome() { WindowState=WindowState.Minimized; }
-        protected virtual void ZoomFromChrome() { WindowState=WindowState==WindowState.Maximized?WindowState.Normal:WindowState.Maximized; }
+        protected virtual void MinimizeFromChrome() { AnimatedMinimize(); }
+        protected virtual void ZoomFromChrome() { AnimatedZoom(); }
 
         void Paint(bool active)
         {
             for (int i = 0; i < lights.Count; i++)
             {
-                lights[i].Fill = Theme.B(active ? On[i] : Theme.Dark ? "#4A4A4D" : "#D5D5D7");
+                // Glass bead: brighter at the top where the light comes through, deeper at the bottom.
+                var c = (Color)ColorConverter.ConvertFromString(active ? On[i] : Theme.Dark ? "#4A4A4D" : "#D5D5D7");
+                var top = Color.FromRgb((byte)(c.R + (255 - c.R) * 0.28), (byte)(c.G + (255 - c.G) * 0.28), (byte)(c.B + (255 - c.B) * 0.28));
+                var bottom = Color.FromRgb((byte)(c.R * 0.86), (byte)(c.G * 0.86), (byte)(c.B * 0.86));
+                lights[i].Fill = new LinearGradientBrush(new GradientStopCollection { new GradientStop(top, 0), new GradientStop(c, 0.55), new GradientStop(bottom, 1) }, new Point(0, 0), new Point(0, 1));
                 lights[i].Stroke = Theme.B(active ? Rim[i] : Theme.Dark ? "#5A5A5D" : "#C5C5C7");
             }
         }
@@ -991,7 +1190,8 @@ namespace OpenDock
 
             body.Children.Add(Heading("Keyboard Shortcuts"));
             var keys = Group(body);
-            InfoRow(keys, "Spotlight", "Alt+Space");
+            AddSwitch(keys, "Spotlight (Alt+Space)", Settings.Spotlight, v => Settings.Spotlight = v);
+            AddSwitch(keys, "App switcher (Alt+Tab)", Settings.AppSwitcher, v => Settings.AppSwitcher = v);
             InfoRow(keys, "New window of an app", "Middle-click or Shift+click its Dock icon");
         }
 
@@ -1026,6 +1226,23 @@ namespace OpenDock
             DockPanel.SetDock(cards, Dock.Right);
             g.Children.Add(cards); g.Children.Add(name);
             Row(look, g);
+
+            // macOS 27: one slider for how see-through every glass surface is.
+            var lg = new Grid();
+            lg.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+            lg.ColumnDefinitions.Add(new ColumnDefinition());
+            var lgName = Text("Liquid Glass", 13, "Fg"); lgName.VerticalAlignment = VerticalAlignment.Top; lgName.Margin = new Thickness(0, 4, 0, 0);
+            lg.Children.Add(lgName);
+            var lgRight = new StackPanel();
+            var lgSlider = new Slider { Minimum = 0, Maximum = 100, Value = Settings.GlassTint };
+            lgSlider.ValueChanged += delegate { Settings.GlassTint = (int)Math.Round(lgSlider.Value); apply.Stop(); apply.Start(); };
+            var ends = new DockPanel();
+            var tinted = Text("Tinted", 11, "FgDim"); DockPanel.SetDock(tinted, Dock.Right);
+            ends.Children.Add(tinted); ends.Children.Add(Text("Clear", 11, "FgDim"));
+            lgRight.Children.Add(lgSlider); lgRight.Children.Add(ends);
+            Grid.SetColumn(lgRight, 1);
+            lg.Children.Add(lgRight);
+            Row(look, lg);
 
             body.Children.Add(Heading("Icons"));
             var icons = Group(body);
@@ -1071,10 +1288,72 @@ namespace OpenDock
             AddSwitch(dock, "Show indicators for open applications", Settings.Indicators, v => Settings.Indicators = v);
             AddSwitch(dock, "Show open apps that aren't in the Dock", Settings.ShowRunning, v => { Settings.ShowRunning = v; App.QueueRefresh(); });
 
+            // macOS desktop widgets: which ones, and the weather's city.
+            body.Children.Add(Heading("Widgets"));
+            var wg = Group(body);
+            AddSwitch(wg, "Show widgets on the desktop", Settings.Widgets, v => Settings.Widgets = v);
+            var chosen = Widgets.List;
+            for (int i = 0; i < Widgets.Kinds.Length; i++)
+            {
+                var kind = Widgets.Kinds[i];
+                if (kind == "battery" && !Widgets.HasBattery && !chosen.Contains(kind)) continue;
+                AddSwitch(wg, Widgets.Names[i], chosen.Contains(kind), v => Widgets.Set(kind, v));
+            }
+            var cityRow = new DockPanel();
+            var place = Weather.Place;
+            var cityBox = new TextBox { Width = 170, Text = place != null ? place.Name : "", Padding = new Thickness(6, 3, 6, 3), BorderThickness = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
+            cityBox.SetResourceReference(BackgroundProperty, "Field"); cityBox.SetResourceReference(ForegroundProperty, "Fg"); cityBox.SetResourceReference(TextBox.CaretBrushProperty, "Fg");
+            var found = Text(place != null ? "" : "Type a city", 12, "FgDim"); found.Margin = new Thickness(10, 0, 10, 0);
+            Action look = () => { if (cityBox.Text.Trim().Length == 0) return; found.Text = "Looking…"; Weather.Find(cityBox.Text, name => found.Text = name ?? "Couldn't find that city"); };
+            var setCity = Pill("Set", look);
+            cityBox.KeyDown += (s, e) => { if (e.Key == Key.Enter) look(); };
+            DockPanel.SetDock(setCity, Dock.Right); DockPanel.SetDock(cityBox, Dock.Right); DockPanel.SetDock(found, Dock.Right);
+            cityRow.Children.Add(setCity); cityRow.Children.Add(cityBox); cityRow.Children.Add(found);
+            cityRow.Children.Add(Text("Weather location", 13, "Fg"));
+            Row(wg, cityRow);
+            var resetRow = new DockPanel();
+            var reset = Pill("Reset Positions", Widgets.ResetPositions);
+            DockPanel.SetDock(reset, Dock.Right);
+            resetRow.Children.Add(reset); resetRow.Children.Add(Text("Drag widgets to move them; right-click one to remove it.", 12, "FgDim"));
+            Row(wg, resetRow);
+
+            // Every window animation can be turned off here, each on its own.
+            body.Children.Add(Heading("Window Animations"));
+            var anim = Group(body);
+            AddSwitch(anim, "Animate windows opening", Settings.OpenAnimation, v => Settings.OpenAnimation = v);
+            AddSwitch(anim, "Animate windows closing", Settings.CloseAnimation, v => Settings.CloseAnimation = v);
+            AddSwitch(anim, "Animate minimizing, restoring and maximizing", Settings.MinimizeAnimation, v => Settings.MinimizeAnimation = v);
+            var effect = new ComboBox { MinWidth = 180, ItemsSource = new[] { "Genie effect", "Scale effect" }, SelectedIndex = Math.Max(0, Math.Min(1, Settings.MinimizeEffect)) };
+            AddChoice(anim, "Minimize windows using", effect, () => Settings.MinimizeEffect = effect.SelectedIndex);
+            AddSwitch(anim, "Also animate other apps' windows", Settings.AppGenie, v => Settings.AppGenie = v);
+
             body.Children.Add(Heading("Desktop"));
             var desk = Group(body);
             AddSwitch(desk, "Hide the Windows taskbar", Settings.HideTaskbar, v => { Settings.HideTaskbar = v; if (v) Taskbar.Hide(); else Taskbar.Restore(); });
             NavLink(desk, "Wallpaper", "\uE91B", "#32ADE6", "Wallpaper");
+
+            body.Children.Add(Heading("Windows"));
+            var wins = Group(body);
+            AddSwitch(wins, "Tile windows with Ctrl+Alt+arrow keys", Settings.TilingKeys, v => Settings.TilingKeys = v);
+            InfoRow(wins, "Halves \u00B7 Fill \u00B7 Previous size", "Ctrl+Alt+\u2190 \u2192  \u00B7  Enter  \u00B7  Backspace");
+            InfoRow(wins, "More layouts", "Window \u25B8 Move & Resize, or hold the green button");
+
+            body.Children.Add(Heading("Mission Control"));
+            var mc = Group(body);
+            InfoRow(mc, "Mission Control", "Ctrl+Alt+\u2191");
+            InfoRow(mc, "Application windows", "Ctrl+Alt+\u2193, or Show All Windows on a Dock icon");
+
+            body.Children.Add(Heading("Hot Corners"));
+            var hc = Group(body);
+            Action<string, int, Action<int>> corner = (label, value, set) =>
+            {
+                var c = new ComboBox { MinWidth = 200, ItemsSource = HotCorners.Actions, SelectedIndex = Math.Max(0, Math.Min(HotCorners.Actions.Length - 1, value)) };
+                AddChoice(hc, label, c, () => set(c.SelectedIndex));
+            };
+            corner("Top left", Settings.CornerTopLeft, v => Settings.CornerTopLeft = v);
+            corner("Top right", Settings.CornerTopRight, v => Settings.CornerTopRight = v);
+            corner("Bottom left", Settings.CornerBottomLeft, v => Settings.CornerBottomLeft = v);
+            corner("Bottom right", Settings.CornerBottomRight, v => Settings.CornerBottomRight = v);
 
             body.Children.Add(Heading("Launchpad"));
             var lp = Group(body);
