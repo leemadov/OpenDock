@@ -59,7 +59,78 @@ namespace OpenDock
             var topRow = WindowFx.GenieSlice(win, icon, 0.4, 0, 0.05); var bottomRow = WindowFx.GenieSlice(win, icon, 0.4, 0.95, 1);
             Need(bottomRow.Width < topRow.Width, "genie pinches the wrong end");
 
-            Console.WriteLine("macOS 27: Liquid Glass slider, tiling, Mission Control layout and Genie path passed");
+            // Icon styles, on a test icon: a red tile with a white disc on it (the symbol).
+            var dv = new System.Windows.Media.DrawingVisual();
+            using (var dc = dv.RenderOpen())
+            {
+                dc.DrawRectangle(new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(220, 40, 40)), null, new Rect(0, 0, 200, 200));
+                dc.DrawEllipse(System.Windows.Media.Brushes.White, null, new Point(100, 100), 45, 45);
+            }
+            var art = new System.Windows.Media.Imaging.RenderTargetBitmap(200, 200, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+            art.Render(dv); art.Freeze();
+            Func<System.Windows.Media.Imaging.BitmapSource, int, int, byte[]> at = (img, x, y) => { var p = new byte[4]; img.CopyPixels(new Int32Rect(x, y, 1, 1), p, 4, 0); return p; };
+            var blue = System.Windows.Media.Color.FromRgb(0x0A, 0x84, 0xFF);
+            foreach (var dark in new[] { false, true })
+            {
+                // Tinted: the tile and its symbol are both shades of the one colour, and the symbol stands out.
+                var t = IconLook.Style(art, 1, blue, dark);
+                byte[] mid = at(t, 128, 128), side = at(t, 128, 50);
+                Need(mid[0] >= mid[1] && mid[1] >= mid[2] && side[0] >= side[1] && side[1] >= side[2], "a tinted icon isn't all shades of blue");
+                Need(Math.Abs((mid[0] + mid[1] + mid[2]) - (side[0] + side[1] + side[2])) > 60, "the tinted symbol doesn't stand out");
+                // Clear: the glass lets things through; the symbol is solid and stands out from the glass -- white on
+                // dark glass, graphite on light glass.
+                var c = IconLook.Style(art, 2, blue, dark);
+                byte[] glyph = at(c, 128, 128), glass = at(c, 128, 50);
+                if (dark) Need(glyph[3] > 220 && glyph[2] > 200 && glyph[1] > 200 && glyph[0] > 200, "the dark clear icon's symbol isn't white");
+                else Need(glyph[3] > 200 && glyph[2] < 110 && glyph[1] < 110 && glyph[0] < 120, "the light clear icon's symbol isn't dark");
+                Need(glass[3] < 150, "the clear icon's glass isn't see-through");
+            }
+
+            // Wallpaper icon colours: every colour in the picture is found, even a small accent, in hue order.
+            {
+                int pw = 120, ph = 80; var pic = new byte[pw * ph * 4];
+                for (int y = 0; y < ph; y++) for (int x = 0; x < pw; x++)
+                {
+                    int o = (y * pw + x) * 4; byte r, g, b;
+                    if (x >= 54 && x < 62 && y >= 36 && y < 44) { r = 230; g = 0; b = 230; }      // a small magenta accent
+                    else if (x < 60) { if (y < 40) { r = 220; g = 30; b = 30; } else { r = 30; g = 60; b = 220; } }
+                    else { if (y < 40) { r = 40; g = 200; b = 60; } else { r = 240; g = 220; b = 20; } }
+                    pic[o] = b; pic[o + 1] = g; pic[o + 2] = r; pic[o + 3] = 255;
+                }
+                var pal = IconLook.Extract(pic, pw, ph, 8);
+                Func<double, bool> has = want => pal.Any(c => { double hh, ss, ll; IconLook.ToHsl(c, out hh, out ss, out ll); double dh = Math.Abs(hh - want); return Math.Min(dh, 360 - dh) < 14 && ss > 0.5; });
+                Need(has(0) && has(130) && has(229) && has(54), "wallpaper colours: a big area's colour is missing");
+                Need(has(300), "wallpaper colours: the small accent colour is missing");
+                // hue order around the wheel, starting after its widest gap (green 130 -> blue 229 here), so the sweep goes
+                // blue, magenta, red, yellow, green with a single wrap past red
+                int wraps = 0;
+                for (int i = 1; i < pal.Length; i++) { double h0, h1, s, l; IconLook.ToHsl(pal[i - 1], out h0, out s, out l); IconLook.ToHsl(pal[i], out h1, out s, out l); if (h1 < h0) wraps++; }
+                double firstHue, fs, fl; IconLook.ToHsl(pal[0], out firstHue, out fs, out fl);
+                Need(wraps <= 1 && Math.Abs(firstHue - 229) < 14, "wallpaper colours don't sweep around the colour wheel from its widest gap");
+                foreach (var c in pal) { double hh, ss, ll; IconLook.ToHsl(c, out hh, out ss, out ll); Need(ll >= 0.33 && ll <= 0.65, "a wallpaper colour is too dark or too pale for an icon"); }
+                var back = IconLook.FromHsl(210, 0.8, 0.5); double bh, bs, bl; IconLook.ToHsl(back, out bh, out bs, out bl);
+                Need(Math.Abs(bh - 210) < 1.5 && Math.Abs(bs - 0.8) < 0.02 && Math.Abs(bl - 0.5) < 0.01, "HSL conversion doesn't round-trip");
+            }
+
+            // Liquid Glass lens (ported from Kyant's AndroidLiquidGlass): the rounded-rectangle distance and normal,
+            // grey stays grey, the middle isn't bent, and near the rim the glass shows what's further in.
+            Need(Math.Abs(Liquid.SdRoundRect(0, 0, 10, 10, 3) + 10) < 1e-9 && Math.Abs(Liquid.SdRoundRect(10, 0, 10, 10, 3)) < 1e-9 && Math.Abs(Liquid.SdRoundRect(12, 0, 10, 10, 3) - 2) < 1e-9, "rounded-rectangle distance is wrong");
+            double gx, gy; Liquid.GradRoundRect(9, 0, 10, 10, 3, out gx, out gy);
+            Need(Math.Abs(gx - 1) < 1e-9 && Math.Abs(gy) < 1e-9, "the right edge's normal doesn't point right");
+            int W = 100, H = 40;
+            var grey = new byte[W * H * 4]; for (int i = 0; i < grey.Length; i++) grey[i] = 128;
+            var flat = Liquid.Lens(grey, W, H, new Rect(10, 5, 80, 30), 15, 10, 14, true);
+            var fp = new byte[4]; flat.CopyPixels(new Int32Rect(78, 12, 1, 1), fp, 4, 0);
+            Need(Math.Abs(fp[0] - 128) <= 1 && Math.Abs(fp[2] - 128) <= 1, "the lens changed a plain grey backdrop");
+            var ramp = new byte[W * H * 4];
+            for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) { int o = (y * W + x) * 4; ramp[o] = ramp[o + 1] = ramp[o + 2] = (byte)(x * 2); ramp[o + 3] = 255; }
+            var bent = Liquid.Lens(ramp, W, H, new Rect(10, 5, 80, 30), 15, 10, 14, false, 0, 1.0);
+            var centre = new byte[4]; bent.CopyPixels(new Int32Rect(40, 15, 1, 1), centre, 4, 0);
+            var rim = new byte[4]; bent.CopyPixels(new Int32Rect(78, 15, 1, 1), rim, 4, 0);
+            Need(Math.Abs(centre[0] - (50 * 2 + 1)) <= 2, "the lens bends the middle of the glass");
+            Need(rim[0] > 78 * 2 + 4, "near the rim the lens doesn't pull in what's outside the glass");
+
+            Console.WriteLine("macOS 27: Liquid Glass slider, tiling, Mission Control layout, Genie path, icon styles and Liquid Glass lens passed");
         }
     }
 }

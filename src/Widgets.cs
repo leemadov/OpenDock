@@ -80,6 +80,7 @@ namespace OpenDock
                 w.Place(Spot(k));
                 w.Show();
             }
+            foreach (var w in open.Values) w.Exclude();
             string theme = Theme.Dark + "|" + Settings.GlassTint;
             if (theme != shownTheme) { shownTheme = theme; foreach (var w in open.Values) w.Paint(); }
         }
@@ -157,6 +158,7 @@ namespace OpenDock
         const double Pad = 12;   // room for the shadow
         readonly Border card = new Border { CornerRadius = new CornerRadius(22), BorderThickness = new Thickness(1), ClipToBounds = false };
         readonly Grid body = new Grid { ClipToBounds = true };
+        readonly Border sheen = new Border { CornerRadius = new CornerRadius(21), IsHitTestVisible = false };
         Brush fg, dim;
         IntPtr hwnd;
         int lastMinute = -1, lastDay = -1, ticks;
@@ -176,13 +178,16 @@ namespace OpenDock
             card.Margin = new Thickness(Pad);
             card.Effect = new DropShadowEffect { BlurRadius = 16, ShadowDepth = 2, Opacity = 0.25 };
             body.Clip = new RectangleGeometry(new Rect(0, 0, size.Width - 2, size.Height - 2), 21, 21);
-            card.Child = body;
+            var layers = new Grid();
+            layers.Children.Add(sheen); layers.Children.Add(body);
+            card.Child = layers;
             Content = card;
             Build();
             SourceInitialized += delegate
             {
                 hwnd = new WindowInteropHelper(this).Handle;
                 Native.MakeToolWindow(hwnd, kind != "note");   // the note takes typing, the rest never take focus
+                Exclude();
                 HwndSource.FromHwnd(hwnd).AddHook(Hook);
                 Sink();
             };
@@ -230,6 +235,10 @@ namespace OpenDock
 
         public void Place(Point p) { Left = p.X - Pad; Top = p.Y - Pad; Paint(); }
 
+        // Control Center, Notification Center and banners open right over the widgets and build their liquid glass
+        // from what's behind them: they should see the wallpaper there, not milky widget cards.
+        public void Exclude() { if (hwnd != IntPtr.Zero) Glass.Exclude(hwnd); }
+
         // Drag to move; a click without moving opens the widget's app.
         void Drag(MouseButtonEventArgs e)
         {
@@ -272,7 +281,9 @@ namespace OpenDock
         {
             bool dark = Theme.Dark;
             var at = new Rect(Left + Pad, Top + Pad, Math.Max(1, Width - 2 * Pad), Math.Max(1, Height - 2 * Pad));
-            card.Background = Glass.WallpaperPane(Theme.Tint(dark ? "#A61C1C1E" : "#B8F5F5F7"), at);
+            card.Background = Glass.WallpaperPane(Theme.Tint(dark ? "#8C1C1C1E" : "#8CF5F5F7"), at);
+            sheen.Background = new LinearGradientBrush(new GradientStopCollection { new GradientStop(Color.FromArgb(dark ? (byte)0x26 : (byte)0x66, 255, 255, 255), 0),
+                new GradientStop(Color.FromArgb(0x08, 255, 255, 255), 0.45), new GradientStop(Color.FromArgb(0, 255, 255, 255), 1) }, new Point(0, 0), new Point(0, 1));
             card.BorderBrush = new LinearGradientBrush(new GradientStopCollection {
                 new GradientStop(Color.FromArgb(dark ? (byte)0x8C : (byte)0xF2, 255, 255, 255), 0), new GradientStop(Color.FromArgb(0x14, 255, 255, 255), 0.5),
                 new GradientStop(Color.FromArgb(dark ? (byte)0x55 : (byte)0xB3, 255, 255, 255), 1) }, new Point(0, 0), new Point(1, 1));

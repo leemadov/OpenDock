@@ -87,16 +87,16 @@ namespace OpenDock
             }, ready, done, mesh.View, landed);
         }
 
-        // Opening: the window grows out of a slightly smaller, see-through copy of itself, with a touch of overshoot.
+        // Opening, the way macOS does it: the window springs up from 92% of its size and fades in, quick at first and
+        // settling gently -- no bounce, all over in a fifth of a second.
         public static void Open(BitmapSource shot, Rect win, Action done)
         {
-            var area = win; area.Inflate(win.Width * 0.02, win.Height * 0.02);
-            Play(area, 250, (dc, t) =>
+            Play(win, 200, (dc, t) =>
             {
-                double s = BackOut(t, 0.9), k = 0.88 + 0.12 * s;
-                var r = new Rect(win.Left + win.Width * (1 - k) / 2, win.Top + win.Height * (1 - k) / 2, win.Width * k, win.Height * k);
-                r.Offset(-area.Left, -area.Top);
-                dc.PushOpacity(Clamp(t / 0.6));
+                double e = 1 - Math.Pow(1 - t, 4), k = 0.92 + 0.08 * e;
+                var r = new Rect(win.Width * (1 - k) / 2, win.Height * (1 - k) / 2, win.Width * k, win.Height * k);
+                double fade = Clamp(t / 0.4);
+                dc.PushOpacity(1 - (1 - fade) * (1 - fade));
                 Picture(dc, shot, r);
                 dc.Pop();
             }, null, null, done);
@@ -110,7 +110,6 @@ namespace OpenDock
             dc.Pop();
         }
 
-        static double BackOut(double t, double a) { double c = a + 1, u = t - 1; return 1 + c * u * u * u + a * u * u; }
 
         // Closing: the window sinks back a little as it fades away, like macOS.
         public static void Close(BitmapSource shot, Rect win)
@@ -149,15 +148,19 @@ namespace OpenDock
             double x0 = Math.Floor(area.Left * d) / d, y0 = Math.Floor(area.Top * d) / d;
             area = new Rect(x0, y0, Math.Ceiling(area.Right * d) / d - x0, Math.Ceiling(area.Bottom * d) / d - y0);
             var painter = draw != null ? new Painter { Draw = draw } : null;
-            var ghost = new Window
+            // One overlay is kept (hidden) and reused: making a new window each time cost a visible pause at the start.
+            bool reused = pool != null;
+            var ghost = pool ?? new Window
             {
                 WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize, AllowsTransparency = false, Background = Brushes.Transparent,
-                ShowInTaskbar = false, ShowActivated = false, Topmost = true, WindowStartupLocation = WindowStartupLocation.Manual,
-                Left = area.Left, Top = area.Top, Width = Math.Max(1, area.Width), Height = Math.Max(1, area.Height),
-                Content = (object)content ?? painter
+                ShowInTaskbar = false, ShowActivated = false, Topmost = true, WindowStartupLocation = WindowStartupLocation.Manual
             };
-            IntPtr h = IntPtr.Zero;
-            ghost.SourceInitialized += delegate
+            pool = null;
+            ghost.Left = area.Left; ghost.Top = area.Top; ghost.Width = Math.Max(1, area.Width); ghost.Height = Math.Max(1, area.Height);
+            ghost.Content = (object)content ?? painter;
+            IntPtr h = reused ? new WindowInteropHelper(ghost).Handle : IntPtr.Zero;
+            if (reused) Native.SetWindowPos(h, Native.HWND_TOPMOST, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+            else ghost.SourceInitialized += delegate
             {
                 h = new WindowInteropHelper(ghost).Handle;
                 // A bare popup, see-through wherever nothing is drawn, composited by Windows on the GPU.
@@ -208,19 +211,33 @@ namespace OpenDock
                     try { back = landed == null || landed(); } catch { }
                     if (!back && waited.ElapsedMilliseconds < 600) { close.Interval = TimeSpan.FromMilliseconds(16); return; }
                     if (landed != null && close.Interval.TotalMilliseconds < 30) { close.Interval = TimeSpan.FromMilliseconds(50); return; }   // and painted
-                    close.Stop(); ghost.Close(); Busy = false;
+                    close.Stop(); Busy = false;
+                    // hidden again and kept for next time
+                    int hide = 1; Native.DwmSetWindowAttribute(h, 13, ref hide, 4);
+                    ghost.Content = null;
+                    if (pool == null) pool = ghost; else ghost.Close();
                 };
                 close.Start();
             };
-            ghost.Show();
+            if (!reused) ghost.Show();
             CompositionTarget.Rendering += frame;
+        }
+
+        static Window pool;
+
+        // Makes the overlay ahead of time (off screen, invisible), so even the first effect starts at once.
+        public static void Warm()
+        {
+            if (pool != null || Busy) return;
+            Play(new Rect(-20000, -20000, 2, 2), 1, (dc, t) => { }, null, null, null);
         }
 
         class Painter : FrameworkElement
         {
             public Action<DrawingContext, double> Draw;
             public double T;
-            public Painter() { RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.HighQuality); }
+            // GPU filtering: the high-quality filter can drop to drawing on the CPU every frame, which stutters
+            public Painter() { RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.Linear); }
             protected override void OnRender(DrawingContext dc) { Draw(dc, T); }
         }
 

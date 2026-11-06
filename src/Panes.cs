@@ -388,6 +388,45 @@ namespace OpenDock
             Row(top, head);
             Thumb(cur, 520, img => preview.Source = img);
 
+            // OpenDock's own collection: 4K scenes rendered in Blender, each in light and dark.
+            body.Children.Add(Heading("OpenDock Collection"));
+            var art = new WrapPanel();
+            foreach (var design in WallpaperArt.Names)
+                foreach (var dark in new[] { false, true })
+                {
+                    if (!WallpaperArt.Has(design, dark)) continue;
+                    string name = design; bool isDark = dark;
+                    var img = new Image { Width = 140, Height = 84, Stretch = Stretch.UniformToFill, Source = WallpaperArt.Preview(name, isDark) };
+                    img.Clip = new RectangleGeometry(new Rect(0, 0, 140, 84), 6, 6);
+                    var label = new TextBlock { Text = name + (isDark ? " Dark" : " Light"), FontSize = 11, Margin = new Thickness(2, 3, 0, 0) };
+                    label.SetResourceReference(TextBlock.ForegroundProperty, "FgDim");
+                    var tile = new Border { Width = 144, Height = 88, CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(2), Child = img, Cursor = Cursors.Hand };
+                    if (img.Source == null) tile.Background = new LinearGradientBrush(isDark ? Color.FromRgb(0x1A, 0x1C, 0x3A) : Color.FromRgb(0xE8, 0xE4, 0xF4), isDark ? Color.FromRgb(0x3A, 0x1A, 0x4A) : Color.FromRgb(0xCF, 0xE2, 0xF6), 0);
+                    if (string.Equals(cur, WallpaperArt.FileFor(name, isDark), StringComparison.OrdinalIgnoreCase)) tile.SetResourceReference(Border.BorderBrushProperty, "Accent"); else tile.BorderBrush = Brushes.Transparent;
+                    var cell = new StackPanel { Margin = new Thickness(0, 0, 10, 10) };
+                    cell.Children.Add(tile); cell.Children.Add(label);
+                    tile.MouseLeftButtonUp += delegate
+                    {
+                        label.Text = File.Exists(WallpaperArt.FileFor(name, isDark)) ? label.Text : "Downloading…";
+                        var ui = Dispatcher;
+                        var worker = new System.Threading.Thread(() =>
+                        {
+                            string made = null;
+                            try { made = WallpaperArt.Make(name, isDark); } catch (Exception ex) { App.Log(ex); }
+                            ui.BeginInvoke(new Action(() =>
+                            {
+                                if (made == null) { label.Text = "Couldn't make it"; return; }
+                                try { Sys.SetWallpaper(Sys.AddToLibrary(made)); } catch (Exception ex) { App.Log(ex); }
+                                Refresh(300);
+                            }));
+                        }) { IsBackground = true };
+                        worker.SetApartmentState(System.Threading.ApartmentState.STA);
+                        worker.Start();
+                    };
+                    art.Children.Add(cell);
+                }
+            body.Children.Add(art);
+
             var files = Sys.Library();
             body.Children.Add(Heading("Your Wallpapers"));
             var wrap = new WrapPanel();

@@ -212,6 +212,8 @@ namespace OpenDock
         readonly Border card = new Border { CornerRadius = new CornerRadius(20), BorderThickness = new Thickness(1) };
         readonly DispatcherTimer life = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5.5) };
         readonly Border close;
+        readonly Border sheen = new Border { CornerRadius = new CornerRadius(19), IsHitTestVisible = false };
+        readonly List<TextBlock> strong = new List<TextBlock>(), weak = new List<TextBlock>();
         Image iconImage;
         bool leaving;
 
@@ -282,12 +284,17 @@ namespace OpenDock
             var head = new DockPanel();
             var when = new TextBlock { Text = "now", FontSize = 11.5, Foreground = dim };
             DockPanel.SetDock(when, Dock.Right);
-            head.Children.Add(when);
-            head.Children.Add(new TextBlock { Text = n.App ?? "", FontSize = 11.5, Foreground = dim, TextTrimming = TextTrimming.CharacterEllipsis });
+            head.Children.Add(when); weak.Add(when);
+            var app = new TextBlock { Text = n.App ?? "", FontSize = 11.5, Foreground = dim, TextTrimming = TextTrimming.CharacterEllipsis };
+            head.Children.Add(app); weak.Add(app);
             words.Children.Add(head);
-            words.Children.Add(new TextBlock { Text = n.Title ?? "", FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = fg, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 1, 0, 0) });
+            var title = new TextBlock { Text = n.Title ?? "", FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = fg, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 1, 0, 0) };
+            words.Children.Add(title); strong.Add(title);
             if (!string.IsNullOrEmpty(n.Body))
-                words.Children.Add(new TextBlock { Text = n.Body, FontSize = 13, Foreground = fg, TextWrapping = TextWrapping.Wrap, MaxHeight = 36, TextTrimming = TextTrimming.CharacterEllipsis });
+            {
+                var text = new TextBlock { Text = n.Body, FontSize = 13, Foreground = fg, TextWrapping = TextWrapping.Wrap, MaxHeight = 36, TextTrimming = TextTrimming.CharacterEllipsis };
+                words.Children.Add(text); strong.Add(text);
+            }
             g.Children.Add(words);
 
             // macOS' close button sits on the top-left corner, shown while you hover.
@@ -296,7 +303,7 @@ namespace OpenDock
                 Child = new TextBlock { Text = "", FontFamily = Theme.Glyphs, FontSize = 8, Foreground = fg, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
             close.MouseLeftButtonUp += (s, e) => { e.Handled = true; Leave(); };
             var layers = new Grid();
-            layers.Children.Add(g); layers.Children.Add(close);
+            layers.Children.Add(sheen); layers.Children.Add(g); layers.Children.Add(close);
             card.Child = layers;
             Content = card;
 
@@ -304,17 +311,55 @@ namespace OpenDock
             card.MouseLeave += delegate { close.Opacity = 0; life.Start(); };
             card.MouseLeftButtonUp += delegate { Leave(); if (note.Open != null) try { note.Open(); } catch (Exception ex) { App.Log(ex); } };
             life.Tick += delegate { Leave(); };
-            SourceInitialized += delegate { Native.MakeToolWindow(new WindowInteropHelper(this).Handle, true); };
+            slide.X = W + 40;   // starts off to the right, out of sight
+            // Hidden from screen sampling, so it can sample what's behind itself.
+            SourceInitialized += delegate { var h = new WindowInteropHelper(this).Handle; Native.MakeToolWindow(h, true); Glass.Exclude(h); };
             Loaded += delegate
             {
-                // Frosted glass from the wallpaper (no screen capture: a banner must never flicker).
-                var tint = Theme.Tint(dark ? "#B82A2A2D" : "#C7F6F6F8");
-                card.Background = Glass.WallpaperPane(tint, new Rect(Left + Margin2, Top + Margin2, W, Math.Max(1, ActualHeight - 2 * Margin2)));
-                slide.X = W + 40;
+                LiquidGlass();
                 slide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(W + 40, 0, TimeSpan.FromMilliseconds(460)) { EasingFunction = new BackEase { Amplitude = 0.28, EasingMode = EasingMode.EaseOut } });
                 life.Start();
             };
             Closed += delegate { life.Stop(); };
+        }
+
+        // Liquid Glass, as in Control Center: what's behind the banner, bent at its rounded edge like a lens, under a
+        // light tint; dark text over bright things behind it, white over dark. Without live glass: frosted wallpaper.
+        void LiquidGlass()
+        {
+            double d = App.Dpi;
+            const int scale = 1;
+            var at = new Rect(Left + Margin2, Top + Margin2, W, Math.Max(1, ActualHeight - 2 * Margin2));
+            var around = new Rect(Left, Top, W + 2 * Margin2, Math.Max(1, ActualHeight));   // the margin too: what's just outside the edge is what bends into it
+            byte[] px = null; int pw = 0, ph = 0;
+            var h = new WindowInteropHelper(this).Handle;
+            if (Glass.Exclude(h))
+            {
+                long sum = 0;
+                var shot = Glass.Behind((int)Math.Round(around.X * d), (int)Math.Round(around.Y * d), (int)Math.Round(around.Width * d), (int)Math.Round(around.Height * d), 2, ref sum, scale);
+                if (shot != null) { pw = shot.PixelWidth; ph = shot.PixelHeight; px = new byte[pw * ph * 4]; shot.CopyPixels(px, pw * 4, 0); }
+            }
+            bool bright = px != null ? GlassPanel.Bright(px) : !Theme.Dark;
+            if (px != null)
+            {
+                double k = d / scale;
+                double lh, la;
+                Liquid.Strength(at.Height, out lh, out la);
+                card.Background = Glass.Slice(Liquid.Lens(px, pw, ph, new Rect(Margin2 * k, Margin2 * k, at.Width * k, at.Height * k), 20 * k, lh * k, la * k, false), new Rect(0, 0, 1, 1), Theme.Tint(bright ? "#40FFFFFF" : "#26FFFFFF"));
+            }
+            else card.Background = Glass.WallpaperPane(Theme.Tint(bright ? "#B8F6F6F8" : "#B82A2A2D"), at);
+            var fg = bright ? Theme.B("#E6000000") : Brushes.White;
+            var dim = bright ? Theme.B("#8C000000") : Theme.B("#B3FFFFFF");
+            foreach (var t in strong) t.Foreground = fg;
+            foreach (var t in weak) t.Foreground = dim;
+            ((TextBlock)close.Child).Foreground = fg;
+            close.Background = bright ? Theme.B("#F2F4F4F6") : Theme.B("#F23A3A3C");
+            card.BorderBrush = new LinearGradientBrush(new GradientStopCollection {
+                new GradientStop(Color.FromArgb(0xF2, 255, 255, 255), 0), new GradientStop(Color.FromArgb(0x40, 255, 255, 255), 0.22), new GradientStop(Color.FromArgb(0x0D, 255, 255, 255), 0.5),
+                new GradientStop(Color.FromArgb(0x40, 255, 255, 255), 0.78), new GradientStop(Color.FromArgb(0xCC, 255, 255, 255), 1) }, new Point(0, 0), new Point(1, 1));
+            sheen.Background = new LinearGradientBrush(new GradientStopCollection { new GradientStop(Color.FromArgb(bright ? (byte)0x80 : (byte)0x2E, 255, 255, 255), 0),
+                new GradientStop(Color.FromArgb(bright ? (byte)0x1A : (byte)0x0A, 255, 255, 255), 0.4), new GradientStop(Color.FromArgb(0, 255, 255, 255), 1) }, new Point(0, 0), new Point(0, 1));
+            card.Effect = new DropShadowEffect { BlurRadius = 18, ShadowDepth = 3, Opacity = bright ? 0.16 : 0.3 };
         }
 
         void Leave()

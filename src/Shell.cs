@@ -67,6 +67,12 @@ namespace OpenDock
 
         public static void ClearCache() { cache.Clear(); }
 
+        // Each finished Dock tile remembers the clean artwork it was made from (no tile, no shadow), so the Tinted
+        // and Clear styles can rebuild the icon from the real picture.
+        static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ImageSource, BitmapSource> raws = new System.Runtime.CompilerServices.ConditionalWeakTable<ImageSource, BitmapSource>();
+        public static void Remember(ImageSource finished, BitmapSource raw) { if (finished == null || raw == null) return; raws.Remove(finished); raws.Add(finished, raw); }
+        public static BitmapSource RawOf(ImageSource finished) { BitmapSource r; return finished != null && raws.TryGetValue(finished, out r) ? r : null; }
+
         static BitmapSource Load(string path, int size)
         {
             // Store apps: the shell hands back a small logo that blurs when scaled up; their package has a crisp 256px one.
@@ -198,7 +204,9 @@ namespace OpenDock
             content.Effect = new DropShadowEffect { BlurRadius = 12 * k, ShadowDepth = 4 * k, Direction = 270, Opacity = 0.3 };
             var g = new Grid { Width = S, Height = S };
             g.Children.Add(content);
-            return Render(g, S, S);
+            var done = Render(g, S, S);
+            Remember(done, icon);
+            return done;
         }
 
         public static BitmapSource Render(FrameworkElement e, int w, int h)

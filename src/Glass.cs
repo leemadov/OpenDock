@@ -24,6 +24,7 @@ namespace OpenDock
             var px = Icons.CaptureScaled(x, y, w, h, sw, sh);
             if (px == null) return null;
             FillDesktop(px, x, y, w, h, sw, sh);
+            MirrorOffscreen(px, x, y, w, h, sw, sh);
             long s = x * 7919L + y * 31L + w;
             for (int i = 0; i < px.Length; i += 4) s = s * 31 + BitConverter.ToInt32(px, i);
             if (s == sum) return null;
@@ -36,6 +37,42 @@ namespace OpenDock
 
         static System.Collections.Generic.List<Sys.Display> screens;
         static readonly System.Diagnostics.Stopwatch screensAge = new System.Diagnostics.Stopwatch();
+
+        // A window reaching past its screen's edge (Control Center's shadow margin at the right, a banner at the top)
+        // captures nothing out there -- black, or another display. Liquid Glass bends exactly those edge pixels into
+        // view, so fill them with the on-screen picture mirrored at the screen's edge, as if the scene carried on.
+        static void MirrorOffscreen(byte[] px, int x, int y, int w, int h, int sw, int sh)
+        {
+            if (screens == null || screensAge.ElapsedMilliseconds > 5000) { screens = Sys.Screens(); screensAge.Restart(); }
+            int cx = x + w / 2, cy = y + h / 2;
+            var d = screens.Find(s => cx >= s.Bounds.Left && cx < s.Bounds.Right && cy >= s.Bounds.Top && cy < s.Bounds.Bottom);
+            if (d == null) return;
+            var m = d.Bounds;
+            Func<double, int, int> at = (v, n) => Math.Max(0, Math.Min(n, (int)Math.Round(v)));
+            int x0 = at((m.Left - x) * (double)sw / w, sw), x1 = at((m.Right - x) * (double)sw / w, sw);
+            int y0 = at((m.Top - y) * (double)sh / h, sh), y1 = at((m.Bottom - y) * (double)sh / h, sh);
+            if (x0 == 0 && y0 == 0 && x1 == sw && y1 == sh) return;   // all on screen: the usual case
+            if (x1 - x0 < 1 || y1 - y0 < 1) return;
+            Func<int, int, int, int> reflect = (v, lo, hi) =>
+            {
+                int n = hi - lo; if (n == 1) return lo;
+                int t = v - lo, period = 2 * n;
+                t = ((t % period) + period) % period;
+                return lo + (t < n ? t : period - 1 - t);
+            };
+            for (int j = 0; j < sh; j++)
+            {
+                bool rowIn = j >= y0 && j < y1;
+                int sj = rowIn ? j : reflect(j, y0, y1);
+                for (int i = 0; i < sw; i++)
+                {
+                    if (rowIn && i >= x0 && i < x1) continue;
+                    int si = i >= x0 && i < x1 ? i : reflect(i, x0, x1);
+                    int o = (j * sw + i) * 4, f = (sj * sw + si) * 4;
+                    px[o] = px[f]; px[o + 1] = px[f + 1]; px[o + 2] = px[f + 2]; px[o + 3] = px[f + 3];
+                }
+            }
+        }
 
         // Newer Windows builds draw the wallpaper where screen capture can't see it: the bare desktop comes back
         // pure black. Paint those pixels from the wallpaper we already loaded, so the glass still shows it.

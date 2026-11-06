@@ -26,7 +26,15 @@ namespace OpenDock
             if (shadow) img.Effect = new DropShadowEffect { BlurRadius = 12, ShadowDepth = 4, Direction = 270, Opacity = 0.3 };
             var host = new Grid { Width = 256, Height = 256 };
             host.Children.Add(img);
-            return Icons.Render(host, 256, 256);
+            var done = Icons.Render(host, 256, 256);
+            // the same artwork without its shadow, cropped to the tile, for the Tinted and Clear icon styles
+            var plainImg = new Image { Source = new DrawingImage(g), Width = 256, Height = 256 };
+            var plainHost = new Grid { Width = 256, Height = 256 };
+            plainHost.Children.Add(plainImg);
+            var plain = new CroppedBitmap(Icons.Render(plainHost, 256, 256), new Int32Rect((int)Tile.X, (int)Tile.Y, (int)Tile.Width, (int)Tile.Height));
+            plain.Freeze();
+            Icons.Remember(done, plain);
+            return done;
         }
 
         static BitmapSource finder, launchpad, downloads, trash, trashFull, settings, computer, shelf;

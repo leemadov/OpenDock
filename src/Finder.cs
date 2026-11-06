@@ -1247,6 +1247,43 @@ namespace OpenDock
             body.Children.Add(Heading("Icons"));
             var icons = Group(body);
             AddSwitch(icons, "Uniform icon tiles", Settings.IconTiles, v => Settings.IconTiles = v);
+            // macOS 26/27 icon style: Default, or Tinted -- every Dock icon in one colour.
+            var style = new ComboBox { MinWidth = 180, ItemsSource = new[] { "Default", "Tinted (one color)", "Clear (Liquid Glass)" }, SelectedIndex = Math.Max(0, Math.Min(2, Settings.IconStyle)) };
+            var swatches = new WrapPanel { Margin = new Thickness(0, 2, 0, 2) };
+            Action paint = null;
+            paint = () =>
+            {
+                swatches.Children.Clear();
+                // "Wallpaper": every icon takes a different colour from the wallpaper, sweeping through all of them.
+                bool wallSel = string.Equals(Settings.IconTint, IconLook.WallpaperTint, StringComparison.OrdinalIgnoreCase);
+                var wallColors = IconLook.Palette();
+                var sweep = new LinearGradientBrush { StartPoint = new Point(0, 0.5), EndPoint = new Point(1, 0.5) };
+                for (int i = 0; i < wallColors.Length; i++) sweep.GradientStops.Add(new GradientStop(wallColors[i], wallColors.Length == 1 ? 0 : i / (double)(wallColors.Length - 1)));
+                var wallBtn = new Border { Height = 22, CornerRadius = new CornerRadius(11), Padding = new Thickness(10, 0, 10, 0), Margin = new Thickness(0, 0, 12, 0), Cursor = Cursors.Hand,
+                    Background = sweep, BorderThickness = new Thickness(wallSel ? 2.5 : 0), ToolTip = "Match the wallpaper: each icon gets one of its colors",
+                    Child = new TextBlock { Text = "Wallpaper", FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center,
+                        Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 3, ShadowDepth = 0, Opacity = 0.7 } } };
+                wallBtn.SetResourceReference(Border.BorderBrushProperty, "Fg");
+                wallBtn.MouseLeftButtonUp += delegate { Settings.IconTint = IconLook.WallpaperTint; Settings.IconStyle = 1; style.SelectedIndex = 1; paint(); apply.Stop(); apply.Start(); };
+                swatches.Children.Add(wallBtn);
+                for (int i = 0; i < IconLook.Colors.Length; i++)
+                {
+                    string hex = IconLook.Colors[i];
+                    bool sel = string.Equals(hex, Settings.IconTint, StringComparison.OrdinalIgnoreCase);
+                    var dot = new Border { Width = 22, Height = 22, CornerRadius = new CornerRadius(11), Margin = new Thickness(0, 0, 9, 0), Cursor = Cursors.Hand, ToolTip = IconLook.Names[i],
+                        Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)), BorderThickness = new Thickness(sel ? 2.5 : 0) };
+                    dot.SetResourceReference(Border.BorderBrushProperty, "Fg");
+                    dot.MouseLeftButtonUp += delegate { Settings.IconTint = hex; Settings.IconStyle = 1; style.SelectedIndex = 1; paint(); apply.Stop(); apply.Start(); };
+                    swatches.Children.Add(dot);
+                }
+                swatches.Opacity = Settings.IconStyle == 1 ? 1 : 0.45;
+            };
+            paint();
+            AddChoice(icons, "Dock icon style", style, () => { Settings.IconStyle = style.SelectedIndex; paint(); });
+            var tintRow = new DockPanel();
+            DockPanel.SetDock(swatches, Dock.Right);
+            tintRow.Children.Add(swatches); tintRow.Children.Add(Text("Icon color", 13, "Fg"));
+            Row(icons, tintRow);
         }
 
         void ControlCenter(StackPanel body)

@@ -55,6 +55,8 @@ namespace OpenDock
         public static bool Bounce = true;
         public static bool Indicators = true;
         public static bool IconTiles = true;
+        public static int IconStyle = 0;           // 0 = Default (full colour), 1 = Tinted (every Dock icon in one colour)
+        public static string IconTint = "#0A84FF"; // the Tinted colour
         public static bool ShowRunning = true;
         public static int Appearance = 2;         // 0 = follow Windows, 1 = light, 2 = dark
         public static bool FirstRun = true;
@@ -481,6 +483,9 @@ namespace OpenDock
             Notify.Start();
             AppSwitcher.Start();
             AppEffects.Start();
+            var warm = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            warm.Tick += delegate { warm.Stop(); WindowFx.Warm(); };
+            warm.Start();
             Widgets.Start();
             LastForeground = Native.GetForegroundWindow();
         }

@@ -27,6 +27,8 @@ namespace OpenDock
         public Border Root; public Image Img; public Ellipse Dot;
         public Border Badge; public TextBlock BadgeText;
         public int IconVersion;
+        public double TintAt = -1;                 // where along the Dock its colour was picked (wallpaper-coloured icons)
+        public Image Lens; public Rect LensAt; public int LensVersion = -1;   // Clear icons: the backdrop bent by the icon's glass
         public readonly ScaleTransform Scale = new ScaleTransform(1, 1);
         // P = presence (0..1, grows/shrinks the slot), X = smoothed resting centre, CX/S = magnified centre/scale.
         public double P, PWant = 1, X = double.NaN, CX, S = 1, DotA, BounceT0 = -1, BounceStop;
@@ -91,11 +93,16 @@ namespace OpenDock
         public Rect MonitorBounds { get { return DisplayLayout.Dip(Screen.Bounds); } }
         public Rect MonitorWorkArea { get { return DisplayLayout.Dip(Screen.Work); } }
         int iconRevision=Settings.IconRevision;
+        string look=IconLook.Key;
         bool closed, pinsNeedRefresh, repairingPlacement;
         readonly DispatcherTimer trashTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
         readonly Canvas canvas = new Canvas(), layer = new Canvas();
         readonly Image wall = new Image { Stretch = Stretch.Fill };
         readonly RectangleGeometry wallClip = new RectangleGeometry();
+        // Liquid Glass on the dock: the live capture behind it, bent at the pane's rounded edge (see Liquid.Lens).
+        readonly Image lensImg = new Image { Stretch = Stretch.Fill, IsHitTestVisible = false, Visibility = Visibility.Collapsed };
+        byte[] capPx; int capW, capH, capVersion; Rect capRect, lensAt; bool lensDirty;
+        Geometry iconClip; double iconClipSize;
         readonly Border bg = new Border { BorderThickness = new Thickness(1) }, sheen = new Border { IsHitTestVisible = false }, outline = new Border { BorderThickness = new Thickness(1), IsHitTestVisible = false };
         readonly Border label = new Border { CornerRadius = new CornerRadius(7), Padding = new Thickness(10, 3, 10, 4), Opacity = 0, IsHitTestVisible = false };
         readonly TextBlock labelText = new TextBlock { FontSize = 13, FontFamily = Theme.Font, MaxWidth = 180, TextTrimming = TextTrimming.CharacterEllipsis };
@@ -145,7 +152,7 @@ namespace OpenDock
             sheen.SetResourceReference(Border.BackgroundProperty, "DockSheen");
             bg.Child = sheen;
             outline.SetResourceReference(Border.BorderBrushProperty, "DockOutline");
-            canvas.Children.Add(wall); canvas.Children.Add(outline); canvas.Children.Add(bg); canvas.Children.Add(layer); canvas.Children.Add(label); canvas.Children.Add(edge);
+            canvas.Children.Add(wall); canvas.Children.Add(lensImg); canvas.Children.Add(outline); canvas.Children.Add(bg); canvas.Children.Add(layer); canvas.Children.Add(label); canvas.Children.Add(edge);
             Content = canvas;
 
             MouseEventHandler enter = delegate { App.Dock = this; hovering = true; StartLoop(); };
@@ -211,11 +218,16 @@ namespace OpenDock
             OnFullScreen(true);
         }
 
-        void OnWallpaper() { if (!live) { wall.Source = Wallpaper.Blurred; StartLoop(); } }
+        void OnWallpaper()
+        {
+            if (IconLook.FromWallpaper && look != IconLook.Key) { look = IconLook.Key; Restyle(); }   // new wallpaper, new colours
+            if (!live) { wall.Source = Wallpaper.Blurred; StartLoop(); }
+        }
         void OnSettings()
         {
             if (closed) return;
-            if (tiles != Settings.IconTiles || iconRevision != Settings.IconRevision) { tiles = Settings.IconTiles; iconRevision=Settings.IconRevision; ReloadIcons(); }
+            if (tiles != Settings.IconTiles || iconRevision != Settings.IconRevision) { tiles = Settings.IconTiles; iconRevision=Settings.IconRevision; look = IconLook.Key; ReloadIcons(); }
+            else if (look != IconLook.Key) { look = IconLook.Key; Restyle(); }
             Place();
         }
 
@@ -287,14 +299,63 @@ namespace OpenDock
             if (!IsVisible || hide > 0.99 || bgR <= bgL) return;
             double d = App.Dpi, x0 = Math.Max(0, Math.Floor(bgL - magSlot)), x1 = Math.Min(W, Math.Ceiling(bgR + magSlot)), y0 = Math.Max(0, Math.Floor(bgTop - 8));
             var area = Physical(new Rect(x0, y0, Math.Max(1, x1 - x0), Math.Max(1, H - y0)));
-            var shot = Glass.Behind((int)Math.Round((Left + area.Left) * d), (int)Math.Round((Top + area.Top) * d), (int)Math.Round(area.Width * d), (int)Math.Round(area.Height * d), 1, ref glassSum);
+            var shot = Glass.Behind((int)Math.Round((Left + area.Left) * d), (int)Math.Round((Top + area.Top) * d), (int)Math.Round(area.Width * d), (int)Math.Round(area.Height * d), 1, ref glassSum, 2);   // half resolution: crisp enough to see the backdrop bend
             // Nothing changed: check less and less often (down to once a second). A change brings back ~12 checks a second.
             if (shot == null) { glassTimer.Interval = TimeSpan.FromMilliseconds(Math.Min(1000, glassTimer.Interval.TotalMilliseconds * 1.5)); return; }
             glassTimer.Interval = TimeSpan.FromMilliseconds(80);
             wall.Source = shot;
             wallX = area.Left; wallY = area.Top; wall.Width = area.Width; wall.Height = area.Height;
+            capW = shot.PixelWidth; capH = shot.PixelHeight; capPx = new byte[capW * capH * 4]; shot.CopyPixels(capPx, capW * 4, 0);
+            capRect = area; lensDirty = true; capVersion++;
             Canvas.SetLeft(wall, wallX); Canvas.SetTop(wall, wallY);
             StartLoop();   // re-clip to the pane at the new spot
+        }
+
+        // Bends the captured backdrop at the pane's edge -- only when the pane moved or the picture changed.
+        void LensPane(Rect pane, double radius)
+        {
+            if (!live || position != 0 || capPx == null || pane.Width < 4 || pane.Height < 4) { lensImg.Visibility = Visibility.Collapsed; return; }
+            if (lensDirty || Math.Abs(pane.X - lensAt.X) > 0.3 || Math.Abs(pane.Width - lensAt.Width) > 0.3 || Math.Abs(pane.Y - lensAt.Y) > 0.3 || Math.Abs(pane.Height - lensAt.Height) > 0.3)
+            {
+                double sx = capW / Math.Max(1, capRect.Width), sy = capH / Math.Max(1, capRect.Height);
+                var r = new Rect((pane.X - capRect.X) * sx, (pane.Y - capRect.Y) * sy, pane.Width * sx, pane.Height * sy);
+                double lh, la;
+                Liquid.Strength(pane.Height, out lh, out la);
+                lensImg.Source = Liquid.Lens(capPx, capW, capH, r, radius * sy, lh * sy, la * sy, false);
+                lensAt = pane; lensDirty = false;
+            }
+            Canvas.SetLeft(lensImg, pane.X); Canvas.SetTop(lensImg, pane.Y);
+            lensImg.Width = pane.Width; lensImg.Height = pane.Height;
+            lensImg.Clip = new RectangleGeometry(new Rect(0, 0, pane.Width, pane.Height), radius, radius);
+            lensImg.Visibility = Visibility.Visible;
+        }
+
+        // Clear (Liquid Glass) icons: each icon is its own piece of glass, so what's behind it bends at its rim too.
+        // The icon's picture keeps the symbol, sheen and rim; this is the refracted backdrop under it, taken from the
+        // dock's capture where the icon really is (magnified, bouncing) and redone only when it moved or the picture changed.
+        void LensIcon(DockItem it, double s, double bounce, double iconBase)
+        {
+            bool want = live && position == 0 && capPx != null && IconLook.Clear && it != drag && s > 0.05;
+            if (!want) { if (it.Lens != null) it.Lens.Visibility = Visibility.Collapsed; return; }
+            var face = it.Root.Child as Grid;
+            if (face == null) return;
+            if (it.Lens == null) { it.Lens = new Image { Stretch = Stretch.Fill, IsHitTestVisible = false }; face.Children.Insert(0, it.Lens); }
+            double inset = slot * 16 / 256.0, tile = slot - 2 * inset;   // the glass tile inside the 256 px icon picture
+            var r = new Rect(it.CX - slot * s / 2 + inset * s, iconBase - bounce - slot * s + inset * s, tile * s, tile * s);
+            if (it.LensVersion != capVersion || Math.Abs(r.X - it.LensAt.X) > 0.3 || Math.Abs(r.Y - it.LensAt.Y) > 0.3 || Math.Abs(r.Width - it.LensAt.Width) > 0.3)
+            {
+                double sx = capW / Math.Max(1, capRect.Width), sy = capH / Math.Max(1, capRect.Height);
+                var cr = new Rect((r.X - capRect.X) * sx, (r.Y - capRect.Y) * sy, Math.Max(2, r.Width * sx), Math.Max(2, r.Height * sy));
+                double lh, la;
+                Liquid.Strength(r.Width, out lh, out la);
+                it.Lens.Source = Liquid.Lens(capPx, capW, capH, cr, r.Width * 0.26 * sx, lh * sx, la * 1.15 * sx, true);
+                it.LensAt = r; it.LensVersion = capVersion;
+            }
+            if (iconClip == null || Math.Abs(iconClipSize - tile) > 0.01) { iconClip = IconLook.Squircle(tile); iconClip.Freeze(); iconClipSize = tile; }
+            it.Lens.Width = it.Lens.Height = tile;
+            it.Lens.HorizontalAlignment = HorizontalAlignment.Center; it.Lens.VerticalAlignment = VerticalAlignment.Center;
+            it.Lens.Clip = iconClip;
+            it.Lens.Visibility = Visibility.Visible;
         }
 
         public void OnFullScreen(bool fs)
@@ -405,17 +466,19 @@ namespace OpenDock
         void LoadIcon(DockItem it)
         {
             int version=++it.IconVersion;
-            Action<ImageSource> set=image=> { if(version==it.IconVersion) it.Img.Source=image; };
+            // Every icon passes through the icon style (Default, or Tinted: all one colour).
+            double at = it.TintAt = TintPos(it);
+            Action<ImageSource> set=image=> { if(version==it.IconVersion) it.Img.Source=IconLook.Apply(image, at); };
             string custom=CustomIcons.Get(it.IconKey);
             if(custom!=null) { Icons.Get(custom,true,set); return; }
             switch (it.Kind)
             {
-                case "finder": it.Img.Source = Art.Finder; break;
-                case "launchpad": it.Img.Source = Art.Launchpad; break;
-                case "stack": it.Img.Source = Art.Downloads; break;
-                case "shelf": it.Img.Source = Art.Shelf; break;
-                case "trash": trashFull = Launcher.TrashFull(); it.Img.Source = Art.Trash(trashFull); break;
-                case "internal": it.Img.Source = it.RunKey == "opendock:settings" ? Art.Settings : Art.Computer; break;
+                case "finder": set(Art.Finder); break;
+                case "launchpad": set(Art.Launchpad); break;
+                case "stack": set(Art.Downloads); break;
+                case "shelf": set(Art.Shelf); break;
+                case "trash": trashFull = Launcher.TrashFull(); set(Art.Trash(trashFull)); break;
+                case "internal": set(it.RunKey == "opendock:settings" ? Art.Settings : Art.Computer); break;
                 default: Icons.Get(it.IconPath, true, set); break;
             }
         }
@@ -424,6 +487,26 @@ namespace OpenDock
         {
             Icons.ClearCache();
             foreach (var it in items.Where(i => !i.IsSep)) LoadIcon(it);
+        }
+
+        // A new icon style: the icons are already loaded, they only need recolouring.
+        void Restyle() { foreach (var it in items.Where(i => !i.IsSep)) LoadIcon(it); }
+
+        // With wallpaper colours each icon's colour comes from its place along the Dock (first icon = first colour,
+        // last icon = last colour), so it's picked again once icons are added, removed or reordered.
+        double TintPos(DockItem it)
+        {
+            if (!IconLook.FromWallpaper) return 0.5;
+            var shown = items.Where(i => !i.IsSep && i.PWant > 0).ToList();
+            int n = shown.Count, at = shown.IndexOf(it);
+            return n <= 1 || at < 0 ? 0.5 : at / (double)(n - 1);
+        }
+
+        void Retint()
+        {
+            if (!IconLook.FromWallpaper) return;
+            foreach (var it in items.Where(i => !i.IsSep && i.PWant > 0).ToList())
+                if (Math.Abs(TintPos(it) - it.TintAt) > 1e-6) LoadIcon(it);
         }
 
         void UpdateTrash()
@@ -1049,12 +1132,13 @@ namespace OpenDock
                 }
             }
 
-            // Fit even a crowded vertical dock, including the extra room needed for magnification.
+            // Like macOS, a crowded dock grows right out to the screen's edges before its icons start to shrink.
+            // (Magnification then makes do with the room there is: see the edge limit below.)
             double requested = Math.Max(36, Math.Min(96, Settings.IconSize));
             double requestedMag = Settings.Magnify ? Math.Max(Math.Min(160, Settings.MagnifySize), requested) : requested;
             double units = items.Sum(i => (i.IsSep ? 0.34 : 1) * i.P);
             double gaps = Math.Max(0, items.Sum(i => i.P) - 1);
-            double fit = DisplayLayout.FitScale(W, requested * units + Settings.DockSpacing * gaps, (requestedMag - requested) * 2.6);
+            double fit = DisplayLayout.FitScale(W, requested * (units + 0.2) + Settings.DockSpacing * gaps, 0);
             slot = requested * fit; magSlot = requestedMag * fit;
             // Each gap grows and shrinks with its icon's presence.
             double sp = Settings.DockSpacing * fit, total = items.Sum(i => BaseW(i) + sp * i.P) - (items.Count > 0 ? sp * items[items.Count - 1].P : 0);
@@ -1071,8 +1155,15 @@ namespace OpenDock
             double mx = m.X, hideY = hide * (bgH + Gap + 10);
             double bottom = H - Gap + hideY, iconBase = bottom - 6, pad = Math.Round(slot * 0.09);
             double L = items.Min(i => i.X - BaseW(i) / 2), Rr = items.Max(i => i.X + BaseW(i) / 2);
-            bgL = L + A * Shift(L - mx, R) - pad;
-            bgR = Rr + A * Shift(Rr - mx, R) + pad;
+            // A dock that already reaches the edges can't magnify past them: the swell is limited to the room left,
+            // and the whole row slides inward so the end you're pointing at stays on screen.
+            const double inset = 4;
+            double gL = Shift(L - mx, R), gR = Shift(Rr - mx, R), room = W - 2 * inset - (Rr - L + 2 * pad);
+            if (A > 0 && gR - gL > 0.001 && A * (gR - gL) > room) A = Math.Max(0, room / (gR - gL));
+            bgL = L + A * gL - pad;
+            bgR = Rr + A * gR + pad;
+            double slide = bgL < inset ? inset - bgL : bgR > W - inset ? W - inset - bgR : 0;
+            bgL += slide; bgR += slide;
             bgTop = bottom - bgH;
             double radius = bgH * 0.29;
             SetRect(bg, new Rect(bgL, bgTop, Math.Max(0, bgR - bgL), bgH));
@@ -1081,14 +1172,16 @@ namespace OpenDock
             SetRect(outline, new Rect(bgL - 1, bgTop - 1, Math.Max(0, bgR - bgL) + 2, bgH + 2));
             outline.CornerRadius = new CornerRadius(radius + 1);
             var paneRect = Physical(new Rect(bgL, bgTop, Math.Max(0, bgR - bgL), bgH));
+            var paneAt = paneRect;
             paneRect.Offset(-wallX, -wallY);
             wallClip.Rect = paneRect;
             wallClip.RadiusX = wallClip.RadiusY = radius;
+            LensPane(paneAt, radius);
 
             foreach (var it in items)
             {
                 it.S = 1 + A * Bump(Math.Abs(it.X - mx), R);
-                it.CX = it.X + A * Shift(it.X - mx, R);
+                it.CX = it.X + A * Shift(it.X - mx, R) + slide;
                 if (it.IsSep)
                 {
                     it.Root.Opacity = it.P;
@@ -1110,6 +1203,7 @@ namespace OpenDock
                 it.Scale.ScaleX = it.Scale.ScaleY = it.S * it.P;
                 it.Root.Opacity = it == drag ? 0 : 1;
                 SetRect(it.Root, new Rect(it.CX - slot / 2, iconBase - slot - bounce, slot, slot));
+                LensIcon(it, it.S * it.P, bounce, iconBase);
                 busy |= Approach(ref it.DotA, Settings.Indicators && it.Running ? 1 : 0, 6);
                 it.Dot.Opacity = it.DotA * it.P * 0.85;
                 SetRect(it.Dot, new Rect(it.CX - 2, bottom - 6.5, 4, 4));
@@ -1138,6 +1232,7 @@ namespace OpenDock
             {
                 CompositionTarget.Rendering -= Frame;
                 looping = false;
+                Retint();
             }
         }
     }
