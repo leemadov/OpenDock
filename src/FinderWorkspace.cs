@@ -17,6 +17,7 @@ namespace OpenDock
         readonly Grid panes=new Grid();
         FrameworkElement workspaceRoot;
         bool workspaceClosing;
+        DockPanel tabBar;
         protected override FrameworkElement ChromeBody { get { return workspaceRoot??Layout; } }
         protected override void CloseFromChrome() { (host??this).Close(); }
         protected override void MinimizeFromChrome() { (host??this).AnimatedMinimize(); }
@@ -30,7 +31,7 @@ namespace OpenDock
         {
             tabs.Add(this); activePane=primaryPane=this;
             var root=new DockPanel(); workspaceRoot=root;
-            var bar=new DockPanel { Height=32,Margin=new Thickness(8,0,8,0) };
+            var bar=new DockPanel { Height=32,Margin=new Thickness(8,0,8,0) }; tabBar=bar;
             Action<string,Action> button=(label,action)=> { var b=new Button { Content=label,Margin=new Thickness(2,1,2,1),Padding=new Thickness(8,1,8,1) }; b.SetResourceReference(FrameworkElement.StyleProperty,"Flat"); b.Click+=delegate { action(); }; WindowChrome.SetIsHitTestVisibleInChrome(b,true); DockPanel.SetDock(b,Dock.Right); bar.Children.Add(b); };
             button("Split",ToggleSplit); button("+",()=>NewTab((activePane??this).path));
             var scroll=new ScrollViewer { Content=tabStrip,HorizontalScrollBarVisibility=ScrollBarVisibility.Auto,VerticalScrollBarVisibility=ScrollBarVisibility.Disabled }; WindowChrome.SetIsHitTestVisibleInChrome(scroll,true); bar.Children.Add(scroll);
@@ -81,6 +82,8 @@ namespace OpenDock
             if(workspaceClosing||tabs.Count==0) return;
             if(primaryPane==null||!tabs.Contains(primaryPane)) primaryPane=tabs[0];
             if(activePane==null||(!tabs.Contains(activePane)&&activePane!=splitPane)) activePane=primaryPane;
+            // macOS shows the tab bar only once there's more than one tab (or a split)
+            if(tabBar!=null) tabBar.Visibility=tabs.Count>1||splitPane!=null?Visibility.Visible:Visibility.Collapsed;
             tabStrip.Children.Clear();
             foreach(var p in tabs)
             {

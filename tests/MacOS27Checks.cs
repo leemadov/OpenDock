@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
@@ -77,13 +77,13 @@ namespace OpenDock
                 byte[] mid = at(t, 128, 128), side = at(t, 128, 50);
                 Need(mid[0] >= mid[1] && mid[1] >= mid[2] && side[0] >= side[1] && side[1] >= side[2], "a tinted icon isn't all shades of blue");
                 Need(Math.Abs((mid[0] + mid[1] + mid[2]) - (side[0] + side[1] + side[2])) > 60, "the tinted symbol doesn't stand out");
-                // Clear: the glass lets things through; the symbol is solid and stands out from the glass -- white on
-                // dark glass, graphite on light glass.
+                // Clear: the glass lets things through; the symbol is solid white, and the glass is smoked (darker than
+                // the symbol, never whitened) so the white reads over light wallpapers too.
                 var c = IconLook.Style(art, 2, blue, dark);
                 byte[] glyph = at(c, 128, 128), glass = at(c, 128, 50);
-                if (dark) Need(glyph[3] > 220 && glyph[2] > 200 && glyph[1] > 200 && glyph[0] > 200, "the dark clear icon's symbol isn't white");
-                else Need(glyph[3] > 200 && glyph[2] < 110 && glyph[1] < 110 && glyph[0] < 120, "the light clear icon's symbol isn't dark");
+                Need(glyph[3] > 220 && glyph[2] > 200 && glyph[1] > 200 && glyph[0] > 200, "the clear icon's symbol isn't white");
                 Need(glass[3] < 150, "the clear icon's glass isn't see-through");
+                Need(glass[2] < glass[3] * 0.75, "the clear icon's glass is whitened, so a white symbol would vanish on it");
             }
 
             // Wallpaper icon colours: every colour in the picture is found, even a small accent, in hue order.

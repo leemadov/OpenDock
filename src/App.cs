@@ -57,6 +57,7 @@ namespace OpenDock
         public static bool IconTiles = true;
         public static int IconStyle = 0;           // 0 = Default (full colour), 1 = Tinted (every Dock icon in one colour)
         public static string IconTint = "#0A84FF"; // the Tinted colour
+        public static bool OneColor = true;        // with Tinted icons: widgets, folders and accents in the same colour
         public static bool ShowRunning = true;
         public static int Appearance = 2;         // 0 = follow Windows, 1 = light, 2 = dark
         public static bool FirstRun = true;

@@ -81,8 +81,8 @@ namespace OpenDock
                 w.Show();
             }
             foreach (var w in open.Values) w.Exclude();
-            string theme = Theme.Dark + "|" + Settings.GlassTint;
-            if (theme != shownTheme) { shownTheme = theme; foreach (var w in open.Values) w.Paint(); }
+            string theme = Theme.Dark + "|" + Settings.GlassTint + "|" + (IconLook.OneColor ? IconLook.Accent.ToString() : "");
+            if (theme != shownTheme) { shownTheme = theme; foreach (var w in open.Values) { w.Paint(); w.Build(); } }
         }
 
         public static Size SizeOf(string kind) { return kind == "weather" || kind == "music" || kind == "note" ? new Size(M, S) : new Size(S, S); }
@@ -281,7 +281,11 @@ namespace OpenDock
         {
             bool dark = Theme.Dark;
             var at = new Rect(Left + Pad, Top + Pad, Math.Max(1, Width - 2 * Pad), Math.Max(1, Height - 2 * Pad));
-            card.Background = Glass.WallpaperPane(Theme.Tint(dark ? "#8C1C1C1E" : "#8CF5F5F7"), at);
+            // One color everywhere: the glass takes the icon colour, like Tinted widgets on macOS.
+            var a = IconLook.Accent;
+            card.Background = Glass.WallpaperPane(IconLook.OneColor
+                ? Theme.Tint(string.Format("#{0:X2}{1:X2}{2:X2}{3:X2}", dark ? 0xA6 : 0x99, (int)(a.R * (dark ? 0.55 : 0.92)), (int)(a.G * (dark ? 0.55 : 0.92)), (int)(a.B * (dark ? 0.55 : 0.92))))
+                : Theme.Tint(dark ? "#8C1C1C1E" : "#8CF5F5F7"), at);
             sheen.Background = new LinearGradientBrush(new GradientStopCollection { new GradientStop(Color.FromArgb(dark ? (byte)0x26 : (byte)0x66, 255, 255, 255), 0),
                 new GradientStop(Color.FromArgb(0x08, 255, 255, 255), 0.45), new GradientStop(Color.FromArgb(0, 255, 255, 255), 1) }, new Point(0, 0), new Point(0, 1));
             card.BorderBrush = new LinearGradientBrush(new GradientStopCollection {
@@ -291,8 +295,8 @@ namespace OpenDock
 
         public void Build()
         {
-            fg = Theme.Dark ? Brushes.White : Theme.B("#E6000000");
-            dim = Theme.Dark ? Theme.B("#A6FFFFFF") : Theme.B("#8C000000");
+            fg = Theme.Dark || IconLook.OneColor ? Brushes.White : Theme.B("#E6000000");
+            dim = Theme.Dark || IconLook.OneColor ? Theme.B("#B3FFFFFF") : Theme.B("#8C000000");
             body.Children.Clear();
             hourHand = minuteHand = secondHand = null;
             FrameworkElement c;
@@ -338,7 +342,8 @@ namespace OpenDock
             double size = Widgets.S - 20, c = size / 2;
             var face = new Canvas { Width = size, Height = size, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             bool dark = Theme.Dark;
-            var dial = new Ellipse { Width = size, Height = size, Fill = dark ? Theme.B("#FF1C1C1E") : Brushes.White, Stroke = dark ? Theme.B("#33FFFFFF") : Theme.B("#14000000"), StrokeThickness = 1 };
+            bool mono = IconLook.OneColor;   // one color everywhere: a see-through dial, everything in white
+            var dial = new Ellipse { Width = size, Height = size, Fill = mono ? Theme.B("#1FFFFFFF") : dark ? Theme.B("#FF1C1C1E") : Brushes.White, Stroke = dark || mono ? Theme.B("#33FFFFFF") : Theme.B("#14000000"), StrokeThickness = 1 };
             face.Children.Add(dial);
             for (int i = 1; i <= 12; i++)
             {
@@ -357,9 +362,10 @@ namespace OpenDock
             }
             hourHand = Hand(c, c * 0.48, 4.2, fg);
             minuteHand = Hand(c, c * 0.74, 3.2, fg);
-            secondHand = Hand(c, c * 0.82, 1.3, new SolidColorBrush(Color.FromRgb(0xFF, 0x9F, 0x0A)));
+            Brush hand2 = mono ? (Brush)Brushes.White : new SolidColorBrush(Color.FromRgb(0xFF, 0x9F, 0x0A));
+            secondHand = Hand(c, c * 0.82, 1.3, hand2);
             face.Children.Add(hourHand); face.Children.Add(minuteHand); face.Children.Add(secondHand);
-            var pin = new Ellipse { Width = 7, Height = 7, Fill = new SolidColorBrush(Color.FromRgb(0xFF, 0x9F, 0x0A)), Stroke = fg, StrokeThickness = 1.5 };
+            var pin = new Ellipse { Width = 7, Height = 7, Fill = hand2, Stroke = fg, StrokeThickness = 1.5 };
             Canvas.SetLeft(pin, c - 3.5); Canvas.SetTop(pin, c - 3.5);
             face.Children.Add(pin);
             return face;
@@ -374,7 +380,8 @@ namespace OpenDock
         FrameworkElement Calendar()
         {
             var now = DateTime.Now;
-            var red = new SolidColorBrush(Color.FromRgb(0xFF, 0x45, 0x3A));
+            bool mono = IconLook.OneColor;
+            Brush red = mono ? (Brush)Brushes.White : new SolidColorBrush(Color.FromRgb(0xFF, 0x45, 0x3A));
             var root = new StackPanel { Margin = new Thickness(14, 12, 14, 8) };
             root.Children.Add(T(now.ToString("MMMM").ToUpper(), 11.5, FontWeights.Bold, red));
             var format = CultureInfo.CurrentCulture.DateTimeFormat;
@@ -392,7 +399,7 @@ namespace OpenDock
             for (int i = 0; i < weeks * 7; i++, day = day.AddDays(1))
             {
                 bool today = day.Date == now.Date, other = day.Month != now.Month;
-                var t = T(other ? "" : day.Day.ToString(), 10.5, today ? FontWeights.Bold : FontWeights.Medium, today ? Brushes.White : fg);
+                var t = T(other ? "" : day.Day.ToString(), 10.5, today ? FontWeights.Bold : FontWeights.Medium, today ? (mono ? new SolidColorBrush(IconLook.Accent) : Brushes.White) : fg);
                 t.HorizontalAlignment = HorizontalAlignment.Center; t.VerticalAlignment = VerticalAlignment.Center;
                 var cell = new Border { Width = 19, Height = 19, CornerRadius = new CornerRadius(9.5), Child = t, Margin = new Thickness(0, 0.5, 0, 0.5), Background = today ? red : Brushes.Transparent };
                 grid.Children.Add(cell);
@@ -494,7 +501,7 @@ namespace OpenDock
             int pct = has ? ps.BatteryLifePercent : 100;
             bool charging = ps.ACLineStatus == 1;
             var green = Color.FromRgb(0x30, 0xD1, 0x58);
-            var color = new SolidColorBrush(pct <= 20 && !charging ? Color.FromRgb(0xFF, 0x45, 0x3A) : green);
+            var color = new SolidColorBrush(pct <= 20 && !charging ? Color.FromRgb(0xFF, 0x45, 0x3A) : IconLook.OneColor ? Colors.White : green);
             var root = new Grid();
             double size = 92, c = size / 2, r = c - 5;
             var ring = new Canvas { Width = size, Height = size, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 18, 0, 0), VerticalAlignment = VerticalAlignment.Top };
@@ -520,7 +527,7 @@ namespace OpenDock
         FrameworkElement Note()
         {
             var root = new DockPanel { Margin = new Thickness(16, 12, 12, 10) };
-            var head = T("Notes", 13, FontWeights.Bold, new SolidColorBrush(Color.FromRgb(0xFF, 0xCC, 0x00)));
+            var head = T("Notes", 13, FontWeights.Bold, IconLook.OneColor ? (Brush)Brushes.White : new SolidColorBrush(Color.FromRgb(0xFF, 0xCC, 0x00)));
             DockPanel.SetDock(head, Dock.Top);
             root.Children.Add(head);
             string text = "";

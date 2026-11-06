@@ -1,5 +1,5 @@
 using System.Reflection;
 [assembly: AssemblyTitle("OpenDock")]
 [assembly: AssemblyVersion("0.4.0.0")]
-[assembly: AssemblyFileVersion("0.4.3.0")]
-[assembly: AssemblyInformationalVersion("v0.4.3")]
+[assembly: AssemblyFileVersion("0.4.4.0")]
+[assembly: AssemblyInformationalVersion("v0.4.4")]

@@ -46,6 +46,10 @@ namespace OpenDock
 
         // ---------- Wallpaper colours: every icon gets its own colour, sweeping through all the wallpaper's colours ----------
 
+        // "One color everywhere": with Tinted icons, widgets, Finder's folders and the accent colour take the icon colour too.
+        public static bool OneColor { get { return Tinted && Settings.OneColor; } }
+        public static Color Accent { get { return FromWallpaper ? ColorAt(0.5) : TintColor; } }
+
         public const string WallpaperTint = "wallpaper";
         public static bool FromWallpaper { get { return Tinted && string.Equals(Settings.IconTint, WallpaperTint, StringComparison.OrdinalIgnoreCase); } }
 
@@ -259,10 +263,9 @@ namespace OpenDock
                 double cr, cg, cb, alpha = m;
                 if (style == 1 && dark) { double t = 0.18 + 0.55 * l; cr = tr + (1 - tr) * t; cg = tg + (1 - tg) * t; cb = tb + (1 - tb) * t; }
                 else if (style == 1) { double t = 0.42 * (1 - l); cr = tr * (1 - t); cg = tg * (1 - t); cb = tb * (1 - t); }
-                // Clear: Liquid Glass flips its symbols to suit the glass -- white on dark glass, a deep graphite on
-                // light glass (white on pale glass is what made light-mode Clear icons nearly invisible)
-                else if (dark) { double t = 0.16 * (1 - l); cr = 1 - t; cg = 1 - t * 0.9; cb = 1 - t * 0.7; alpha = m * 0.96; }
-                else { double t = 0.10 + 0.22 * l; cr = t; cg = t + 0.01; cb = t + 0.04; alpha = m * 0.86; }
+                // Clear: bright white symbols, light and dark alike. (Grey or dark symbols vanish over dark
+                // wallpapers; on light glass the white stands out because the glass itself is lightly smoked, below.)
+                else { double t = 0.16 * (1 - l); cr = 1 - t; cg = 1 - t * 0.9; cb = 1 - t * 0.7; alpha = m * (dark ? 0.96 : 0.98); }
                 int i = p * 4;
                 glyph[i] = (byte)(cb * 255 * alpha + 0.5); glyph[i + 1] = (byte)(cg * 255 * alpha + 0.5); glyph[i + 2] = (byte)(cr * 255 * alpha + 0.5); glyph[i + 3] = (byte)(255 * alpha + 0.5);
             }
@@ -277,7 +280,8 @@ namespace OpenDock
             Brush baseFill = style == 1
                 ? (dark ? (Brush)new LinearGradientBrush(towardBlack(0.36), towardBlack(0.13), 90) : new LinearGradientBrush(towardWhite(0.10), towardWhite(0.30), 90))
                 // Clear: thin glass, so the backdrop (bent by the Dock's lens under each icon) shows through
-                : (dark ? new LinearGradientBrush(rgba("#2A2A32", 0.30), rgba("#0A0A0E", 0.42), 90) : new LinearGradientBrush(rgba("#FFFFFF", 0.34), rgba("#FFFFFF", 0.12), 90));
+                // light: a light smoke, the one look tested readable over light and dark wallpapers alike
+                : (dark ? new LinearGradientBrush(rgba("#2A2A32", 0.30), rgba("#0A0A0E", 0.42), 90) : new LinearGradientBrush(rgba("#1C1C24", 0.16), rgba("#1C1C24", 0.30), 90));
             var layers = new Grid { Width = T, Height = T, Clip = shape };
             layers.Children.Add(new Path { Data = shape, Fill = baseFill });
             // the sheen: light pooling in the top half of the glass
@@ -286,9 +290,7 @@ namespace OpenDock
             // the symbol, raised a little off the glass
             var sym = new Image { Source = glyphImg, Width = T, Height = T, Stretch = Stretch.Fill };
             RenderOptions.SetBitmapScalingMode(sym, BitmapScalingMode.HighQuality);
-            sym.Effect = style == 2 && !dark
-                ? new DropShadowEffect { BlurRadius = 3 * k, ShadowDepth = 1.4 * k, Direction = 270, Opacity = 0.7, Color = System.Windows.Media.Colors.White }   // a dark symbol pressed into light glass
-                : new DropShadowEffect { BlurRadius = 6 * k, ShadowDepth = 1.6 * k, Direction = 270, Opacity = style == 2 ? 0.45 : (dark ? 0.45 : 0.18), Color = style == 1 && !dark ? towardBlack(0.35) : Color.FromRgb(0, 0, 0) };
+            sym.Effect = new DropShadowEffect { BlurRadius = 6 * k, ShadowDepth = 1.6 * k, Direction = 270, Opacity = style == 2 ? 0.45 : (dark ? 0.45 : 0.18), Color = style == 1 && !dark ? towardBlack(0.35) : Color.FromRgb(0, 0, 0) };
             layers.Children.Add(sym);
             // the glass' thickness: a soft band inside the edge, lit at the top, shadowed at the bottom
             layers.Children.Add(new Path { Data = shape, StrokeThickness = 7 * k, Stroke = new LinearGradientBrush(new GradientStopCollection {

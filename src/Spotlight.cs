@@ -30,6 +30,8 @@ namespace OpenDock
         public Action Open;
         ImageSource icon;
         public ImageSource Icon { get { return icon; } set { icon = value; if (PropertyChanged != null) PropertyChanged(this, new PropertyChangedEventArgs("Icon")); } }
+        public Brush Tag { get; set; }                     // Finder: the colour tag's dot
+        public bool HasTag { get { return Tag != null; } }
         public event PropertyChangedEventHandler PropertyChanged;
     }
 

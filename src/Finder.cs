@@ -295,14 +295,17 @@ namespace OpenDock
         }
     }
 
-    class SideEntry { public string Name { get; set; } public string Glyph { get; set; } public string Path; public bool IsHeader { get; set; } }
+    class SideEntry { public string Name { get; set; } public string Glyph { get; set; } public string Path; public bool IsHeader { get; set; } public Brush Dot { get; set; } public bool HasDot { get { return Dot != null; } } }
 
     partial class FinderWindow : MacWindow
     {
         const string AppsLocation = "::apps";
         readonly ListBox side = new ListBox();
         readonly ListView files = new ListView();
-        readonly Button viewButton;
+        readonly Button viewButton, listButton;
+        readonly StackPanel crumbs = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        Border location;
+        Action foldersChanged;
         bool listView;
         readonly ObservableCollection<Entry> entries = new ObservableCollection<Entry>();
         readonly TextBlock title = Text("", 15, "Fg", FontWeights.Bold), status = Text("", 11, "FgDim");
@@ -334,20 +337,25 @@ namespace OpenDock
             var origin = DisplayLayout.Clamp(new Point(area.Left + (area.Width - Width) / 2 + n * 28, area.Top + (area.Height - Height) / 2 + n * 28), new Size(Width, Height), area);
             Left = origin.X; Top = origin.Y;
 
-            Layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(210) });
+            Layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(224) });
             Layout.ColumnDefinitions.Add(new ColumnDefinition());
 
-            // sidebar
-            var sideBg = new Border();
-            sideBg.SetResourceReference(Border.BackgroundProperty, "SideBg");
+            // sidebar: macOS 26's floating glass pane, inset from the window's edge, with the traffic lights inside it
+            var sideHolder = new Grid { Margin = new Thickness(8, 8, 4, 8) };
+            var sideShadow = new Border { CornerRadius = new CornerRadius(16), Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 16, ShadowDepth = 2, Direction = 270, Opacity = 0.13 } };
+            sideShadow.SetResourceReference(Border.BackgroundProperty, "SidePane");
+            var sideBg = new Border { CornerRadius = new CornerRadius(16), BorderThickness = new Thickness(1) };
+            sideBg.SetResourceReference(Border.BackgroundProperty, "SidePane");
+            sideBg.SetResourceReference(Border.BorderBrushProperty, "SidePaneEdge");
             var sideGrid = new Grid();
-            sideGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(52) });
+            sideGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(44) });
             sideGrid.RowDefinitions.Add(new RowDefinition());
             sideGrid.Children.Add(TrafficLights());
             side.ItemTemplate = (DataTemplate)Application.Current.Resources["SideRow"];
             side.ItemContainerStyle = (Style)Application.Current.Resources["Bare"];
             side.Background = Brushes.Transparent; side.BorderThickness = new Thickness(0);
             ScrollViewer.SetHorizontalScrollBarVisibility(side, ScrollBarVisibility.Disabled);
+            ScrollViewer.SetVerticalScrollBarVisibility(side, ScrollBarVisibility.Hidden);   // macOS: scrolls, no bar
             side.ItemsSource = Sidebar();
             side.SelectionChanged += delegate
             {
@@ -359,29 +367,33 @@ namespace OpenDock
             Grid.SetRow(side, 1);
             sideGrid.Children.Add(side);
             sideBg.Child = sideGrid;
-            Layout.Children.Add(sideBg);
+            sideHolder.Children.Add(sideShadow); sideHolder.Children.Add(sideBg);
+            Layout.Children.Add(sideHolder);
 
             // toolbar + content
             var main = new Grid();
             Grid.SetColumn(main, 1);
-            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(52) });
-            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(36) });
+            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(58) });
+            main.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             main.RowDefinitions.Add(new RowDefinition());
-            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(26) });
-            var toolbar = new DockPanel { LastChildFill = true, Margin = new Thickness(10, 0, 14, 0) };
-            back = Tool("", () => Back());
-            forward = Tool("", () => Forward());
-            toolbar.Children.Add(back); toolbar.Children.Add(forward);
-            title.Margin = new Thickness(10, 0, 0, 0);
+            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(30) });
+            // the toolbar: glass capsules floating over the window, as in macOS 26
+            var toolbar = new DockPanel { LastChildFill = true, Margin = new Thickness(6, 10, 12, 0), VerticalAlignment = VerticalAlignment.Top };
+            back = Tool("", () => Back());
+            forward = Tool("", () => Forward());
+            toolbar.Children.Add(Capsule(back, forward));
+            title.Margin = new Thickness(12, 0, 0, 0);
+            title.FontSize = 16; title.VerticalAlignment = VerticalAlignment.Center;
             title.TextTrimming = TextTrimming.CharacterEllipsis;
-            var searchBox = new Border { Width = 200, Height = 28, CornerRadius = new CornerRadius(7), Padding = new Thickness(8, 0, 8, 0) };
-            searchBox.SetResourceReference(Border.BackgroundProperty, "Field");
+            var searchBox = new Border { Width = 200, Height = 36, CornerRadius = new CornerRadius(18), Padding = new Thickness(12, 0, 10, 0), BorderThickness = new Thickness(1), Margin = new Thickness(8, 0, 0, 0) };
+            searchBox.SetResourceReference(Border.BackgroundProperty, "Capsule");
+            searchBox.SetResourceReference(Border.BorderBrushProperty, "CapsuleEdge");
             DockPanel.SetDock(searchBox, Dock.Right);
             var sg = new Grid();
             sg.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             sg.ColumnDefinitions.Add(new ColumnDefinition());
-            var mag = Text("", 12, "FgDim"); mag.FontFamily = Theme.Glyphs; mag.Margin = new Thickness(0, 0, 6, 0);
-            var ph = Text("Search", 13, "FgDim"); ph.IsHitTestVisible = false;
+            var mag = Text("", 13, "FgDim"); mag.FontFamily = Theme.Glyphs; mag.Margin = new Thickness(0, 0, 7, 0); mag.VerticalAlignment = VerticalAlignment.Center;
+            var ph = Text("Search", 13, "FgDim"); ph.IsHitTestVisible = false; ph.VerticalAlignment = VerticalAlignment.Center;
             filter.Background = Brushes.Transparent; filter.BorderThickness = new Thickness(0); filter.FontSize = 13; filter.VerticalContentAlignment = VerticalAlignment.Center;
             filter.SetResourceReference(ForegroundProperty, "Fg"); filter.SetResourceReference(TextBox.CaretBrushProperty, "Fg");
             filter.TextChanged += delegate { ph.Visibility = filter.Text.Length == 0 ? Visibility.Visible : Visibility.Hidden; ApplyFilter(); };
@@ -390,26 +402,36 @@ namespace OpenDock
             searchBox.Child = sg;
             WindowChrome.SetIsHitTestVisibleInChrome(searchBox, true);
             toolbar.Children.Add(searchBox);
-            viewButton = Tool("", () => SetView(!listView, true));
-            viewButton.ToolTip = "Switch between icons (Ctrl+1) and list (Ctrl+2)";
-            DockPanel.SetDock(viewButton, Dock.Right);
-            toolbar.Children.Add(viewButton);
+            // tags and more
+            var tagButton = Tool("", () => TagMenu(null));
+            tagButton.ToolTip = "Tags";
+            Button more = null;
+            more = Tool("", () => MoreMenu(more));
+            more.ToolTip = "More";
+            var actions = Capsule(tagButton, more); actions.Margin = new Thickness(8, 0, 0, 0);
+            DockPanel.SetDock(actions, Dock.Right); toolbar.Children.Add(actions);
+            // view switcher: icons / list
+            viewButton = Tool("", () => SetView(false, true));
+            viewButton.ToolTip = "Icons (Ctrl+1)";
+            listButton = Tool("", () => SetView(true, true));
+            listButton.ToolTip = "List (Ctrl+2)";
+            var views = Capsule(viewButton, listButton); views.Margin = new Thickness(8, 0, 0, 0);
+            DockPanel.SetDock(views, Dock.Right); toolbar.Children.Add(views);
             toolbar.Children.Add(title);
-            var toolBg = new Border { Child = toolbar, BorderThickness = new Thickness(0, 0, 0, 1) };
-            toolBg.SetResourceReference(Border.BackgroundProperty, "ToolBg");
-            toolBg.SetResourceReference(Border.BorderBrushProperty, "MenuSep");
-            main.Children.Add(toolBg);
+            main.Children.Add(toolbar);
 
-            address.FontSize = 12; address.Padding = new Thickness(8, 3, 8, 3); address.VerticalContentAlignment = VerticalAlignment.Center;
-            address.ToolTip = "Folder path — Ctrl+L to edit, Enter to open, Escape to cancel";
+            // Go to Folder (Ctrl+L): a path field that shows under the toolbar only while you type a path
+            address.FontSize = 12; address.Padding = new Thickness(10, 5, 10, 5); address.VerticalContentAlignment = VerticalAlignment.Center;
+            address.ToolTip = "Folder path - Enter to open, Escape to cancel";
             address.SetResourceReference(BackgroundProperty, "Field"); address.SetResourceReference(ForegroundProperty, "Fg");
             address.SetResourceReference(TextBox.CaretBrushProperty, "Fg"); address.SetResourceReference(TextBox.BorderBrushProperty, "MenuSep");
             address.KeyDown += (s, e) =>
             {
-                if (e.Key == Key.Enter) { NavigateAddress(); e.Handled = true; }
-                else if (e.Key == Key.Escape) { address.Text = path == AppsLocation ? "Applications" : path; files.Focus(); e.Handled = true; }
+                if (e.Key == Key.Enter) { if (NavigateAddress()) location.Visibility = Visibility.Collapsed; e.Handled = true; }
+                else if (e.Key == Key.Escape) { address.Text = LocationName(path); location.Visibility = Visibility.Collapsed; files.Focus(); e.Handled = true; }
             };
-            var location = new Border { Child = address, Padding = new Thickness(10, 4, 14, 4) };
+            address.LostKeyboardFocus += delegate { location.Visibility = Visibility.Collapsed; };
+            location = new Border { Child = address, Padding = new Thickness(8, 2, 14, 6), Visibility = Visibility.Collapsed };
             Grid.SetRow(location, 1); main.Children.Add(location);
 
 
@@ -445,18 +467,24 @@ namespace OpenDock
             files.KeyDown += OnKey;
             files.MouseRightButtonUp += OnContext;
             files.Drop += OnDrop;
-            files.DragOver += (s, e) => { var target=Under(e.OriginalSource); e.Effects = path == AppsLocation ? DragDropEffects.None : TransferEffect(e.Data.GetData(DataFormats.FileDrop) as string[],target!=null&&target.IsDir?target.Path:path,e.KeyStates,e.AllowedEffects); e.Handled = true; };
+            files.DragOver += (s, e) => { var target=Under(e.OriginalSource); e.Effects = Virtual(path) ? DragDropEffects.None : TransferEffect(e.Data.GetData(DataFormats.FileDrop) as string[],target!=null&&target.IsDir?target.Path:path,e.KeyStates,e.AllowedEffects); e.Handled = true; };
             files.SelectionChanged += delegate { UpdateStatus(); };
             Grid.SetRow(files, 2);
             main.Children.Add(files);
-            status.HorizontalAlignment = HorizontalAlignment.Center;
-            Grid.SetRow(status, 3);
-            main.Children.Add(status);
+            // the path bar along the bottom: where this folder is, each step clickable
+            var pathBar = new DockPanel { Margin = new Thickness(10, 0, 14, 0) };
+            status.VerticalAlignment = VerticalAlignment.Center; status.Margin = new Thickness(10, 0, 0, 0);
+            DockPanel.SetDock(status, Dock.Right); pathBar.Children.Add(status);
+            pathBar.Children.Add(new ScrollViewer { Content = crumbs, HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled });
+            var pathBg = new Border { Child = pathBar, BorderThickness = new Thickness(0, 1, 0, 0) };
+            pathBg.SetResourceReference(Border.BorderBrushProperty, "MenuSep");
+            Grid.SetRow(pathBg, 3);
+            main.Children.Add(pathBg);
             Layout.Children.Add(main);
 
             Layout.PreviewKeyDown += (s, e) =>
             {
-                if (e.Key == Key.L && Keyboard.Modifiers == ModifierKeys.Control) { address.Focus(); address.SelectAll(); e.Handled = true; }
+                if (e.Key == Key.L && Keyboard.Modifiers == ModifierKeys.Control) { GoToFolder(); e.Handled = true; }
                 else if (address.IsKeyboardFocusWithin) return;
                 else if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control) { filter.Focus(); e.Handled = true; }
                 else if (e.SystemKey == Key.Left || (e.Key == Key.Back && !filter.IsKeyboardFocused)) { Back(); e.Handled = true; }
@@ -472,6 +500,7 @@ namespace OpenDock
             Loaded += delegate { App.Finders.Add(this); App.QueueRefresh(); };
             Closed += delegate { App.Finders.Remove(this); DisposePane(); App.QueueRefresh(); };
             appsChanged=delegate { if (path == AppsLocation) Load(); }; Apps.Changed += appsChanged;
+            foldersChanged=delegate { if(paneClosed) return; side.ItemsSource = Sidebar(); Load(); }; FolderLook.Changed += foldersChanged; Theme.Changed += foldersChanged;
 
             selectAfterLoad = select;
             Go(start==AppsLocation||Directory.Exists(start)?start:Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), false);
@@ -518,7 +547,8 @@ namespace OpenDock
             files.SelectedItems.Clear();
             foreach (var entry in selection) files.SelectedItems.Add(entry);
             if (selection.Count > 0) files.ScrollIntoView(selection[0]);
-            ((TextBlock)viewButton.Content).Text = list ? "\uE8A9" : "\uE8FD";
+            if (list) { listButton.SetResourceReference(Control.BackgroundProperty, "Hover"); viewButton.Background = Brushes.Transparent; }
+            else { viewButton.SetResourceReference(Control.BackgroundProperty, "Hover"); listButton.Background = Brushes.Transparent; }
             if (save) { Settings.FinderListView = list; Settings.Save(); }
         }
 
@@ -550,6 +580,9 @@ namespace OpenDock
             foreach (var d in DriveInfo.GetDrives().Where(d => d.IsReady))
                 list.Add(new SideEntry { Name = DriveName(d), Glyph = d.DriveType == DriveType.Removable ? "" : "", Path = d.RootDirectory.FullName });
             list.Add(new SideEntry { Name = "Trash", Glyph = "", Path = "trash" });
+            list.Add(new SideEntry { Name = "Tags", IsHeader = true });
+            for (int i = 0; i < FolderLook.Names.Length; i++)
+                list.Add(new SideEntry { Name = FolderLook.Names[i], Dot = Theme.B(FolderLook.Hex[i]), Path = TagPrefix + i });
             return list;
         }
 
@@ -571,7 +604,7 @@ namespace OpenDock
                 try
                 {
                     if (target == "~") target = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                    if (!System.IO.Path.IsPathRooted(target) && path != AppsLocation) target = System.IO.Path.Combine(path, target);
+                    if (!System.IO.Path.IsPathRooted(target) && !Virtual(path)) target = System.IO.Path.Combine(path, target);
                     target = System.IO.Path.GetFullPath(target);
                     if (!Directory.Exists(target)) { address.ToolTip = "Folder not found. Enter an existing folder path."; return false; }
                 }
@@ -582,8 +615,8 @@ namespace OpenDock
 
         void Go(string target, bool record = true)
         {
-            if (target != AppsLocation && !Directory.Exists(target)) return;
-            if(string.Equals(path,target,StringComparison.OrdinalIgnoreCase)) { address.Text=path==AppsLocation?"Applications":path; filter.Text=""; return; }
+            if (!Virtual(target) && !Directory.Exists(target)) return;
+            if(string.Equals(path,target,StringComparison.OrdinalIgnoreCase)) { address.Text=LocationName(path); filter.Text=""; return; }
             if (record && path != null) { history.Push(path); future.Clear(); }
             path = target;
             filter.Text = "";
@@ -594,14 +627,14 @@ namespace OpenDock
         {
             while(from.Count>0)
             {
-                string target=from.Pop(); if(string.Equals(target,path,StringComparison.OrdinalIgnoreCase)||(target!=AppsLocation&&!Directory.Exists(target))) continue;
+                string target=from.Pop(); if(string.Equals(target,path,StringComparison.OrdinalIgnoreCase)||(!Virtual(target)&&!Directory.Exists(target))) continue;
                 to.Push(path); path=target; filter.Text=""; Load(); return;
             }
             back.IsEnabled=history.Count>0; forward.IsEnabled=future.Count>0;
         }
         void Back() { NavigateHistory(history,future); }
         void Forward() { NavigateHistory(future,history); }
-        void Up() { if (path == AppsLocation) return; var p = Directory.GetParent(path); if (p != null) Go(p.FullName); }
+        void Up() { if (Virtual(path)) return; var p = Directory.GetParent(path); if (p != null) Go(p.FullName); }
 
         void Load()
         {
@@ -611,12 +644,13 @@ namespace OpenDock
             else if(entries.Count>0) restoreSelection=Selected();
             loadedPath=path;
             all=new List<Entry>(); entries.Clear();
-            address.Text = path == AppsLocation ? "Applications" : path;
-            address.ToolTip = path == AppsLocation ? "Applications — enter a folder path to navigate" : path;
+            address.Text = LocationName(path);
+            address.ToolTip = Virtual(path) ? LocationName(path) + " — enter a folder path to navigate" : path;
             back.IsEnabled = history.Count > 0; forward.IsEnabled = future.Count > 0;
             var sideMatch = ((List<SideEntry>)side.ItemsSource).FirstOrDefault(s => s.Path != null && string.Equals(s.Path.TrimEnd('\\'), path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
             side.SelectedItem = sideMatch;
-            Title = title.Text = path == AppsLocation ? "Applications" : sideMatch != null ? sideMatch.Name : (new DirectoryInfo(path).Name);
+            Title = title.Text = Virtual(path) ? LocationName(path) : sideMatch != null ? sideMatch.Name : (new DirectoryInfo(path).Name);
+            UpdateCrumbs();
             if(host!=null) host.RefreshTabs(); else if(tabs.Count>0) RefreshTabs();
             Watch();
             if (path == AppsLocation)
@@ -624,6 +658,7 @@ namespace OpenDock
                 Fill(Apps.All.Select(a => { var app = a; return new Entry { Name = a.Name, Path = a.Exe, Open = () => Launcher.Open(app.Target), Sub = a.Icon, Kind = "Application" }; }).ToList(), id);
                 return;
             }
+            if (TagOf(path) >= 0) { Fill(TaggedEntries(TagOf(path)), id); return; }
             string dir = path;
             Task.Run(() =>
             {
@@ -652,6 +687,7 @@ namespace OpenDock
         void Fill(List<Entry> list, int id)
         {
             if (id != loadId) return;
+            if (path != AppsLocation) foreach (var en in list) en.Tag = FolderLook.TagBrush(en.Path);   // the colour tag's dot by the name
             all = list;
             ApplyFilter();
             foreach (var en in list)
@@ -659,7 +695,7 @@ namespace OpenDock
                 var e = en;
                 if (path == AppsLocation) { Icons.Get(e.Sub, false, i => e.Icon = i, 96); e.Sub = null; continue; }
                 string ext = System.IO.Path.GetExtension(e.Path);
-                if (e.IsDir) Icons.Get(e.Path, false, i => e.Icon = i, 96, false);
+                if (e.IsDir) e.Icon = FolderLook.Icon(e.Path);   // macOS 26 folders, in their tag colour
                 else if (thumbs.Contains(ext)) Icons.Get(e.Path, false, i => e.Icon = i, 128, false);
                 else if (ownIcon.Contains(ext)) Icons.Get(e.Path, false, i => e.Icon = i, 96);
                 else Icons.Get(e.Path, false, i => e.Icon = i, 96, true, "ext" + ext);
@@ -685,7 +721,7 @@ namespace OpenDock
         {
             string s = entries.Count + (entries.Count == 1 ? " item" : " items");
             if (files.SelectedItems.Count > 0) s = files.SelectedItems.Count + " of " + s + " selected";
-            if (path != AppsLocation && path != null)
+            if (!Virtual(path) && path != null)
             {
                 try { var d = new DriveInfo(System.IO.Path.GetPathRoot(path)); s += ", " + Size(d.AvailableFreeSpace) + " available"; } catch { }
             }
@@ -703,7 +739,7 @@ namespace OpenDock
         void Watch()
         {
             if (watcher != null) { watcher.Dispose(); watcher = null; }
-            if (path == AppsLocation) return;
+            if (Virtual(path)) return;
             try
             {
                 watcher = new FileSystemWatcher(path) { NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size };
@@ -718,7 +754,7 @@ namespace OpenDock
         {
             if(paneClosed) return; paneClosed=true;
             if(watcher!=null) { watcher.Dispose(); watcher=null; }
-            reloadSoon.Stop(); loadId++; Apps.Changed-=appsChanged;
+            reloadSoon.Stop(); loadId++; Apps.Changed-=appsChanged; FolderLook.Changed-=foldersChanged; Theme.Changed-=foldersChanged;
         }
 
         // ---------- actions ----------
@@ -759,7 +795,7 @@ namespace OpenDock
 
         void Paste()
         {
-            if (path == AppsLocation || !Clipboard.ContainsFileDropList()) return;
+            if (Virtual(path) || !Clipboard.ContainsFileDropList()) return;
             Transfer(Clipboard.GetFileDropList().Cast<string>().ToArray(), true);
         }
 
@@ -796,7 +832,7 @@ namespace OpenDock
         void OnDrop(object s, DragEventArgs e)
         {
             var dropped = e.Data.GetData(DataFormats.FileDrop) as string[];
-            if (dropped == null || path == AppsLocation) return;
+            if (dropped == null || Virtual(path)) return;
             var target = Under(e.OriginalSource);
             DropInto(dropped, target != null && target.IsDir ? target.Path : path, e);   // dropping onto a folder moves into it
         }
@@ -810,7 +846,7 @@ namespace OpenDock
 
         internal static DragDropEffects TransferEffect(string[] sources,string folder,DragDropKeyStates keys,DragDropEffects allowed)
         {
-            if(sources==null||sources.Length==0||sources.Any(string.IsNullOrWhiteSpace)||string.IsNullOrEmpty(folder)||folder==AppsLocation) return DragDropEffects.None;
+            if(sources==null||sources.Length==0||sources.Any(string.IsNullOrWhiteSpace)||string.IsNullOrEmpty(folder)||Virtual(folder)) return DragDropEffects.None;
             try
             {
                 bool control=(keys&DragDropKeyStates.ControlKey)!=0,shift=(keys&DragDropKeyStates.ShiftKey)!=0;
@@ -863,6 +899,7 @@ namespace OpenDock
                     if (en.Open == null) add("Rename…", RenameSelection, files.SelectedItems.Count == 1);
                     add("Copy Path", () => Clipboard.SetText(en.Path), true);
                     if (en.Open == null) { cm.Items.Add(new Separator()); add("Move to Trash", () => Launcher.Recycle(Selected()), true); }
+                    if (en.Open == null) { cm.Items.Add(new Separator()); TagMenu(cm); }
                 }
                 if (en.Open != null)
                 {
@@ -870,7 +907,7 @@ namespace OpenDock
                     if (app != null) add("Add to Dock", () => App.Dock.Pin(app), true);
                 }
             }
-            else if (path != AppsLocation)
+            else if (!Virtual(path))
             {
                 files.SelectedItems.Clear();
                 add("New Folder", NewFolder, true);
@@ -1284,6 +1321,8 @@ namespace OpenDock
             DockPanel.SetDock(swatches, Dock.Right);
             tintRow.Children.Add(swatches); tintRow.Children.Add(Text("Icon color", 13, "Fg"));
             Row(icons, tintRow);
+            // With Tinted icons: widgets, Finder's folders and highlights take the same colour, like macOS Tinted.
+            AddSwitch(icons, "One color everywhere (widgets, folders, highlights)", Settings.OneColor, v => Settings.OneColor = v);
         }
 
         void ControlCenter(StackPanel body)

@@ -28,7 +28,13 @@ namespace OpenDock
             // The Liquid Glass slider only re-tints: brushes update in place, nothing has to reload.
             int shownTint = Settings.GlassTint;
             Settings.Changed += delegate { if (Settings.GlassTint != shownTint) { shownTint = Settings.GlassTint; Apply(); } };
+            // One color everywhere: the accent follows the icon colour (and the wallpaper, when that's the colour).
+            Action accent = () => { string k = AccentKey; if (k != shownAccent) { Apply(); if (Changed != null) Changed(); } };
+            Settings.Changed += accent; Wallpaper.Changed += accent;
         }
+
+        static string shownAccent = "";
+        static string AccentKey { get { return IconLook.OneColor ? IconLook.Accent.ToString() : ""; } }
 
         // macOS 27's Liquid Glass slider: 0 = clear, 50 = the standard look, 100 = tinted (nearly solid).
         // `a` is a glass tint's standard opacity; returns its opacity at `tint`.
@@ -92,6 +98,19 @@ namespace OpenDock
             r["Card"] = B(Dark ? "#4D3A3A3C" : "#B3FFFFFF");   // grouped rows in System Settings
             r["MenuGlass"] = Tint(Dark ? "#8C2B2B2D" : "#80F6F6F6");
             r["DockSheen"] = Fade(Dark ? "#1AFFFFFF" : "#3DFFFFFF", "#00FFFFFF", 0.6);
+            // Finder's macOS 26 pieces: the floating sidebar and the glass capsules in the toolbar.
+            r["SidePane"] = Tint(Dark ? "#8C323236" : "#B8FAFAFC");
+            r["SidePaneEdge"] = B(Dark ? "#26FFFFFF" : "#14000000");
+            r["Capsule"] = Tint(Dark ? "#8C3A3A3E" : "#D9FFFFFF");
+            r["CapsuleEdge"] = B(Dark ? "#1FFFFFFF" : "#0F000000");
+            shownAccent = AccentKey;
+            if (shownAccent.Length > 0)
+            {
+                var accent = new SolidColorBrush(IconLook.Accent); accent.Freeze();
+                r["Accent"] = accent;
+                var c = IconLook.Accent; var sel = new SolidColorBrush(Color.FromArgb(Dark ? (byte)0x59 : (byte)0x40, c.R, c.G, c.B)); sel.Freeze();
+                r["SelBg"] = sel;
+            }
         }
 
         static Brush Fade(string top, string bottom, double end)
@@ -306,6 +325,26 @@ namespace OpenDock
     <Setter Property='Template'><Setter.Value><ControlTemplate TargetType='ListBoxItem'><ContentPresenter/></ControlTemplate></Setter.Value></Setter>
   </Style>
 
+  <Style x:Key='Pill' TargetType='Button'>
+    <Setter Property='Foreground' Value='{DynamicResource Fg}'/>
+    <Setter Property='Background' Value='Transparent'/>
+    <Setter Property='FocusVisualStyle' Value='{x:Null}'/>
+    <Setter Property='Template'>
+      <Setter.Value>
+        <ControlTemplate TargetType='Button'>
+          <Border x:Name='Bd' CornerRadius='15' Background='{TemplateBinding Background}'>
+            <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center' TextBlock.Foreground='{TemplateBinding Foreground}'/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property='IsMouseOver' Value='True'><Setter TargetName='Bd' Property='Background' Value='{DynamicResource Hover}'/></Trigger>
+            <Trigger Property='IsPressed' Value='True'><Setter TargetName='Bd' Property='Background' Value='{DynamicResource SelBg}'/></Trigger>
+            <Trigger Property='IsEnabled' Value='False'><Setter Property='Opacity' Value='0.35'/></Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <Style x:Key='Flat' TargetType='Button'>
     <Setter Property='Foreground' Value='{DynamicResource FgDim}'/>
     <Setter Property='Background' Value='Transparent'/>
@@ -353,12 +392,15 @@ namespace OpenDock
   </Style>
 
   <DataTemplate x:Key='FinderTile'>
-    <StackPanel Width='104' Margin='2,6' Background='Transparent'>
-      <Border x:Name='IconBd' Width='80' Height='80' CornerRadius='8' Padding='6' HorizontalAlignment='Center'>
+    <StackPanel Width='140' Margin='4,10' Background='Transparent'>
+      <Border x:Name='IconBd' Width='120' Height='110' CornerRadius='12' Padding='6,2' HorizontalAlignment='Center'>
         <Image Source='{Binding Icon}' RenderOptions.BitmapScalingMode='HighQuality'/>
       </Border>
-      <Border x:Name='NameBd' CornerRadius='4' Padding='5,1,5,2' Margin='0,4,0,0' HorizontalAlignment='Center'>
-        <TextBlock x:Name='Label' Text='{Binding Name}' TextWrapping='Wrap' TextAlignment='Center' MaxHeight='34' TextTrimming='CharacterEllipsis' FontSize='12' Foreground='{DynamicResource Fg}'/>
+      <Border x:Name='NameBd' CornerRadius='5' Padding='6,1,6,2' Margin='0,4,0,0' HorizontalAlignment='Center'>
+        <StackPanel Orientation='Horizontal'>
+          <Ellipse x:Name='TagDot' Width='9' Height='9' Margin='0,1,5,0' VerticalAlignment='Center' Fill='{Binding Tag}' Visibility='Collapsed'/>
+          <TextBlock x:Name='Label' Text='{Binding Name}' TextWrapping='Wrap' TextAlignment='Center' MaxHeight='34' MaxWidth='112' TextTrimming='CharacterEllipsis' FontSize='12.5' Foreground='{DynamicResource Fg}'/>
+        </StackPanel>
       </Border>
     </StackPanel>
     <DataTemplate.Triggers>
@@ -367,19 +409,25 @@ namespace OpenDock
         <Setter TargetName='NameBd' Property='Background' Value='{DynamicResource Accent}'/>
         <Setter TargetName='Label' Property='Foreground' Value='White'/>
       </DataTrigger>
+      <DataTrigger Binding='{Binding HasTag}' Value='True'><Setter TargetName='TagDot' Property='Visibility' Value='Visible'/></DataTrigger>
     </DataTemplate.Triggers>
   </DataTemplate>
 
   <DataTemplate x:Key='SideRow'>
     <Border x:Name='Bd' CornerRadius='6' Padding='8,5' Margin='8,1' Background='Transparent'>
       <StackPanel Orientation='Horizontal'>
-        <TextBlock Text='{Binding Glyph}' FontFamily='Segoe Fluent Icons, Segoe MDL2 Assets' FontSize='15' Foreground='{DynamicResource Accent}' Width='24' VerticalAlignment='Center'/>
+        <TextBlock x:Name='Glyph' Text='{Binding Glyph}' FontFamily='Segoe Fluent Icons, Segoe MDL2 Assets' FontSize='15' Foreground='{DynamicResource Accent}' Width='24' VerticalAlignment='Center'/>
+        <Ellipse x:Name='Dot' Width='11' Height='11' Margin='2,0,11,0' Fill='{Binding Dot}' VerticalAlignment='Center' Visibility='Collapsed'/>
         <TextBlock x:Name='Label' Text='{Binding Name}' FontSize='13' Foreground='{DynamicResource Fg}' VerticalAlignment='Center' TextTrimming='CharacterEllipsis'/>
       </StackPanel>
     </Border>
     <DataTemplate.Triggers>
       <DataTrigger Binding='{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}' Value='True'>
         <Setter TargetName='Bd' Property='Background' Value='{DynamicResource SelBg}'/>
+      </DataTrigger>
+      <DataTrigger Binding='{Binding HasDot}' Value='True'>
+        <Setter TargetName='Dot' Property='Visibility' Value='Visible'/>
+        <Setter TargetName='Glyph' Property='Visibility' Value='Collapsed'/>
       </DataTrigger>
       <DataTrigger Binding='{Binding IsHeader}' Value='True'>
         <Setter TargetName='Bd' Property='Margin' Value='0,14,8,2'/>
