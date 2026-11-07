@@ -9,6 +9,8 @@ using System.Text;
 using System.Threading;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
@@ -42,6 +44,13 @@ namespace OpenDock
         public static string WidgetPos = "";       // "kind:fromRight,fromTop;..." in DIPs from the work area's top-right
         public static string WeatherPlace = "";    // "Name|lat|lon" for the weather widget
         public static bool TilingKeys = true;      // Ctrl+Alt+arrows tile the front window; Ctrl+Alt+Up/Down = Mission Control / App Exposé
+        public static bool DragTile = true;        // drag a window to a screen edge or corner to tile it (macOS 15)
+        public static bool DragTileAlt = true;     // hold Alt while dragging a window to tile it anywhere (macOS: Option)
+        public static bool TileMargins = true;     // tiled windows have margins
+        public static bool CycleWindowsKey = true; // Alt+` cycles the front app's windows (macOS: Cmd+`)
+        public static bool StageManager = false;   // Stage Manager: the app you're using in the middle, recent apps in a strip
+        public static bool ScreenshotKeys = true;  // Ctrl+Shift+3 / 4 / 5: Mac-style screenshots to the Desktop
+        public static bool CustomLockScreen = true;  // OpenDock's Mac-style lock screen, unlocked with Windows Hello
         public static bool AppSwitcher = true;     // Alt+Tab shows OpenDock's app switcher instead of Windows'
         public static int CornerTopLeft = 0, CornerTopRight = 0, CornerBottomLeft = 0, CornerBottomRight = 0;   // Hot Corners (HotCorners.Actions)
         public static bool Banners = true;         // app notifications also appear as OpenDock banners at the top right
@@ -55,7 +64,7 @@ namespace OpenDock
         public static bool Bounce = true;
         public static bool Indicators = true;
         public static bool IconTiles = true;
-        public static int IconStyle = 0;           // 0 = Default (full colour), 1 = Tinted (every Dock icon in one colour)
+        public static int IconStyle = 0;           // 0 = Default (full colour), 1 = Tinted (every Dock icon in one colour), 2 = Clear, 3 = Liquid Glass in colour
         public static string IconTint = "#0A84FF"; // the Tinted colour
         public static bool OneColor = true;        // with Tinted icons: widgets, folders and accents in the same colour
         public static bool ShowRunning = true;
@@ -341,6 +350,11 @@ namespace OpenDock
                     // "OpenDock.exe --quit" asks the running copy to exit cleanly (restores the taskbar).
                     var host = Native.FindWindow(null, "OpenDockHost");
                     if (host != IntPtr.Zero && args.Contains("--quit")) Native.PostMessage(host, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                    // "OpenDock.exe --snapshot-dock" asks the running copy to save a picture of its Dock as drawn
+                    // (screenshots can't see it: Live glass keeps it out of screen capture).
+                    if (host != IntPtr.Zero && args.Contains("--snapshot-dock")) Native.PostMessage(host, Native.RegisterWindowMessage("OpenDockSnapshot"), IntPtr.Zero, IntPtr.Zero);
+                    // "OpenDock.exe --lock-screen" shows OpenDock's lock screen (for a keyboard shortcut of your own)
+                    if (host != IntPtr.Zero && args.Contains("--lock-screen")) Native.PostMessage(host, Native.RegisterWindowMessage("OpenDockLock"), IntPtr.Zero, IntPtr.Zero);
                     return;
                 }
                 var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
@@ -425,12 +439,16 @@ namespace OpenDock
             msgWindow = new HwndSource(new HwndSourceParameters("OpenDockHost") { WindowStyle = unchecked((int)0x80000000), Width = 0, Height = 0 });
             uint taskbarCreated = Native.RegisterWindowMessage("TaskbarCreated");
             uint shellHook = Native.RegisterWindowMessage("SHELLHOOK");
+            uint snapshot = Native.RegisterWindowMessage("OpenDockSnapshot");
+            uint lockMsg = Native.RegisterWindowMessage("OpenDockLock");
             msgWindow.AddHook((IntPtr h, int m, IntPtr w, IntPtr l, ref bool handled) =>
             {
                 if (m == Native.WM_HOTKEY && (int)w == 1) ToggleSpotlight();
                 if (m == Native.WM_HOTKEY && Hotkeys.Handle((int)w)) handled = true;
                 if (m == shellHook && (int)w.ToInt64() == 0x8006 /* HSHELL_FLASH */ && WindowFlashed != null) WindowFlashed(l);
                 if (m == Native.WM_CLOSE) { handled = true; Quit(); }
+                if (m == lockMsg) { handled = true; Dispatcher.CurrentDispatcher.BeginInvoke(new Action(LockScreen.Lock)); }
+                if (m == snapshot) { handled = true; Dispatcher.CurrentDispatcher.BeginInvoke(new Action(SnapshotDocks), DispatcherPriority.Background); }
                 if (m == taskbarCreated) Dispatcher.CurrentDispatcher.BeginInvoke(new Action(() =>
                 {
                     if (Settings.HideTaskbar) Taskbar.Hide();
@@ -484,6 +502,8 @@ namespace OpenDock
             Notify.Start();
             AppSwitcher.Start();
             AppEffects.Start();
+            DragTile.Start();
+            StageManager.Start();
             var warm = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             warm.Tick += delegate { warm.Stop(); WindowFx.Warm(); };
             warm.Start();
@@ -596,6 +616,31 @@ namespace OpenDock
             Application.Current.Shutdown();
         }
 
+        // Saves each Dock exactly as it's drawn right now (glass, icons, dots) to dock-snapshot[-N].png in the data
+        // folder, at twice the screen's pixel size, with a transparent background around the pane.
+        static void SnapshotDocks()
+        {
+            int n = 0;
+            foreach (var dock in Docks.ToList())
+            {
+                try
+                {
+                    var content = dock.Content as FrameworkElement;
+                    if (content == null || content.ActualWidth < 1 || content.ActualHeight < 1) continue;
+                    const double sharp = 2;   // twice the screen's pixels, sharp enough to show large (videos, docs)
+                    int w = (int)Math.Round(content.ActualWidth * Dpi * sharp), h = (int)Math.Round(content.ActualHeight * Dpi * sharp);
+                    var rtb = new RenderTargetBitmap(w, h, 96 * Dpi * sharp, 96 * Dpi * sharp, PixelFormats.Pbgra32);
+                    rtb.Render(content);
+                    var enc = new PngBitmapEncoder();
+                    enc.Frames.Add(BitmapFrame.Create(rtb));
+                    string file = Path.Combine(Settings.DataDir, n == 0 ? "dock-snapshot.png" : "dock-snapshot-" + n + ".png");
+                    using (var fs = File.Create(file)) enc.Save(fs);
+                    n++;
+                }
+                catch (Exception ex) { Log(ex); }
+            }
+        }
+
         static void Cleanup()
         {
             if (cleaned) return;
@@ -603,6 +648,7 @@ namespace OpenDock
             try
             {
                 ColorProfiles.Stop();
+                StageManager.Shutdown();   // every window back where it was
                 foreach (var dock in Docks) if (dock.Bar != null) dock.Bar.Remove();
                 if (MenuBar != null) MenuBar.Bar.Remove();
                 if (Settings.HideTaskbar) Taskbar.Release(); else Taskbar.Restore();

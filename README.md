@@ -107,6 +107,6 @@ Packaged icon-theme collections (individual custom icons are available in Dock S
 
 ## License
 
-MIT. OpenDock isn't affiliated with Microsoft, Apple or MyDockFinder. The Windows mark belongs to Microsoft; the other built-in icons are original vector drawings. The wallpapers in `wallpapers/` are original renders made with Blender for OpenDock (`wallpapers/render.py`).
+MIT. OpenDock isn't affiliated with Microsoft, Apple or MyDockFinder. The Windows mark belongs to Microsoft; the other built-in icons are original vector drawings. The rendered wallpapers in `wallpapers/` are original artwork made with Blender for OpenDock (`wallpapers/render.py`); the photo wallpapers are from Wikimedia Commons under CC BY-SA 4.0, credited in `wallpapers/CREDITS.md`.
 
 The Liquid Glass lens (`src/LiquidGlass.cs`) is a port of the refraction, dispersion and interactive-highlight techniques from [Kyant0/AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass), Copyright 2025 Kyant, used under the Apache License 2.0 ([licenses/AndroidLiquidGlass-LICENSE.txt](licenses/AndroidLiquidGlass-LICENSE.txt)).

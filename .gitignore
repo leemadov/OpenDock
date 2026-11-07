@@ -1,1 +1,7 @@
 bin/
+video/renders/
+video/renders1080/
+video/assets/
+video/*.blend1
+video/*.blend2
+video/*.blend

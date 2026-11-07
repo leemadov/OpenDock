@@ -464,6 +464,10 @@ namespace OpenDock
 
         // ---------- Displays (DDC/CI for brightness) ----------
 
+        // Windows' own Snap (dragging windows to edges): SPI_GETWINARRANGING. Read only: it's the user's to change.
+        [DllImport("user32.dll", EntryPoint = "SystemParametersInfo")] static extern bool SpiGetBool(uint action, uint param, out int value, uint ini);
+        public static bool WindowsSnapOn { get { int v; return SpiGetBool(0x0082, 0, out v, 0) && v != 0; } }
+
         public class Display { public IntPtr Monitor; public string Device; public int Width, Height, Hz, Brightness = -1; public bool Primary; public Native.RECT Bounds, Work; }
 
         delegate bool MonitorProc(IntPtr m, IntPtr dc, IntPtr rect, IntPtr data);

@@ -139,14 +139,14 @@ namespace OpenDock
             instance.ToggleFrom(null);   // lined up with the screen's right edge, like macOS
         }
 
-        GlassTile wifiTile, btTile, airTile, focusTile, darkTile, timerTile, musicTile, displayTile;
-        Border wifiDot, focusDot;
-        TextBlock wifiSub, focusSub, wifiGlyph, focusGlyph, muteGlyph;
+        GlassTile wifiTile, btTile, airTile, focusTile, darkTile, timerTile, musicTile, displayTile, stageTile;
+        Border wifiDot, focusDot, stageDot;
+        TextBlock wifiSub, focusSub, wifiGlyph, focusGlyph, muteGlyph, stageGlyph, stageSub;
         Slider2 volume, brightness;
 
         ControlCenterWindow() : base("OpenDock Control Center", 4 * U + 3 * G + 2 * Pad)
         {
-            Height = 6 * U + 6 * G + 30 + 2 * Pad;
+            Height = 7 * U + 7 * G + 30 + 2 * Pad;
             Build();
             NowPlaying.Changed += delegate { if (IsVisible) ShowMusic(); };
         }
@@ -188,7 +188,15 @@ namespace OpenDock
             timerTile = Circle(2, 5, "\uE916", Orange, "Timer", delegate { TimerMenu(); });
             Circle(3, 5, "\uE722", "Screenshot", delegate { Dismiss(true); Later(300, () => Launcher.Shell("ms-screenclip:")); });
 
-            var edit = Add(new GlassTile(new Rect((Width - 124) / 2, Y(6), 124, 30), 15) { Interactive = true, Cursor = Cursors.Hand });
+            // Stage Manager, and two ways to tidy windows, as in macOS' Control Center
+            stageTile = Pill(6, 0, out stageDot, out stageGlyph, "", "Stage Manager", out stageSub);
+            MouseButtonEventHandler stage = (s, e) => { e.Handled = true; StageManager.Toggle(); ShowStage(); };
+            stageDot.MouseLeftButtonUp += stage;
+            stageTile.MouseLeftButtonUp += stage;
+            Circle(2, 6, "", "Tile the front two windows side by side", delegate { Dismiss(true); Later(150, () => Tiling.Arrange(Tiling.Spot.Left, Tiling.Spot.Right)); });
+            Circle(3, 6, "", "Show Desktop", delegate { Dismiss(true); Native.SendKeys(0x5B, 0x44); });
+
+            var edit = Add(new GlassTile(new Rect((Width - 124) / 2, Y(7), 124, 30), 15) { Interactive = true, Cursor = Cursors.Hand });
             edit.Body.Children.Add(new TextBlock { Text = "Edit Controls", FontSize = 13, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
             edit.MouseLeftButtonUp += delegate { Dismiss(false); App.OpenSettings("Control Center"); };
         }
@@ -196,7 +204,7 @@ namespace OpenDock
         protected override void Refresh()
         {
             NowPlaying.Start();
-            ShowMusic(); ShowFocus(); ShowDark(); ShowTimer(); ShowVolume();
+            ShowMusic(); ShowFocus(); ShowDark(); ShowTimer(); ShowVolume(); ShowStage();
             Radios.Load(ShowRadios);
             string device = DisplayLayout.Selected.Device;
             brightness.IsEnabled = false; brightness.Opacity = 0.45;
@@ -230,6 +238,13 @@ namespace OpenDock
             focusGlyph.Text = on ? FocusMode.Glyph : "";
             focusSub.Text = FocusMode.Name;
             focusSub.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        void ShowStage()
+        {
+            bool on = Settings.StageManager;
+            Dot(stageDot, stageGlyph, on, Blue);
+            stageSub.Text = on ? "On" : "Off";
         }
 
         void ShowDark()
@@ -355,7 +370,7 @@ namespace OpenDock
             DockPanel.SetDock(dot, Dock.Left);
             dock.Children.Add(dot);
             var words = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
-            words.Children.Add(Text(name, 14, FontWeights.SemiBold));
+            words.Children.Add(Text(name, name.Length > 10 ? 12.5 : 14, FontWeights.SemiBold));   // "Stage Manager" fits too
             sub = Text("", 11.5, FontWeights.Normal, true);
             words.Children.Add(sub);
             dock.Children.Add(words);

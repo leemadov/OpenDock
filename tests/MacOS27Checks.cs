@@ -84,6 +84,13 @@ namespace OpenDock
                 Need(glyph[3] > 220 && glyph[2] > 200 && glyph[1] > 200 && glyph[0] > 200, "the clear icon's symbol isn't white");
                 Need(glass[3] < 150, "the clear icon's glass isn't see-through");
                 Need(glass[2] < glass[3] * 0.75, "the clear icon's glass is whitened, so a white symbol would vanish on it");
+                // Liquid Glass in colour: the symbol stays as drawn (white here), the tile becomes see-through glass
+                // that keeps the tile's own red.
+                var g3 = IconLook.Style(art, 3, blue, dark);
+                byte[] sym3 = at(g3, 128, 128), tile3 = at(g3, 128, 50);
+                Need(sym3[3] > 220 && sym3[2] > 200 && sym3[1] > 200 && sym3[0] > 200, "the colour glass icon's symbol lost its own colour");
+                Need(tile3[3] < 215 && tile3[3] > 60, "the colour glass icon's tile isn't see-through glass");
+                Need(tile3[2] > tile3[1] * 2 && tile3[2] > tile3[0] * 2, "the colour glass icon's tile lost the icon's red");
             }
 
             // Wallpaper icon colours: every colour in the picture is found, even a small accent, in hue order.
@@ -130,7 +137,33 @@ namespace OpenDock
             Need(Math.Abs(centre[0] - (50 * 2 + 1)) <= 2, "the lens bends the middle of the glass");
             Need(rim[0] > 78 * 2 + 4, "near the rim the lens doesn't pull in what's outside the glass");
 
-            Console.WriteLine("macOS 27: Liquid Glass slider, tiling, Mission Control layout, Genie path, icon styles and Liquid Glass lens passed");
+            // Settings search: the exact option first, then options starting with it; a search that only matches where
+            // things live ("hot corner") lists the settings there, not every menu item inside them.
+            {
+                Func<string, string, string, string, SettingsWindow.HitKind, SettingsWindow.Hit> hit = (text, ctx, sec, pane, kind) =>
+                    new SettingsWindow.Hit { Text = text, Context = ctx, Section = sec, Pane = pane, Kind = kind };
+                var exact = hit("Magnification", null, "Dock", "Desktop & Dock", SettingsWindow.HitKind.Option);
+                var longer = hit("Magnified size", null, "Dock", "Desktop & Dock", SettingsWindow.HitKind.Option);
+                Need(SettingsWindow.Score(exact, "magnification") > SettingsWindow.Score(longer, "magnif"), "search doesn't put the exact option first");
+                Need(SettingsWindow.Score(exact, "magnif") > SettingsWindow.Score(longer, "magnif"), "search doesn't prefer the shorter, closer option");
+                Need(SettingsWindow.Score(hit("Liquid Glass (colors)", "Dock icon style", "Icons", "Appearance", SettingsWindow.HitKind.Choice), "liquid glass colors") >= 1000, "search can't find a menu choice by its exact name");
+                Need(SettingsWindow.Score(hit("Top left", null, "Hot Corners", "Desktop & Dock", SettingsWindow.HitKind.Option), "hot corner") > 0, "search doesn't find settings by their section");
+                Need(SettingsWindow.Score(hit("Desktop", "Top left", "Hot Corners", "Desktop & Dock", SettingsWindow.HitKind.Choice), "hot corner") == 0, "search lists every menu item of a matching section");
+                Need(SettingsWindow.Score(exact, "zzqx") == 0, "search matches nonsense");
+            }
+
+            // Drag to tile: the screen's edges and corners (macOS 15), and Alt anywhere.
+            {
+                var scr = new Sys.Display { Bounds = new Native.RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1080 }, Work = new Native.RECT { Left = 0, Top = 30, Right = 1920, Bottom = 1000 } };
+                Func<int, int, Native.POINT> pt = (x, y) => new Native.POINT { X = x, Y = y };
+                Need(DragTile.Edge(scr, pt(0, 540)) == Tiling.Spot.Left && DragTile.Edge(scr, pt(1919, 540)) == Tiling.Spot.Right, "dragging to a side doesn't tile a half");
+                Need(DragTile.Edge(scr, pt(960, 0)) == Tiling.Spot.Fill, "dragging to the top doesn't fill the screen");
+                Need(DragTile.Edge(scr, pt(0, 20)) == Tiling.Spot.TopLeft && DragTile.Edge(scr, pt(1919, 1079)) == Tiling.Spot.BottomRight && DragTile.Edge(scr, pt(20, 0)) == Tiling.Spot.TopLeft, "corners don't tile quarters");
+                Need(DragTile.Edge(scr, pt(960, 1079)) == null && DragTile.Edge(scr, pt(960, 540)) == null, "the bottom edge (the Dock's) or the middle tiles a window");
+                Need(DragTile.Anywhere(scr, pt(100, 500)) == Tiling.Spot.Left && DragTile.Anywhere(scr, pt(960, 500)) == Tiling.Spot.Fill && DragTile.Anywhere(scr, pt(1800, 950)) == Tiling.Spot.BottomRight, "Alt-dragging picks the wrong tile");
+            }
+
+            Console.WriteLine("macOS 27: Liquid Glass slider, tiling, Mission Control layout, Genie path, icon styles, Liquid Glass lens, Settings search and drag-to-tile zones passed");
         }
     }
 }

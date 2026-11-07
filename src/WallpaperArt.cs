@@ -13,15 +13,21 @@ namespace OpenDock
     static class WallpaperArt
     {
         public static readonly string[] Names = { "Dune", "Drift", "Fold", "Strata", "Flux", "Liquid", "Glass" };
+        // Photographs from Wikimedia Commons (CC BY-SA 4.0; see wallpapers/CREDITS.md): one version each.
+        public static readonly string[] Photos = { "Stromboli", "Gyeongju", "Gurudongmar", "Wadi Shawka", "Shivaliks" };
+        static readonly string[] PhotoCredits = { "Photo: Carsten Steger, CC BY-SA 4.0", "Photo: Basile Morin, CC BY-SA 4.0", "Photo: Yoghya, edited by UnpetitproleX, CC BY-SA 4.0",
+            "Photo: Florian Kriechbaumer, edited by Aristeas, CC BY-SA 4.0", "Photo: Timothy A. Gonsalves, CC BY-SA 4.0" };
+        public static bool IsPhoto(string name) { return Array.IndexOf(Photos, name) >= 0; }
+        public static string Credit(string name) { int i = Array.IndexOf(Photos, name); return i >= 0 ? PhotoCredits[i] : "Original render for OpenDock"; }
 
-        // Most come in light and dark; Flux (liquid chrome) only works on black.
-        public static bool Has(string name, bool dark) { return dark || name != "Flux"; }
+        // Most renders come in light and dark; Flux (liquid chrome) only works on black. Photos come as they are.
+        public static bool Has(string name, bool dark) { return IsPhoto(name) ? !dark : dark || name != "Flux"; }
         const string Online = "https://raw.githubusercontent.com/leemadov/OpenDock/main/wallpapers/";
 
-        static string FileName(string name, bool dark) { return name.ToLowerInvariant() + "-" + (dark ? "dark" : "light") + ".jpg"; }
+        static string FileName(string name, bool dark) { return name.ToLowerInvariant().Replace(' ', '-') + "-" + (dark ? "dark" : "light") + ".jpg"; }
 
         // Where the picture sits in your library once picked.
-        public static string FileFor(string name, bool dark) { return Path.Combine(Settings.WallpaperDir, "OpenDock " + name + (dark ? " Dark" : " Light") + ".jpg"); }
+        public static string FileFor(string name, bool dark) { return Path.Combine(Settings.WallpaperDir, IsPhoto(name) ? name + ".jpg" : "OpenDock " + name + (dark ? " Dark" : " Light") + ".jpg"); }
 
         // The wallpapers folder that ships with OpenDock (next to the exe, or the project's when run from bin\).
         static string Local(string relative)

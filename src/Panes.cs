@@ -24,6 +24,7 @@ namespace OpenDock
         // Runs work off the UI thread, then fills a slot in the pane (if it's still the pane on screen).
         void Load<T>(StackPanel body, Func<T> work, Action<T, StackPanel> fill)
         {
+            if (indexing) return;   // search's off-screen build: skip slow system reads
             var slot = new StackPanel();
             var wait = Text("Loading…", 13, "FgDim"); wait.Margin = new Thickness(4, 14, 0, 0);
             slot.Children.Add(wait);
@@ -41,7 +42,7 @@ namespace OpenDock
         {
             string pane = current;
             var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(delayMs) };
-            t.Tick += delegate { t.Stop(); if (current == pane && IsLoaded) Show(pane, false); };
+            t.Tick += delegate { t.Stop(); if (current == pane && IsLoaded && !showingResults) Show(pane, false); };
             t.Start();
         }
 
@@ -391,16 +392,16 @@ namespace OpenDock
             // OpenDock's own collection: 4K scenes rendered in Blender, each in light and dark.
             body.Children.Add(Heading("OpenDock Collection"));
             var art = new WrapPanel();
-            foreach (var design in WallpaperArt.Names)
+            foreach (var design in WallpaperArt.Names.Concat(WallpaperArt.Photos))
                 foreach (var dark in new[] { false, true })
                 {
                     if (!WallpaperArt.Has(design, dark)) continue;
                     string name = design; bool isDark = dark;
-                    var img = new Image { Width = 140, Height = 84, Stretch = Stretch.UniformToFill, Source = WallpaperArt.Preview(name, isDark) };
+                    var img = new Image { Width = 140, Height = 84, Stretch = Stretch.UniformToFill, Source = indexing ? null : WallpaperArt.Preview(name, isDark) };
                     img.Clip = new RectangleGeometry(new Rect(0, 0, 140, 84), 6, 6);
-                    var label = new TextBlock { Text = name + (isDark ? " Dark" : " Light"), FontSize = 11, Margin = new Thickness(2, 3, 0, 0) };
+                    var label = new TextBlock { Text = name + (WallpaperArt.IsPhoto(name) ? "" : isDark ? " Dark" : " Light"), FontSize = 11, Margin = new Thickness(2, 3, 0, 0) };
                     label.SetResourceReference(TextBlock.ForegroundProperty, "FgDim");
-                    var tile = new Border { Width = 144, Height = 88, CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(2), Child = img, Cursor = Cursors.Hand };
+                    var tile = new Border { Width = 144, Height = 88, CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(2), Child = img, Cursor = Cursors.Hand, ToolTip = WallpaperArt.Credit(name) };
                     if (img.Source == null) tile.Background = new LinearGradientBrush(isDark ? Color.FromRgb(0x1A, 0x1C, 0x3A) : Color.FromRgb(0xE8, 0xE4, 0xF4), isDark ? Color.FromRgb(0x3A, 0x1A, 0x4A) : Color.FromRgb(0xCF, 0xE2, 0xF6), 0);
                     if (string.Equals(cur, WallpaperArt.FileFor(name, isDark), StringComparison.OrdinalIgnoreCase)) tile.SetResourceReference(Border.BorderBrushProperty, "Accent"); else tile.BorderBrush = Brushes.Transparent;
                     var cell = new StackPanel { Margin = new Thickness(0, 0, 10, 10) };
@@ -457,7 +458,7 @@ namespace OpenDock
 
         static void Thumb(string file, int width, Action<ImageSource> done)
         {
-            if (!File.Exists(file)) return;
+            if (indexing || !File.Exists(file)) return;
             var ui = Dispatcher.CurrentDispatcher;
             Task.Run(() =>
             {
@@ -503,8 +504,11 @@ namespace OpenDock
             return best;
         }
 
-        void LockScreen(StackPanel body)
+        void LockScreenPane(StackPanel body)
         {
+            var look = Group(body);
+            AddSwitch(look, "Use OpenDock's lock screen", Settings.CustomLockScreen, v => Settings.CustomLockScreen = v);
+            Note(body, "OpenDock's lock screen shows your wallpaper with a big clock, and you unlock it with Windows Hello (PIN, face or fingerprint). Windows checks it's you; OpenDock never sees it. It covers your desktop, but it isn't Windows' own secure lock: Ctrl+Alt+Del still gets past it, and Win+L always uses Windows' lock screen. Without Windows Hello set up, Lock Screen uses Windows' own.");
             Load(body, () => new[] { Sys.Timeout("SUB_VIDEO", "VIDEOIDLE"), Sys.Timeout("SUB_SLEEP", "STANDBYIDLE") }, (t, slot) =>
             {
                 var g = Group(slot);
@@ -513,7 +517,7 @@ namespace OpenDock
                 slot.Children.Add(new Border { Height = 14 });
                 var now = Group(slot);
                 var d = new DockPanel();
-                var pill = Pill("Lock Screen", () => Native.LockWorkStation());
+                var pill = Pill("Lock Screen", LockScreen.Lock);
                 DockPanel.SetDock(pill, Dock.Right);
                 d.Children.Add(pill); d.Children.Add(Text("Lock this PC now", 13, "Fg"));
                 Row(now, d);

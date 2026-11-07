@@ -71,7 +71,7 @@ namespace OpenDock
             logoMenu.Items.Add(Cmd("Restart…", null, () => { if (Confirm("restart")) Process.Start("shutdown", "/r /t 0"); }));
             logoMenu.Items.Add(Cmd("Shut Down…", null, () => { if (Confirm("shut down")) Process.Start("shutdown", "/s /t 0"); }));
             logoMenu.Items.Add(new Separator());
-            logoMenu.Items.Add(Cmd("Lock Screen", "Win+L", () => Native.LockWorkStation()));
+            logoMenu.Items.Add(Cmd("Lock Screen", null, LockScreen.Lock));
             logoMenu.Items.Add(Cmd("Log Out " + Environment.UserName + "…", null, () => { if (Confirm("log out")) Native.ExitWindowsEx(0, 0); }));
             logoMenu.Items.Add(new Separator());
             logoMenu.Items.Add(Cmd("Quit OpenDock", null, App.Quit));

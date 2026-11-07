@@ -465,10 +465,11 @@ namespace OpenDock
             };
             files.PreviewMouseMove += OnDragOut;
             files.KeyDown += OnKey;
+            files.PreviewKeyDown += (s2, e2) => { if (e2.Key == Key.Space || (e2.Key == Key.Escape && QuickLook.IsOpen)) OnKey(s2, e2); };   // before the list takes Space for itself
             files.MouseRightButtonUp += OnContext;
             files.Drop += OnDrop;
             files.DragOver += (s, e) => { var target=Under(e.OriginalSource); e.Effects = Virtual(path) ? DragDropEffects.None : TransferEffect(e.Data.GetData(DataFormats.FileDrop) as string[],target!=null&&target.IsDir?target.Path:path,e.KeyStates,e.AllowedEffects); e.Handled = true; };
-            files.SelectionChanged += delegate { UpdateStatus(); };
+            files.SelectionChanged += delegate { UpdateStatus(); var q = files.SelectedItem as Entry; if (q != null && q.Path != null) QuickLook.Follow(q.Path); };
             Grid.SetRow(files, 2);
             main.Children.Add(files);
             // the path bar along the bottom: where this folder is, each step clickable
@@ -778,6 +779,9 @@ namespace OpenDock
         void OnKey(object s, KeyEventArgs e)
         {
             var sel = files.SelectedItem as Entry;
+            // Quick Look: Space shows the selected file (and Space or Esc puts it away)
+            if (e.Key == Key.Space && Keyboard.Modifiers == ModifierKeys.None && (sel != null || QuickLook.IsOpen)) { QuickLook.Toggle(this, sel != null ? sel.Path : null); e.Handled = true; return; }
+            if (e.Key == Key.Escape && QuickLook.IsOpen) { QuickLook.CloseIfOpen(); e.Handled = true; return; }
             if (e.Key == Key.Enter && sel != null) { foreach (var x in files.SelectedItems.Cast<Entry>().ToList()) Open(x); e.Handled = true; }
             else if (e.Key == Key.F2 && Keyboard.Modifiers == ModifierKeys.None) { RenameSelection(); e.Handled = true; }
             else if (e.Key == Key.Delete && path != AppsLocation) { Launcher.Recycle(Selected()); e.Handled = true; }
@@ -1027,14 +1031,10 @@ namespace OpenDock
                 new[] { C("General", "\uE713", "#8E8E93", General), C("Appearance", "\uE790", "#3A3A3C", Appearance), C("Accessibility", "\uE776", "#0A84FF", Accessibility),
                         C("Control Center", "\uE9E9", "#8E8E93", ControlCenter), C("Desktop & Dock", "\uE7F4", "#3A3A3C", DesktopDock),
                         C("Displays", "\uE7F8", "#0A84FF", Displays), C("Wallpaper", "\uE91B", "#32ADE6", WallpaperPane) },
-                new[] { C("Battery", "\uE83F", "#34C759", Battery), C("Lock Screen", "\uE72E", "#3A3A3C", LockScreen),
+                new[] { C("Battery", "\uE83F", "#34C759", Battery), C("Lock Screen", "\uE72E", "#3A3A3C", LockScreenPane),
                         C("Privacy & Security", "\uEA18", "#0A84FF", Privacy), C("Users & Groups", "\uE716", "#0A84FF", Users) },
                 new[] { C("Keyboard", "\uE765", "#8E8E93", KeyboardPane), C("Mouse", "\uE962", "#8E8E93", MousePane), C("Printers & Scanners", "\uE749", "#8E8E93", Printers) },
             };
-            // Panes reached from General, like macOS.
-            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane }, { "Workspace", WorkspacePane }, { "Updates", Updates } };
-            // Panes reached from General, like macOS.
-            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane }, { "Workspace", WorkspacePane }, { "Updates", Updates } };
             // Panes reached from General, like macOS.
             sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane }, { "Workspace", WorkspacePane }, { "Updates", Updates } };
 
@@ -1063,6 +1063,10 @@ namespace OpenDock
             var searchBox = new Border { Height = 28, CornerRadius = new CornerRadius(7), Padding = new Thickness(8, 0, 8, 0), Margin = new Thickness(12, 0, 12, 10), Child = sg };
             searchBox.SetResourceReference(Border.BackgroundProperty, "Field");
             search.TextChanged += delegate { ph.Visibility = search.Text.Length == 0 ? Visibility.Visible : Visibility.Hidden; Filter(search.Text.Trim()); };
+            // Enter opens the best match; Esc clears the search.
+            search.KeyDown += (s, e) => { if (e.Key == Key.Enter) { OpenFirstResult(); e.Handled = true; } else if (e.Key == Key.Escape && search.Text.Length > 0) { search.Text = ""; e.Handled = true; } };
+            // Ctrl+F jumps to the search field (Cmd+F on a Mac).
+            PreviewKeyDown += (s, e) => { if (e.Key == Key.F && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { search.Focus(); search.SelectAll(); e.Handled = true; } };
             Grid.SetRow(searchBox, 1);
             sideGrid.Children.Add(searchBox);
 
@@ -1156,12 +1160,6 @@ namespace OpenDock
             return b;
         }
 
-        void Filter(string q)
-        {
-            foreach (var r in rows) r.Box.Visibility = q.Length == 0 || r.Cat.Name.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0 ? Visibility.Visible : Visibility.Collapsed;
-            foreach (var s in sections) s.Visibility = s.Children.Cast<UIElement>().Any(e => e.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
-        }
-
         // Opens a pane; record = add it to the back/forward history.
         public void Show(string name, bool record)
         {
@@ -1170,6 +1168,7 @@ namespace OpenDock
             if (row == null && name != null && sub.TryGetValue(name, out build)) row = rows.First(r => r.Cat.Name == "General");   // a General sub-pane
             else { if (row == null) row = rows.First(r => r.Cat.Name == "Desktop & Dock"); name = row.Cat.Name; build = row.Cat.Build; }
             current = name;
+            showingResults = false;
             if (record && (at < 0 || history[at] != current))
             {
                 history.RemoveRange(at + 1, history.Count - at - 1);
@@ -1229,6 +1228,8 @@ namespace OpenDock
             var keys = Group(body);
             AddSwitch(keys, "Spotlight (Alt+Space)", Settings.Spotlight, v => Settings.Spotlight = v);
             AddSwitch(keys, "App switcher (Alt+Tab)", Settings.AppSwitcher, v => Settings.AppSwitcher = v);
+            AddSwitch(keys, "Screenshots (Ctrl+Shift+3 screen, 4 area, 5 toolbar)", Settings.ScreenshotKeys, v => Settings.ScreenshotKeys = v);
+            InfoRow(keys, "Quick Look", "Select a file in Finder and press Space");
             InfoRow(keys, "New window of an app", "Middle-click or Shift+click its Dock icon");
         }
 
@@ -1285,7 +1286,7 @@ namespace OpenDock
             var icons = Group(body);
             AddSwitch(icons, "Uniform icon tiles", Settings.IconTiles, v => Settings.IconTiles = v);
             // macOS 26/27 icon style: Default, or Tinted -- every Dock icon in one colour.
-            var style = new ComboBox { MinWidth = 180, ItemsSource = new[] { "Default", "Tinted (one color)", "Clear (Liquid Glass)" }, SelectedIndex = Math.Max(0, Math.Min(2, Settings.IconStyle)) };
+            var style = new ComboBox { MinWidth = 180, ItemsSource = new[] { "Default", "Tinted (one color)", "Clear (Liquid Glass)", "Liquid Glass (colors)" }, SelectedIndex = Math.Max(0, Math.Min(3, Settings.IconStyle)) };
             var swatches = new WrapPanel { Margin = new Thickness(0, 2, 0, 2) };
             Action paint = null;
             paint = () =>
@@ -1410,9 +1411,31 @@ namespace OpenDock
 
             body.Children.Add(Heading("Windows"));
             var wins = Group(body);
+            AddSwitch(wins, "Drag windows to screen edges to tile", Settings.DragTile, v => Settings.DragTile = v);
+            AddSwitch(wins, "Hold Alt while dragging windows to tile", Settings.DragTileAlt, v => Settings.DragTileAlt = v);
+            AddSwitch(wins, "Tiled windows have margins", Settings.TileMargins, v => Settings.TileMargins = v);
             AddSwitch(wins, "Tile windows with Ctrl+Alt+arrow keys", Settings.TilingKeys, v => Settings.TilingKeys = v);
+            AddSwitch(wins, "Cycle an app's windows with Alt+`", Settings.CycleWindowsKey, v => Settings.CycleWindowsKey = v);
             InfoRow(wins, "Halves \u00B7 Fill \u00B7 Previous size", "Ctrl+Alt+\u2190 \u2192  \u00B7  Enter  \u00B7  Backspace");
             InfoRow(wins, "More layouts", "Window \u25B8 Move & Resize, or hold the green button");
+            // Windows' own Snap shows its outline and Snap Assist too when you drag to an edge.
+            if (Settings.DragTile && Sys.WindowsSnapOn)
+            {
+                var snapRow = new DockPanel();
+                var snapGo = Pill("Open Snap Settings", () => Launcher.Shell("ms-settings:multitasking"));
+                DockPanel.SetDock(snapGo, Dock.Right);
+                var snapText = Text("Windows Snap is on too, so dragging to an edge also shows Windows' own outline. Turn off “Snap windows” to see only OpenDock's.", 12, "FgDim");
+                snapText.TextWrapping = TextWrapping.Wrap;
+                snapRow.Children.Add(snapGo); snapRow.Children.Add(snapText);
+                Row(wins, snapRow);
+            }
+
+            // macOS Stage Manager: the app you're using in the middle, the others in a strip on the left.
+            body.Children.Add(Heading("Stage Manager"));
+            var stageGroup = Group(body);
+            AddSwitch(stageGroup, "Stage Manager", Settings.StageManager, v => Settings.StageManager = v);
+            InfoRow(stageGroup, "Switch apps", "Click one in the strip, or use the Dock or Alt+Tab");
+            Note(body, "Stage Manager keeps the app you're using in the middle of the screen and lines up your recent apps on the left, as live pictures of their windows. Touch the left edge of the screen to bring the strip forward when a window covers it. Turn it on and off in Control Center too.");
 
             body.Children.Add(Heading("Mission Control"));
             var mc = Group(body);
@@ -1452,7 +1475,7 @@ namespace OpenDock
         static TextBlock Heading(string s)
         {
             var t = Text(s, 13, "Fg", FontWeights.SemiBold);
-            t.Margin = new Thickness(4, 20, 0, 8);
+            t.Margin = new Thickness(4, 20, 0, 8); t.Tag = HeadingTag;
             return t;
         }
 
@@ -1469,7 +1492,7 @@ namespace OpenDock
 
         static Border Row(Panel p, UIElement content)
         {
-            var r = new Border { Child = content, Padding = new Thickness(0, 9, 0, 9), BorderThickness = new Thickness(0, p.Children.Count == 0 ? 0 : 1, 0, 0) };
+            var r = new Border { Child = content, Padding = new Thickness(0, 9, 0, 9), BorderThickness = new Thickness(0, p.Children.Count == 0 ? 0 : 1, 0, 0), Tag = RowTag };
             r.SetResourceReference(Border.BorderBrushProperty, "MenuSep");
             p.Children.Add(r);
             return r;

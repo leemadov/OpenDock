@@ -345,12 +345,89 @@ namespace OpenDock
                 y += 56 + G;
             }
 
-            var link = Add(new GlassTile(new Rect((Width - 210) / 2, y, 210, 30), 15) { Interactive = true, Cursor = Cursors.Hand });
-            var lt = Text("Windows Notifications…", 12.5, FontWeights.Normal);
+            y = Widgets(y, w);
+
+            // the buttons at the bottom: Windows' own notifications, and choosing the widgets
+            double bw = (w - G) / 2;
+            var link = Add(new GlassTile(new Rect(Pad, y, bw, 30), 15) { Interactive = true, Cursor = Cursors.Hand });
+            var lt = Text("Windows Notifications…", 12, FontWeights.Normal);
             lt.HorizontalAlignment = HorizontalAlignment.Center;
             link.Body.Children.Add(lt);
             link.MouseLeftButtonUp += delegate { Dismiss(true); Native.SendKeys(0x5B, 0x4E); };
+            var edit = Add(new GlassTile(new Rect(Pad + bw + G, y, bw, 30), 15) { Interactive = true, Cursor = Cursors.Hand });
+            var et = Text("Edit Widgets…", 12, FontWeights.Normal);
+            et.HorizontalAlignment = HorizontalAlignment.Center;
+            edit.Body.Children.Add(et);
+            edit.MouseLeftButtonUp += delegate { Dismiss(false); App.OpenSettings("Desktop & Dock"); };
             Height = y + 30 + Pad;
+        }
+
+        // The widgets, as macOS keeps them in Notification Center too: the weather and the battery side by side,
+        // a world clock, and your note. Each follows the desktop widget of the same kind (its city, its note).
+        double Widgets(double y, double w)
+        {
+            double half = (w - G) / 2, sq = half;   // small widgets are square, as on macOS
+            var wx = global::OpenDock.Weather.Now; var place = global::OpenDock.Weather.Place;
+            // weather
+            var weather = Add(new GlassTile(new Rect(Pad, y, half, sq), 26) { Interactive = true, Cursor = Cursors.Hand });
+            var wp = new StackPanel { Margin = new Thickness(16, 12, 12, 10) };
+            wp.Children.Add(Text(place != null ? place.Name : "Weather", 13, FontWeights.SemiBold));
+            if (wx != null)
+            {
+                wp.Children.Add(Text(wx.Temp + "\u00B0", 30, FontWeights.Light));
+                var icon = WeatherIcon.Draw(wx.Code, wx.Day, 20); icon.HorizontalAlignment = HorizontalAlignment.Left; icon.Margin = new Thickness(0, 1, 0, 2);
+                wp.Children.Add(icon);
+                wp.Children.Add(Text(WeatherIcon.Name(wx.Code), 11.5, FontWeights.Normal, true));
+                wp.Children.Add(Text("H:" + wx.High + "\u00B0  L:" + wx.Low + "\u00B0", 11.5, FontWeights.Normal, true));
+            }
+            else wp.Children.Add(Text(place == null ? "Choose a city in Desktop & Dock" : "Loading…", 12, FontWeights.Normal, true));
+            weather.Body.Children.Add(wp);
+            weather.MouseLeftButtonUp += delegate { Dismiss(true); if (place == null) App.OpenSettings("Desktop & Dock"); else Launcher.Shell("msnweather://forecast"); };
+            // battery (or, on a desktop PC, a world clock in its place)
+            Native.SYSTEM_POWER_STATUS ps;
+            bool battery = Native.GetSystemPowerStatus(out ps) && ps.BatteryFlag != 128 && ps.BatteryFlag != 255 && ps.BatteryLifePercent <= 100;
+            var second = Add(new GlassTile(new Rect(Pad + half + G, y, half, sq), 26));
+            var sp = new StackPanel { Margin = new Thickness(16, 12, 12, 10) };
+            if (battery)
+            {
+                sp.Children.Add(Text(ps.ACLineStatus == 1 ? "Charging" : "Battery", 13, FontWeights.SemiBold));
+                sp.Children.Add(Text(ps.BatteryLifePercent + "%", 34, FontWeights.Light));
+                var track = new Border { Height = 8, CornerRadius = new CornerRadius(4), Margin = new Thickness(0, 6, 4, 0) };
+                track.SetResourceReference(Border.BackgroundProperty, "CcInner");
+                var fill = new Border { Height = 8, CornerRadius = new CornerRadius(4), HorizontalAlignment = HorizontalAlignment.Left,
+                    Background = new SolidColorBrush(ps.BatteryLifePercent <= 20 ? Red : Color.FromRgb(0x34, 0xC7, 0x59)) };
+                var bar = new Grid(); bar.Children.Add(track); bar.Children.Add(fill);
+                bar.SizeChanged += delegate { fill.Width = Math.Max(8, bar.ActualWidth * ps.BatteryLifePercent / 100.0); };
+                sp.Children.Add(bar);
+            }
+            else
+            {
+                // the time in another place: New York, or London if that's where you are
+                var tz = TimeZoneInfo.Local.Id == "Eastern Standard Time" ? "GMT Standard Time" : "Eastern Standard Time";
+                string city = tz == "GMT Standard Time" ? "London" : "New York";
+                DateTime there;
+                try { there = TimeZoneInfo.ConvertTime(DateTime.Now, TimeZoneInfo.FindSystemTimeZoneById(tz)); } catch { there = DateTime.UtcNow; }
+                sp.Children.Add(Text(city, 13, FontWeights.SemiBold));
+                sp.Children.Add(Text(there.ToString("t"), 30, FontWeights.Light));
+                var diff = (there - DateTime.Now).TotalHours;
+                sp.Children.Add(Text((there.Date == DateTime.Today ? "Today" : there.Date > DateTime.Today ? "Tomorrow" : "Yesterday") + ", " + (diff >= 0 ? "+" : "") + Math.Round(diff) + "HRS", 11.5, FontWeights.Normal, true));
+            }
+            second.Body.Children.Add(sp);
+            y += sq + G;
+            // your note (the Notes widget's): the first few lines, a click opens it for writing on the desktop
+            string note = "";
+            try { var f = System.IO.Path.Combine(Settings.DataDir, "note.txt"); if (System.IO.File.Exists(f)) note = System.IO.File.ReadAllText(f).Trim(); } catch { }
+            var notes = Add(new GlassTile(new Rect(Pad, y, w, 96), 24) { Interactive = true, Cursor = Cursors.Hand });
+            var np = new StackPanel { Margin = new Thickness(16, 10, 14, 10) };
+            var nh = Text("Notes", 13, FontWeights.SemiBold); nh.Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0xCC, 0x00));
+            np.Children.Add(nh);
+            var nt = Text(note.Length > 0 ? note : "Write a note in the Notes widget on your desktop", 12.5, FontWeights.Normal, note.Length == 0);
+            nt.TextWrapping = TextWrapping.Wrap; nt.MaxHeight = 52; nt.TextTrimming = TextTrimming.CharacterEllipsis; nt.Margin = new Thickness(0, 3, 0, 0);
+            np.Children.Add(nt);
+            notes.Body.Children.Add(np);
+            notes.MouseLeftButtonUp += delegate { Dismiss(false); if (!Settings.Widgets || !global::OpenDock.Widgets.List.Contains("note")) App.OpenSettings("Desktop & Dock"); };
+            y += 96 + G;
+            return y;
         }
 
         static string Ago(DateTime at)

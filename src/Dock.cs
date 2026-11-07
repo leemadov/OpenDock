@@ -335,7 +335,7 @@ namespace OpenDock
         // dock's capture where the icon really is (magnified, bouncing) and redone only when it moved or the picture changed.
         void LensIcon(DockItem it, double s, double bounce, double iconBase)
         {
-            bool want = live && position == 0 && capPx != null && IconLook.Clear && it != drag && s > 0.05;
+            bool want = live && position == 0 && capPx != null && IconLook.OnGlass && it != drag && s > 0.05;
             if (!want) { if (it.Lens != null) it.Lens.Visibility = Visibility.Collapsed; return; }
             var face = it.Root.Child as Grid;
             if (face == null) return;

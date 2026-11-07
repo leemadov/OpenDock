@@ -13,7 +13,7 @@ namespace OpenDock
     {
         public static IntPtr Host;
         static readonly Dictionary<int, Action> actions = new Dictionary<int, Action>();
-        const uint Ctrl = 0x2, Alt = 0x1, NoRepeat = 0x4000;
+        const uint Ctrl = 0x2, Alt = 0x1, Shift = 0x4, NoRepeat = 0x4000;
 
         public static bool Handle(int id)
         {
@@ -42,6 +42,13 @@ namespace OpenDock
             Set(13, on, Ctrl | Alt, 0x08, () => Tiling.Move(Tiling.Front(), Tiling.Spot.Restore));
             Set(14, on, Ctrl | Alt, 0x26, () => MissionControl.Toggle(IntPtr.Zero));
             Set(15, on, Ctrl | Alt, 0x28, () => MissionControl.Toggle(Tiling.Front()));
+            // Alt+` cycles the front app's windows (Cmd+` on a Mac); Alt+Shift+` goes the other way.
+            Set(16, Settings.CycleWindowsKey, Alt, 0xC0, () => WindowCycle.Next(false));
+            Set(17, Settings.CycleWindowsKey, Alt | Shift, 0xC0, () => WindowCycle.Next(true));
+            // Mac screenshots (Cmd+Shift+3/4/5 there): the screen, an area, the toolbar
+            Set(18, Settings.ScreenshotKeys, Ctrl | Shift, 0x33, Screenshots.Screen);
+            Set(19, Settings.ScreenshotKeys, Ctrl | Shift, 0x34, Screenshots.Area);
+            Set(20, Settings.ScreenshotKeys, Ctrl | Shift, 0x35, Screenshots.Toolbar);
         }
     }
 
@@ -49,8 +56,10 @@ namespace OpenDock
     static class Tiling
     {
         public enum Spot { Left, Right, Top, Bottom, TopLeft, TopRight, BottomLeft, BottomRight, Fill, Center, Restore }
-        public const double Gap = 8;   // macOS leaves a margin around tiled windows
+        // macOS leaves a margin around tiled windows ("Tiled windows have margins" in Desktop & Dock)
+        public static double Gap { get { return Settings.TileMargins ? 8 : 0; } }
         static readonly Dictionary<IntPtr, Native.RECT> before = new Dictionary<IntPtr, Native.RECT>();
+        static readonly Dictionary<IntPtr, Native.RECT> tiled = new Dictionary<IntPtr, Native.RECT>();   // the visible frame each tiled window was given
 
         public static readonly Spot[] MoveSpots = { Spot.Left, Spot.Right, Spot.Top, Spot.Bottom, Spot.TopLeft, Spot.TopRight, Spot.BottomLeft, Spot.BottomRight };
         public static string Name(Spot s)
@@ -72,7 +81,7 @@ namespace OpenDock
             return MenuBarWindow.TargetHandle();
         }
 
-        static bool Movable(IntPtr h)
+        internal static bool Movable(IntPtr h)
         {
             if (!Native.IsWindowVisible(h)) return false;
             int ex = Native.GetWindowLong(h, Native.GWL_EXSTYLE);
@@ -112,18 +121,32 @@ namespace OpenDock
             {
                 Native.RECT old;
                 if (!before.TryGetValue(h, out old)) return;
-                before.Remove(h);
+                before.Remove(h); tiled.Remove(h);
                 Place(h, old, false);
                 return;
             }
             if (!before.ContainsKey(h) && !Native.IsZoomed(h)) before[h] = now;
+            PlaceTile(h, Target(h, s, now));
+        }
+
+        // Where a spot puts this window, on the display it's on (physical px).
+        public static Native.RECT Target(IntPtr h, Spot s, Native.RECT now)
+        {
             var screen = Sys.Screens().FirstOrDefault(d => d.Monitor == Native.MonitorFromWindow(h, 2)) ?? DisplayLayout.Selected;
             var work = new Rect(screen.Work.Left, screen.Work.Top, screen.Work.Right - screen.Work.Left, screen.Work.Bottom - screen.Work.Top);
             Native.RECT frame;
             var size = Native.DwmGetWindowAttribute(h, 9, out frame, 16) == 0 ? new Size(frame.Right - frame.Left, frame.Bottom - frame.Top) : new Size(now.Right - now.Left, now.Bottom - now.Top);
             var r = Area(work, s, Gap * App.Dpi, size);
-            Place(h, new Native.RECT { Left = (int)Math.Round(r.Left), Top = (int)Math.Round(r.Top), Right = (int)Math.Round(r.Right), Bottom = (int)Math.Round(r.Bottom) }, true);
+            return new Native.RECT { Left = (int)Math.Round(r.Left), Top = (int)Math.Round(r.Top), Right = (int)Math.Round(r.Right), Bottom = (int)Math.Round(r.Bottom) };
         }
+
+        // The size a window had before it was tiled, so it can go back to it (dragging it out of its tile, or
+        // Return to Previous Size). A window dragged into a tile keeps the size it had before the drag.
+        public static void Remember(IntPtr h, Native.RECT r) { if (!before.ContainsKey(h)) before[h] = r; }
+        public static bool Untile(IntPtr h, out Native.RECT old) { tiled.Remove(h); if (!before.TryGetValue(h, out old)) return false; before.Remove(h); return true; }
+        public static bool TiledFrame(IntPtr h, out Native.RECT r) { foreach (var k in tiled.Keys.Where(k => !Native.IsWindow(k)).ToList()) { tiled.Remove(k); before.Remove(k); } return tiled.TryGetValue(h, out r); }
+        public static void PlaceAt(IntPtr h, Native.RECT r) { Place(h, r, false); }
+        public static void PlaceTile(IntPtr h, Native.RECT r) { tiled[h] = r; Place(h, r, true); }   // r = the visible frame
 
         // Moves a window so its visible frame lands on `r` (physical px). Windows 10/11 frames carry invisible
         // resize borders; `visible` adds them back so the edges line up with the margins.
@@ -223,7 +246,7 @@ namespace OpenDock
                 case 6: App.ToggleLaunchpad(); break;
                 case 7: Native.PostMessage(Hotkeys.Host, 0x0112, (IntPtr)0xF140, IntPtr.Zero); break;   // SC_SCREENSAVE
                 case 8: Native.PostMessage(Hotkeys.Host, 0x0112, (IntPtr)0xF170, (IntPtr)2); break;     // SC_MONITORPOWER off
-                case 9: Native.LockWorkStation(); break;
+                case 9: LockScreen.Lock(); break;
             }
         }
     }

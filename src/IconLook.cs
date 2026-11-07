@@ -26,6 +26,9 @@ namespace OpenDock
 
         public static bool Tinted { get { return Settings.IconStyle == 1; } }
         public static bool Clear { get { return Settings.IconStyle == 2; } }
+        // Glass: Liquid Glass that keeps each icon's own colours -- the symbol as drawn, on glass tinted with the icon's colour.
+        public static bool Glass { get { return Settings.IconStyle == 3; } }
+        public static bool OnGlass { get { return Clear || Glass; } }   // icons the Dock bends the backdrop under
         public static string Key
         {
             get
@@ -197,7 +200,7 @@ namespace OpenDock
         // (0 = first, 1 = last), which picks its colour when the icons take the wallpaper's colours.
         public static ImageSource Apply(ImageSource src, double at = 0.5)
         {
-            if ((!Tinted && !Clear) || src == null) return src;
+            if ((!Tinted && !OnGlass) || src == null) return src;
             var raw = Icons.RawOf(src) ?? src as BitmapSource;
             if (raw == null) return src;
             var tint = FromWallpaper ? ColorAt(at) : TintColor;
@@ -214,7 +217,7 @@ namespace OpenDock
 
         const int S = 256;
 
-        // style 1 = Tinted, 2 = Clear. Returns a 256 px Dock icon with its shadow, like the Default tiles.
+        // style 1 = Tinted, 2 = Clear, 3 = Glass (in colour). Returns a 256 px Dock icon with its shadow, like the Default tiles.
         public static BitmapSource Style(BitmapSource raw, int style, Color tint, bool dark)
         {
             double T = S * 0.875, k = S / 256.0;
@@ -258,10 +261,21 @@ namespace OpenDock
             for (int p = 0; p < N * N; p++)
             {
                 double m = mask[p];
-                if (m <= 0.002) continue;
+                if (m <= 0.002 && !(style == 3 && tile && a[p] > 0.002)) continue;
                 double l = Math.Max(0, Math.Min(1, (lum[p] - lo) / (hi - lo)));
                 double cr, cg, cb, alpha = m;
-                if (style == 1 && dark) { double t = 0.18 + 0.55 * l; cr = tr + (1 - tr) * t; cg = tg + (1 - tg) * t; cb = tb + (1 - tb) * t; }
+                if (style == 3)
+                {
+                    // Glass: the symbol in its own colours. A tile's own background (two-tone faces, gradients) stays too,
+                    // but as see-through tinted glass, a little deeper in dark mode.
+                    cr = r[p]; cg = gr[p]; cb = b[p];
+                    if (tile)
+                    {
+                        double ga = dark ? 0.66 : 0.6, bg = Math.Max(0, a[p] - m), shade = dark ? 1 - 0.22 * bg / Math.Max(0.01, a[p]) : 1;
+                        alpha = m + bg * ga; cr *= shade; cg *= shade; cb *= shade;
+                    }
+                }
+                else if (style == 1 && dark) { double t = 0.18 + 0.55 * l; cr = tr + (1 - tr) * t; cg = tg + (1 - tg) * t; cb = tb + (1 - tb) * t; }
                 else if (style == 1) { double t = 0.42 * (1 - l); cr = tr * (1 - t); cg = tg * (1 - t); cb = tb * (1 - t); }
                 // Clear: bright white symbols, light and dark alike. (Grey or dark symbols vanish over dark
                 // wallpapers; on light glass the white stands out because the glass itself is lightly smoked, below.)
@@ -277,7 +291,8 @@ namespace OpenDock
             Func<string, double, Color> rgba = (hex, al) => { var c = (Color)ColorConverter.ConvertFromString(hex); c.A = (byte)(255 * al); return c; };
             Func<double, Color> towardBlack = t => Color.FromRgb((byte)(tint.R * t), (byte)(tint.G * t), (byte)(tint.B * t));
             Func<double, Color> towardWhite = t => Color.FromRgb((byte)(255 - (255 - tint.R) * t), (byte)(255 - (255 - tint.G) * t), (byte)(255 - (255 - tint.B) * t));
-            Brush baseFill = style == 1
+            Brush baseFill = style == 3 ? GlassFill(tile, N, r, gr, b, a, mask, dark)
+                : style == 1
                 ? (dark ? (Brush)new LinearGradientBrush(towardBlack(0.36), towardBlack(0.13), 90) : new LinearGradientBrush(towardWhite(0.10), towardWhite(0.30), 90))
                 // Clear: thin glass, so the backdrop (bent by the Dock's lens under each icon) shows through
                 // light: a light smoke, the one look tested readable over light and dark wallpapers alike
@@ -286,11 +301,11 @@ namespace OpenDock
             layers.Children.Add(new Path { Data = shape, Fill = baseFill });
             // the sheen: light pooling in the top half of the glass
             layers.Children.Add(new Path { Data = shape, Fill = new LinearGradientBrush(new GradientStopCollection {
-                new GradientStop(Color.FromArgb((byte)(style == 2 ? (dark ? 46 : 80) : (dark ? 30 : 60)), 255, 255, 255), 0), new GradientStop(Color.FromArgb(0, 255, 255, 255), 0.55) }, new Point(0, 0), new Point(0, 1)) });
+                new GradientStop(Color.FromArgb((byte)(style >= 2 ? (dark ? 46 : 80) : (dark ? 30 : 60)), 255, 255, 255), 0), new GradientStop(Color.FromArgb(0, 255, 255, 255), 0.55) }, new Point(0, 0), new Point(0, 1)) });
             // the symbol, raised a little off the glass
             var sym = new Image { Source = glyphImg, Width = T, Height = T, Stretch = Stretch.Fill };
             RenderOptions.SetBitmapScalingMode(sym, BitmapScalingMode.HighQuality);
-            sym.Effect = new DropShadowEffect { BlurRadius = 6 * k, ShadowDepth = 1.6 * k, Direction = 270, Opacity = style == 2 ? 0.45 : (dark ? 0.45 : 0.18), Color = style == 1 && !dark ? towardBlack(0.35) : Color.FromRgb(0, 0, 0) };
+            sym.Effect = new DropShadowEffect { BlurRadius = 6 * k, ShadowDepth = 1.6 * k, Direction = 270, Opacity = style == 2 ? 0.45 : style == 3 ? 0.32 : (dark ? 0.45 : 0.18), Color = style == 1 && !dark ? towardBlack(0.35) : Color.FromRgb(0, 0, 0) };
             layers.Children.Add(sym);
             // the glass' thickness: a soft band inside the edge, lit at the top, shadowed at the bottom
             layers.Children.Add(new Path { Data = shape, StrokeThickness = 7 * k, Stroke = new LinearGradientBrush(new GradientStopCollection {
@@ -302,10 +317,32 @@ namespace OpenDock
                 new GradientStop(Color.FromArgb((byte)(dark ? 10 : 20), 255, 255, 255), 0.62), new GradientStop(Color.FromArgb((byte)(dark ? 110 : 170), 255, 255, 255), 1) }, new Point(0.1, 0), new Point(0.9, 1)) });
             var host = new Grid { Width = T, Height = T };
             host.Children.Add(layers);
-            host.Effect = new DropShadowEffect { BlurRadius = 12 * k, ShadowDepth = 4 * k, Direction = 270, Opacity = style == 2 ? 0.22 : 0.3 };
+            host.Effect = new DropShadowEffect { BlurRadius = 12 * k, ShadowDepth = 4 * k, Direction = 270, Opacity = style >= 2 ? 0.22 : 0.3 };
             var root = new Grid { Width = S, Height = S };
             root.Children.Add(host);
             return Icons.Render(root, S, S);
+        }
+
+        // Glass style's tile: see-through glass tinted with the icon's own colour -- a tile icon's background colour, or
+        // a free-shaped logo's main colour, faintly -- so the bent backdrop shows through and the icon stays itself.
+        static Brush GlassFill(bool tile, int N, double[] r, double[] g, double[] b, double[] a, double[] mask, bool dark)
+        {
+            if (tile) return Brushes.Transparent;   // the tile's own background is the glass (drawn with the symbol)
+            double sr = 0, sg = 0, sb = 0, sw = 0;
+            for (int p = 0; p < N * N; p++)
+            {
+                if (a[p] < 0.5) continue;
+                double mx = Math.Max(r[p], Math.Max(g[p], b[p])), mn = Math.Min(r[p], Math.Min(g[p], b[p])), w = 0.05 + (mx - mn) * (mx - mn);   // the logo's most colourful parts
+                sr += r[p] * w; sg += g[p] * w; sb += b[p] * w; sw += w;
+            }
+            Color c = sw > 0 ? Color.FromRgb((byte)(255 * sr / sw), (byte)(255 * sg / sw), (byte)(255 * sb / sw)) : Color.FromRgb(128, 128, 136);
+            // a grey or white logo (the Trash) on pale glass would vanish: those get the Clear style's smoked glass
+            if (Math.Max(c.R, Math.Max(c.G, c.B)) - Math.Min(c.R, Math.Min(c.G, c.B)) < 40) c = Color.FromRgb(28, 28, 36);
+            Func<Color, double, double, Color> at = (col, lift, al) => Color.FromArgb((byte)(255 * al),
+                (byte)(lift >= 0 ? col.R + (255 - col.R) * lift : col.R * (1 + lift)),
+                (byte)(lift >= 0 ? col.G + (255 - col.G) * lift : col.G * (1 + lift)),
+                (byte)(lift >= 0 ? col.B + (255 - col.B) * lift : col.B * (1 + lift)));
+            return dark ? new LinearGradientBrush(at(c, -0.55, 0.36), at(c, -0.8, 0.48), 90) : new LinearGradientBrush(at(c, 0.3, 0.26), at(c, 0.1, 0.38), 90);
         }
 
         // Apple's icon shape: a superellipse (|x|^5 + |y|^5 = 1), whose corners curve continuously into the sides.
