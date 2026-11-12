@@ -238,7 +238,7 @@ namespace OpenDock
             var top = Group(body);
             Toggle(top, "Allow notifications", Sys.Toasts, v => Sys.Toasts = v);
             AddSwitch(top, "Show app notifications as macOS banners", Settings.Banners, v => Settings.Banners = v);
-            Note(body, "Banners slide in at the top right and stay in Notification Center (click the date and time). Windows still shows its own pop-up too: to see only OpenDock's, turn off \"Show notification banners\" for an app in Windows Settings.");
+            Note(body, "Banners slide in at the top right and stay in Notification Center (click the date and time). Windows still shows its own pop-up too: to see only GlassDock's, turn off \"Show notification banners\" for an app in Windows Settings.");
             var win = Group(body);
             var open = new DockPanel();
             var go = Pill("Open Windows Settings", () => Launcher.Shell("ms-settings:notifications"));
@@ -354,7 +354,7 @@ namespace OpenDock
                 Level(c, "Brightness", -20, 20, Settings.CustomBrightness, "Darker", "Brighter", v => { Settings.CustomBrightness = (int)Math.Round(v); changed(); });
                 Level(c, "Warmth", -100, 100, Settings.CustomWarmth, "Cool", "Warm", v => { Settings.CustomWarmth = (int)Math.Round(v); changed(); });
             }
-            Note(host, "Profiles change the colour of everything on screen while OpenDock runs. Quit OpenDock and your display goes back to normal.");
+            Note(host, "Profiles change the colour of everything on screen while GlassDock runs. Quit GlassDock and your display goes back to normal.");
         }
 
         // ----- Wallpaper -----
@@ -390,7 +390,7 @@ namespace OpenDock
             Thumb(cur, 520, img => preview.Source = img);
 
             // OpenDock's own collection: 4K scenes rendered in Blender, each in light and dark.
-            body.Children.Add(Heading("OpenDock Collection"));
+            body.Children.Add(Heading("GlassDock Collection"));
             var art = new WrapPanel();
             foreach (var design in WallpaperArt.Names.Concat(WallpaperArt.Photos))
                 foreach (var dark in new[] { false, true })
@@ -507,8 +507,8 @@ namespace OpenDock
         void LockScreenPane(StackPanel body)
         {
             var look = Group(body);
-            AddSwitch(look, "Use OpenDock's lock screen", Settings.CustomLockScreen, v => Settings.CustomLockScreen = v);
-            Note(body, "OpenDock's lock screen shows your wallpaper with a big clock, and you unlock it with Windows Hello (PIN, face or fingerprint). Windows checks it's you; OpenDock never sees it. It covers your desktop, but it isn't Windows' own secure lock: Ctrl+Alt+Del still gets past it, and Win+L always uses Windows' lock screen. Without Windows Hello set up, Lock Screen uses Windows' own.");
+            AddSwitch(look, "Use GlassDock's lock screen", Settings.CustomLockScreen, v => Settings.CustomLockScreen = v);
+            Note(body, "GlassDock's lock screen shows your wallpaper with a big clock, and you unlock it with Windows Hello (PIN, face or fingerprint). Windows checks it's you; GlassDock never sees it. It covers your desktop, but it isn't Windows' own secure lock: Ctrl+Alt+Del still gets past it, and Win+L always uses Windows' lock screen. Without Windows Hello set up, Lock Screen uses Windows' own.");
             Load(body, () => new[] { Sys.Timeout("SUB_VIDEO", "VIDEOIDLE"), Sys.Timeout("SUB_SLEEP", "STANDBYIDLE") }, (t, slot) =>
             {
                 var g = Group(slot);
@@ -639,7 +639,7 @@ namespace OpenDock
         void LoginItems(StackPanel body)
         {
             var g = Group(body);
-            Toggle(g, "Open OpenDock at login", Settings.LaunchAtLogin, v => Settings.LaunchAtLogin = v);
+            Toggle(g, "Open GlassDock at login", Settings.LaunchAtLogin, v => Settings.LaunchAtLogin = v);
             Load(body, Sys.StartupItems, (items, slot) =>
             {
                 if (items.Count == 0) return;

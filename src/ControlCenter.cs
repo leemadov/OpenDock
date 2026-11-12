@@ -144,7 +144,7 @@ namespace OpenDock
         TextBlock wifiSub, focusSub, wifiGlyph, focusGlyph, muteGlyph, stageGlyph, stageSub;
         Slider2 volume, brightness;
 
-        ControlCenterWindow() : base("OpenDock Control Center", 4 * U + 3 * G + 2 * Pad)
+        ControlCenterWindow() : base("GlassDock Control Center", 4 * U + 3 * G + 2 * Pad)
         {
             Height = 7 * U + 7 * G + 30 + 2 * Pad;
             Build();

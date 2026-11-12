@@ -1,15 +1,15 @@
-# OpenDock
+# GlassDock
 
-[![License: MIT](https://img.shields.io/github/license/leemadov/OpenDock)](LICENSE)
+[![License: MIT](https://img.shields.io/github/license/leemadov/GlassDock)](LICENSE)
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
 
 A free, open-source macOS-style desktop for Windows 10/11, inspired by MyDockFinder. It's a single executable: no installer, no runtime to download and no SDK needed to build it.
 
-![OpenDock demo: dock magnification, Launchpad, Spotlight, Finder, About This PC, System Settings, Control Center, the Dynamic Island, Notification Center and the Sound menu](docs/demo.gif)
+![GlassDock demo: dock magnification, Launchpad, Spotlight, Finder, About This PC, System Settings, Control Center, the Dynamic Island, Notification Center and the Sound menu](docs/demo.gif)
 
-Run `OpenDock.exe` and the dock and menu bar appear. Quit from the logo menu in the top-left corner. You can get the ready-built exe from this repository's Releases tab, or build it yourself with `build.bat` (see Build and run below).
+Run `GlassDock.exe` and the dock and menu bar appear. Quit from the logo menu in the top-left corner. You can get the ready-built exe from this repository's Releases tab, or build it yourself with `build.bat` (see Build and run below).
 
-## Why OpenDock?
+## Why GlassDock?
 
 - **Free and open source** (MIT). There's no paid version and nothing is locked.
 - **Small and self-contained.** The animation loop runs while something is moving, status badges use a lightweight timer, and download activity is checked in the background. A watchdog restarts the app if it hangs.
@@ -30,7 +30,7 @@ Desktop Scenes, the Shelf, local desktop commands, independent monitor pins, liv
 - Drop files onto an app to open them with it, onto the Trash to delete them, or onto empty space to pin them
 - **Drag between windows**: hold anything you are dragging (files, text, links) over a running app's icon and its window comes to the front, so you can drop into it. This is macOS spring-loading, and it stands in for the Windows taskbar's drag-hover
 - Open apps that aren't pinned show up automatically (Store apps included)
-- OpenDock's own Settings and About This PC windows appear on every dock with dedicated gear/computer icons. Click to minimize or restore; right-click to select, hide or close their windows. Finder keeps its existing icon, and transient popups/dialogs stay out of the dock
+- GlassDock's own Settings and About This PC windows appear on every dock with dedicated gear/computer icons. Click to minimize or restore; right-click to select, hide or close their windows. Finder keeps its existing icon, and transient popups/dialogs stay out of the dock
 - Right-click an icon to see its open windows plus Keep in Dock, Show in Finder, Hide and Quit
 - Downloads stack: a grid of your recent downloads with thumbnails
 - Trash shows when it's empty or full and can be emptied from the dock
@@ -44,10 +44,10 @@ Desktop Scenes, the Shelf, local desktop commands, independent monitor pins, liv
 - The bold name of the active app, plus File / Edit / View / Window / Help menus that send the matching shortcuts to that app
 - Logo menu: About This PC, System Settings, Force Quit, Sleep, Restart, Shut Down, Lock Screen and Log Out
 - Status icons for sound, battery, network, Spotlight and Control Center, plus the clock
-- **Background Apps** (`^`): the apps that normally sit in the Windows system tray (Steam, WhatsApp, Discord and so on), with their tray icons. Clicking an app brings back its window: OpenDock first un-hides the app's hidden main window, then falls back to the app's Start-menu entry. Right-click an app to quit or force-quit it. **Windows Tray Icons…** opens the real Windows tray flyout, so you can use each app's own tray menu. Windows records every tray icon under `HKCU\Control Panel\NotifyIconSettings`, and OpenDock lists the ones whose process is running.
+- **Background Apps** (`^`): the apps that normally sit in the Windows system tray (Steam, WhatsApp, Discord and so on), with their tray icons. Clicking an app brings back its window: GlassDock first un-hides the app's hidden main window, then falls back to the app's Start-menu entry. Right-click an app to quit or force-quit it. **Windows Tray Icons…** opens the real Windows tray flyout, so you can use each app's own tray menu. Windows records every tray icon under `HKCU\Control Panel\NotifyIconSettings`, and GlassDock lists the ones whose process is running.
 - Text switches between white and black based on how bright your wallpaper is
 
-**Traffic lights on every app**: red/yellow/green dots cover each app's − □ × buttons and close, minimize or zoom the window. They turn gray when the window isn't active and show ×, − and + on hover. OpenDock asks each app where its buttons are (the same hit-test Windows uses for clicks, or UI Automation for apps like File Explorer), so it also works for apps that draw their own title bars. The dots are a small overlay that follows the window rather than a change inside the app, so they can trail a frame behind while you drag a window, and apps that don't report their buttons are left alone. You can turn this off in Settings.
+**Traffic lights on every app**: red/yellow/green dots cover each app's − □ × buttons and close, minimize or zoom the window. They turn gray when the window isn't active and show ×, − and + on hover. GlassDock asks each app where its buttons are (the same hit-test Windows uses for clicks, or UI Automation for apps like File Explorer), so it also works for apps that draw their own title bars. The dots are a small overlay that follows the window rather than a change inside the app, so they can trail a frame behind while you drag a window, and apps that don't report their buttons are left alone. You can turn this off in Settings.
 
 **Launchpad**: every installed app (Win32 and Store) in pages. The desktop blurs and the icons zoom in when it opens. Swipe, scroll or use the arrow keys to change pages, and type to search. Start-menu clutter (web links, folder shortcuts, uninstallers, admin consoles, developer shells, WSL's Linux GUI apps) is filtered out. Right-click any app to choose **Hide from Launchpad**, and use **Show All** in Settings to bring hidden apps back. Spotlight still finds hidden apps.
 
@@ -55,25 +55,25 @@ Desktop Scenes, the Shelf, local desktop commands, independent monitor pins, liv
 
 **Finder**: a file browser with an editable folder path bar (Ctrl+L, Enter to navigate, Escape to cancel), traffic-light buttons, a sidebar (Applications, Desktop, Documents, Downloads, drives and so on), image and video thumbnails, back/forward, a filter box, drag and drop (including onto sidebar folders and Trash), copy/paste, Move to Trash, Get Info and New Folder. Toggle icons/list with the toolbar button or `Ctrl+1` / `Ctrl+2`; list view shows name, size, kind and modification date. Rename a selected file or folder with `F2` or **Rename…** in its context menu. Renaming validates Windows filenames and never overwrites an existing destination. Finder and Settings stay open when you switch to another app, including on another monitor; minimize them explicitly when wanted.
 
-**System Settings**: a macOS-style window with a sidebar and a real page for each category, so nothing sends you to the Windows Settings app. It covers Wi-Fi, Bluetooth, Network, Notifications, Sound, Displays, Wallpaper, Battery, Lock Screen, Privacy, Users, Keyboard, Mouse and Printers, plus OpenDock's own pages: Desktop & Dock (icon size, magnification, spacing between apps, auto-hide, animations, indicators), Appearance (Light, Dark or follow Windows) and Control Center (menu bar height). **Displays** also has **color profiles** (Standard, Vivid, OLED, Studio, Cinema, Night, Grayscale, or your own mix) that tint everything on screen while OpenDock runs. The **Wallpaper** page keeps a library: photos you add stay until you remove them. **About This PC** (logo menu) copies macOS's About This Mac.
+**System Settings**: a macOS-style window with a sidebar and a real page for each category, so nothing sends you to the Windows Settings app. It covers Wi-Fi, Bluetooth, Network, Notifications, Sound, Displays, Wallpaper, Battery, Lock Screen, Privacy, Users, Keyboard, Mouse and Printers, plus GlassDock's own pages: Desktop & Dock (icon size, magnification, spacing between apps, auto-hide, animations, indicators), Appearance (Light, Dark or follow Windows) and Control Center (menu bar height). **Displays** also has **color profiles** (Standard, Vivid, OLED, Studio, Cinema, Night, Grayscale, or your own mix) that tint everything on screen while GlassDock runs. The **Wallpaper** page keeps a library: photos you add stay until you remove them. **About This PC** (logo menu) copies macOS's About This Mac.
 
 ## Build and run
 
 ```bat
 build.bat
-bin\OpenDock.exe
+bin\GlassDock.exe
 ```
 
 `build.bat` uses the C# compiler that ships with Windows (.NET Framework 4.8), so there's nothing to install. `build.bat check` runs the self-checks in `tests/`. `build.bat check --ui` additionally runs opt-in desktop integration checks and writes UI snapshots to `bin/qa/`; `build.bat check --preview` keeps the isolated test windows open for inspection. See [Testing](docs/TESTING.md) for coverage and hardware checks.
 
-- Quit from the menu bar logo menu with **Quit OpenDock**, or run `OpenDock.exe --quit`.
-- Settings live in `%APPDATA%\OpenDock\settings.txt` and errors are written to `error.log` in the same folder.
+- Quit from the menu bar logo menu with **Quit GlassDock**, or run `GlassDock.exe --quit`.
+- Settings live in `%APPDATA%\GlassDock\settings.txt` and errors are written to `error.log` in the same folder.
 
 ## The Windows taskbar
 
-Explorer always creates the taskbar, so OpenDock keeps it out of sight instead. When **Hide the Windows taskbar** is on, OpenDock switches the taskbar to auto-hide and hides it completely. Auto-hide stays on after you quit, so together with **Open OpenDock at login** the taskbar never appears at sign-in. While OpenDock isn't running, you can still reach the taskbar at the bottom edge of the screen. Turning the setting off restores your original taskbar.
+Explorer always creates the taskbar, so GlassDock keeps it out of sight instead. When **Hide the Windows taskbar** is on, GlassDock switches the taskbar to auto-hide and hides it completely. Auto-hide stays on after you quit, so together with **Open GlassDock at login** the taskbar never appears at sign-in. While GlassDock isn't running, you can still reach the taskbar at the bottom edge of the screen. Turning the setting off restores your original taskbar.
 
-OpenDock reloads itself if it freezes. A watchdog thread pings the UI every 2 seconds, and if about 12 seconds pass with no answer it starts a fresh copy. It also restarts if the graphics driver resets (which can happen when a game starts), because WPF stops drawing when that happens.
+GlassDock reloads itself if it freezes. A watchdog thread pings the UI every 2 seconds, and if about 12 seconds pass with no answer it starts a fresh copy. It also restarts if the graphics driver resets (which can happen when a game starts), because WPF stops drawing when that happens.
 
 ## How it's built
 
@@ -103,10 +103,10 @@ Display geometry uses the app's existing system-DPI WPF coordinate space, includ
 
 ## Not done yet
 
-Packaged icon-theme collections (individual custom icons are available in Dock Studio), and animations for other apps' windows when they first open (Windows won't let OpenDock hide another app's window while it animates). Pull requests are welcome.
+Packaged icon-theme collections (individual custom icons are available in Dock Studio), and animations for other apps' windows when they first open (Windows won't let GlassDock hide another app's window while it animates). Pull requests are welcome.
 
 ## License
 
-MIT. OpenDock isn't affiliated with Microsoft, Apple or MyDockFinder. The Windows mark belongs to Microsoft; the other built-in icons are original vector drawings. The rendered wallpapers in `wallpapers/` are original artwork made with Blender for OpenDock (`wallpapers/render.py`); the photo wallpapers are from Wikimedia Commons under CC BY-SA 4.0, credited in `wallpapers/CREDITS.md`.
+MIT. GlassDock isn't affiliated with Microsoft, Apple or MyDockFinder. The Windows mark belongs to Microsoft; the other built-in icons are original vector drawings. The rendered wallpapers in `wallpapers/` are original artwork made with Blender for GlassDock (`wallpapers/render.py`); the photo wallpapers are from Wikimedia Commons under CC BY-SA 4.0, credited in `wallpapers/CREDITS.md`.
 
 The Liquid Glass lens (`src/LiquidGlass.cs`) is a port of the refraction, dispersion and interactive-highlight techniques from [Kyant0/AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass), Copyright 2025 Kyant, used under the Apache License 2.0 ([licenses/AndroidLiquidGlass-LICENSE.txt](licenses/AndroidLiquidGlass-LICENSE.txt)).

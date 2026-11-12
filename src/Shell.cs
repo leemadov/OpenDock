@@ -536,7 +536,7 @@ namespace OpenDock
                 else if (args != null) Process.Start(new ProcessStartInfo(target, args) { UseShellExecute = true });
                 else Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
             }
-            catch (Exception ex) { MessageBox.Show(ex.Message, "OpenDock"); }
+            catch (Exception ex) { MessageBox.Show(ex.Message, "GlassDock"); }
         }
 
         public static void Shell(string uri) { try { Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true }); } catch { } }
@@ -553,7 +553,7 @@ namespace OpenDock
                     else Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(p, Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
                 }
                 catch (OperationCanceledException) { }
-                catch (Exception ex) { MessageBox.Show(ex.Message, "OpenDock"); }
+                catch (Exception ex) { MessageBox.Show(ex.Message, "GlassDock"); }
             }
         }
 

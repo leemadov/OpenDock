@@ -69,7 +69,7 @@ namespace OpenDock
                 string parent=Path.Combine(directory,"folder"), child=Path.Combine(parent,"child"); Directory.CreateDirectory(child);
                 bool rejected=false; try { FinderWindow.TransferDestination(parent,child); } catch(IOException) { rejected=true; }
                 Check(rejected,"recursive folder transfer allowed");
-                string target=Path.Combine(directory,"OpenDock.exe");
+                string target=Path.Combine(directory,"GlassDock.exe");
                 var now=DateTime.UtcNow;
                 string older=target+".backup-old-"+now.AddHours(-2).ToString("yyyyMMdd-HHmmss"),newer=target+".backup-new-"+now.AddHours(-1).ToString("yyyyMMdd-HHmmss");
                 File.WriteAllText(older,"old installation"); File.WriteAllText(newer,"new installation"); File.SetLastWriteTimeUtc(older,now.AddDays(1)); File.SetLastWriteTimeUtc(newer,now.AddDays(-20));

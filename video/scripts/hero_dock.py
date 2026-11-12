@@ -223,7 +223,14 @@ mk = scene.timeline_markers.new("Hero", frame=F0); mk.camera = cam
 first = [m for m in scene.timeline_markers if m.name == "Main"]
 if not first:
     m0 = scene.timeline_markers.new("Main", frame=1); m0.camera = main_cam
-for o in coll.objects: o.hide_render = False
+# the hero objects only exist in their own shot (F0-F1): elsewhere they'd float where the open screen will be
+for o in coll.objects:
+    for fr, hidden in ((1, True), (F0, False), (F1 + 1, True)):
+        o.hide_render = hidden; o.keyframe_insert("hide_render", frame=fr)
+        o.hide_viewport = hidden; o.keyframe_insert("hide_viewport", frame=fr)
+    for fc in anim_curves(o):
+        if fc.data_path in ("hide_render", "hide_viewport"):
+            for k in fc.keyframe_points: k.interpolation = "CONSTANT"
 
 scene.frame_end = max(scene.frame_end, F1)
 scene.frame_set(1)

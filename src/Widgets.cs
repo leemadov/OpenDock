@@ -169,7 +169,7 @@ namespace OpenDock
         public WidgetWindow(string kind)
         {
             Kind = kind;
-            Title = "OpenDock Widget";
+            Title = "GlassDock Widget";
             var size = Widgets.SizeOf(kind);
             WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent; ResizeMode = ResizeMode.NoResize;
             ShowInTaskbar = false; ShowActivated = false; FontFamily = Theme.Font;
@@ -685,7 +685,7 @@ namespace OpenDock
             try
             {
                 ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-                using (var wc = new WebClient()) { wc.Headers[HttpRequestHeader.UserAgent] = "OpenDock"; wc.Encoding = System.Text.Encoding.UTF8; return wc.DownloadString(url); }
+                using (var wc = new WebClient()) { wc.Headers[HttpRequestHeader.UserAgent] = "GlassDock"; wc.Encoding = System.Text.Encoding.UTF8; return wc.DownloadString(url); }
             }
             catch { return null; }
         }

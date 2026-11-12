@@ -181,7 +181,7 @@ namespace OpenDock
         LockWindow(Sys.Display screen, bool main, string name, DateTime at, ImageSource wallpaper)
         {
             Main = main;
-            Title = "OpenDock Lock Screen";
+            Title = "GlassDock Lock Screen";
             WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize; ShowInTaskbar = false; Topmost = true;
             Background = Brushes.Black; FontFamily = Theme.Font; Foreground = Brushes.White;
             if (screen != null)
@@ -272,7 +272,7 @@ namespace OpenDock
             if (verifying || leaving || hwnd == IntPtr.Zero) return;
             verifying = true;
             if (unlockPill != null) unlockPill.Opacity = 0.55;
-            Hello.Verify(hwnd, "Unlock OpenDock", ok =>
+            Hello.Verify(hwnd, "Unlock GlassDock", ok =>
             {
                 verifying = false;
                 if (unlockPill != null) unlockPill.Opacity = 1;

@@ -5,3 +5,4 @@ video/assets/
 video/*.blend1
 video/*.blend2
 video/*.blend
+__pycache__/

@@ -1,4 +1,4 @@
-# The Apple-style cut: the laptop opens, "Meet OpenDock.", the Dock pops out of the screen in glass (the hero), then
+# The Apple-style cut: the laptop opens, "Meet GlassDock.", the Dock pops out of the screen in glass (the hero), then
 # the features, each with one short, bold line, and the end card. Big Display-weight headlines whose words rise in
 # out of a soft blur; no caption boxes.
 #   python video/scripts/assemble_apple.py [width height]       -> renders/opendock_ad_apple_<h>p.mp4
@@ -17,7 +17,7 @@ INK = (29, 29, 31)
 
 # ---------- the cut ----------
 shots = [   # (folder, first, last, caption lines, caption placement)
-    ("opening", 21, 150, ["Meet OpenDock."], "top"),
+    ("opening", 21, 150, ["Meet GlassDock."], "top"),
     ("hero3d", 1000, 1180, ["The Dock.", "Now in Liquid Glass."], "topleft"),
     ("shot4", 1, 90, ["Glass that bends light."], "top"),
     ("shot5", 1, 90, ["Your icons. Your colors."], "top"),
@@ -76,7 +76,7 @@ def headline(img, lines, where, f, a, b):
 def end_card(img, f):
     layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
     x0 = W * 0.575
-    rows = [("OpenDock.", font("Bold Display", 76), INK + (255,), H * 0.30, 0),
+    rows = [("GlassDock.", font("Bold Display", 76), INK + (255,), H * 0.30, 0),
             ("The Mac-style desktop for Windows.", font("Semibold Display", 25), (60, 60, 64, 255), H * 0.30 + 98 * S, 10),
             ("Free and open source.", font("Regular Display", 25), (110, 110, 115, 255), H * 0.30 + 134 * S, 18),
             ("github.com/leemadov/OpenDock", font("Semibold Display", 22), (255, 55, 95, 255), H * 0.30 + 184 * S, 28)]

@@ -136,7 +136,7 @@ namespace OpenDock
             var initial = MonitorBounds;
             WindowStartupLocation = WindowStartupLocation.Manual;
             Left = initial.Left; Top = initial.Top;
-            Title = "OpenDock";
+            Title = "GlassDock";
             WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent;
             ShowInTaskbar = false; Topmost = true; ResizeMode = ResizeMode.NoResize; ShowActivated = false;
             AllowDrop = true;
@@ -651,7 +651,7 @@ namespace OpenDock
         DockItem NewRunning(WinInfo w)
         {
             if (w.InternalKind != null) return new DockItem { Kind = "internal", RunKey = w.Key,
-                Name = w.InternalKind == "settings" ? "System Settings" : w.InternalKind == "about" ? "About This PC" : "OpenDock Windows" };
+                Name = w.InternalKind == "settings" ? "System Settings" : w.InternalKind == "about" ? "About This PC" : "GlassDock Windows" };
             var it = new DockItem { RunKey = w.Key };
             var e = w.IsFrameHost ? Apps.ById(w.Aumid) : (Apps.ByExe(w.Exe) ?? (w.Aumid != null ? Apps.ById(w.Aumid) : null));
             if (e != null) { it.Name = e.Name; it.Target = e.Target; it.IconPath = e.Icon; }

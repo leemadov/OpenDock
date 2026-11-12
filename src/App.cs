@@ -49,6 +49,7 @@ namespace OpenDock
         public static bool TileMargins = true;     // tiled windows have margins
         public static bool CycleWindowsKey = true; // Alt+` cycles the front app's windows (macOS: Cmd+`)
         public static bool StageManager = false;   // Stage Manager: the app you're using in the middle, recent apps in a strip
+        public static bool TrafficLights = true;   // Mac traffic lights over every app window's own buttons
         public static bool ScreenshotKeys = true;  // Ctrl+Shift+3 / 4 / 5: Mac-style screenshots to the Desktop
         public static bool CustomLockScreen = true;  // OpenDock's Mac-style lock screen, unlocked with Windows Hello
         public static bool AppSwitcher = true;     // Alt+Tab shows OpenDock's app switcher instead of Windows'
@@ -77,7 +78,23 @@ namespace OpenDock
         public static bool WallpapersSeeded = false;            // the library was filled with the Windows wallpapers once
 
         public static event Action Changed;
-        internal static string StorageDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "OpenDock");
+        internal static string StorageDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GlassDock");
+        // GlassDock was called OpenDock: its first start copies OpenDock's settings, wallpapers and widgets across
+        // (the old folder stays as it was, as a backup), pointing the wallpaper library at the new copies.
+        public static void Migrate()
+        {
+            try
+            {
+                string old = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "OpenDock");
+                if (Directory.Exists(StorageDirectory) || !Directory.Exists(old)) return;
+                foreach (var d in Directory.GetDirectories(old, "*", SearchOption.AllDirectories)) Directory.CreateDirectory(d.Replace(old, StorageDirectory));
+                Directory.CreateDirectory(StorageDirectory);
+                foreach (var f in Directory.GetFiles(old, "*", SearchOption.AllDirectories)) File.Copy(f, f.Replace(old, StorageDirectory), true);
+                string s = Path.Combine(StorageDirectory, "settings.txt");
+                if (File.Exists(s)) File.WriteAllText(s, File.ReadAllText(s).Replace(old + "\\", StorageDirectory + "\\"));
+            }
+            catch (Exception ex) { App.Log(ex); }
+        }
         public static string DataDir { get { return StorageDirectory; } }
         public static string WallpaperDir { get { return Path.Combine(DataDir, "Wallpapers"); } }   // copies of photos you add
         static string file { get { return Path.Combine(DataDir, "settings.txt"); } }
@@ -123,13 +140,14 @@ namespace OpenDock
         const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
         public static bool LaunchAtLogin
         {
-            get { using (var k = Registry.CurrentUser.OpenSubKey(RunKey)) return k != null && k.GetValue("OpenDock") != null; }
+            get { using (var k = Registry.CurrentUser.OpenSubKey(RunKey)) return k != null && (k.GetValue("GlassDock") != null || k.GetValue("OpenDock") != null); }
             set
             {
                 using (var k = Registry.CurrentUser.CreateSubKey(RunKey))
                 {
-                    if (value) k.SetValue("OpenDock", "\"" + Assembly.GetExecutingAssembly().Location + "\"");
-                    else k.DeleteValue("OpenDock", false);
+                    k.DeleteValue("OpenDock", false);   // its name before GlassDock
+                    if (value) k.SetValue("GlassDock", "\"" + Assembly.GetExecutingAssembly().Location + "\"");
+                    else k.DeleteValue("GlassDock", false);
                 }
                 LogonTask(value);
             }
@@ -147,19 +165,22 @@ namespace OpenDock
                 {
                     string user = SecurityElement.Escape(System.Security.Principal.WindowsIdentity.GetCurrent().Name);
                     string xml = "<?xml version=\"1.0\" encoding=\"UTF-16\"?><Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">"
-                        + "<RegistrationInfo><Description>Starts OpenDock as soon as you sign in.</Description></RegistrationInfo>"
+                        + "<RegistrationInfo><Description>Starts GlassDock as soon as you sign in.</Description></RegistrationInfo>"
                         + "<Triggers><LogonTrigger><Enabled>true</Enabled><UserId>" + user + "</UserId></LogonTrigger></Triggers>"
                         + "<Principals><Principal id=\"Author\"><UserId>" + user + "</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>"
                         + "<Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"
                         + "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>4</Priority></Settings>"
                         + "<Actions Context=\"Author\"><Exec><Command>" + SecurityElement.Escape(Assembly.GetExecutingAssembly().Location) + "</Command></Exec></Actions></Task>";
-                    string file = Path.Combine(Path.GetTempPath(), "OpenDock-logon-task.xml");
+                    string file = Path.Combine(Path.GetTempPath(), "GlassDock-logon-task.xml");
                     File.WriteAllText(file, xml, Encoding.Unicode);
-                    args = "/create /tn OpenDock /f /xml \"" + file + "\"";
+                    args = "/create /tn GlassDock /f /xml \"" + file + "\"";
                 }
-                else args = "/delete /tn OpenDock /f";
+                else args = "/delete /tn GlassDock /f";
                 var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("schtasks.exe", args) { CreateNoWindow = true, UseShellExecute = false });
                 p.WaitForExit(10000);
+                // and the task from before the rename
+                var old = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("schtasks.exe", "/delete /tn OpenDock /f") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true });
+                old.WaitForExit(10000);
             }
             catch (Exception ex) { App.Log(ex); }
         }
@@ -347,13 +368,13 @@ namespace OpenDock
                 }
                 if (!first || args.Contains("--quit"))
                 {
-                    // "OpenDock.exe --quit" asks the running copy to exit cleanly (restores the taskbar).
+                    // "GlassDock.exe --quit" asks the running copy to exit cleanly (restores the taskbar).
                     var host = Native.FindWindow(null, "OpenDockHost");
                     if (host != IntPtr.Zero && args.Contains("--quit")) Native.PostMessage(host, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                    // "OpenDock.exe --snapshot-dock" asks the running copy to save a picture of its Dock as drawn
+                    // "GlassDock.exe --snapshot-dock" asks the running copy to save a picture of its Dock as drawn
                     // (screenshots can't see it: Live glass keeps it out of screen capture).
                     if (host != IntPtr.Zero && args.Contains("--snapshot-dock")) Native.PostMessage(host, Native.RegisterWindowMessage("OpenDockSnapshot"), IntPtr.Zero, IntPtr.Zero);
-                    // "OpenDock.exe --lock-screen" shows OpenDock's lock screen (for a keyboard shortcut of your own)
+                    // "GlassDock.exe --lock-screen" shows OpenDock's lock screen (for a keyboard shortcut of your own)
                     if (host != IntPtr.Zero && args.Contains("--lock-screen")) Native.PostMessage(host, Native.RegisterWindowMessage("OpenDockLock"), IntPtr.Zero, IntPtr.Zero);
                     return;
                 }
@@ -376,6 +397,7 @@ namespace OpenDock
                 SystemEvents.SessionEnding += delegate { Cleanup(); };
                 using (var g = System.Drawing.Graphics.FromHwnd(IntPtr.Zero)) Dpi = g.DpiX / 96.0;
 
+                Settings.Migrate();
                 Settings.Load(); Workspace.Load();
                 Theme.Init(app);
                 Glass.Init();
@@ -426,7 +448,7 @@ namespace OpenDock
                     System.Diagnostics.Process.Start(Assembly.GetExecutingAssembly().Location, "--restart");
                     System.Diagnostics.Process.GetCurrentProcess().Kill();   // the stuck thread can't run a clean exit
                 }
-            }) { IsBackground = true, Name = "OpenDock watchdog" };
+            }) { IsBackground = true, Name = "GlassDock watchdog" };
             t.Start();
         }
 
@@ -434,7 +456,7 @@ namespace OpenDock
         {
             StartWatchdog(Dispatcher.CurrentDispatcher);
             ColorProfiles.Apply();
-            if (Settings.LaunchAtLogin) System.Threading.Tasks.Task.Run(() => Settings.LogonTask(true));   // upgrade older "Run"-only installs; keeps the path current
+            if (Settings.LaunchAtLogin) System.Threading.Tasks.Task.Run(() => Settings.LaunchAtLogin = true);   // (also moves an OpenDock-era start to GlassDock)   // upgrade older "Run"-only installs; keeps the path current
             // Hidden top-level window: receives hotkeys and the TaskbarCreated broadcast (Explorer restarts).
             msgWindow = new HwndSource(new HwndSourceParameters("OpenDockHost") { WindowStyle = unchecked((int)0x80000000), Width = 0, Height = 0 });
             uint taskbarCreated = Native.RegisterWindowMessage("TaskbarCreated");
@@ -504,6 +526,7 @@ namespace OpenDock
             AppEffects.Start();
             DragTile.Start();
             StageManager.Start();
+            TrafficLights.Start();
             var warm = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             warm.Tick += delegate { warm.Stop(); WindowFx.Warm(); };
             warm.Start();
@@ -649,6 +672,7 @@ namespace OpenDock
             {
                 ColorProfiles.Stop();
                 StageManager.Shutdown();   // every window back where it was
+                TrafficLights.Shutdown();
                 foreach (var dock in Docks) if (dock.Bar != null) dock.Bar.Remove();
                 if (MenuBar != null) MenuBar.Bar.Remove();
                 if (Settings.HideTaskbar) Taskbar.Release(); else Taskbar.Restore();

@@ -43,7 +43,7 @@ namespace OpenDock
                 hook = SetWindowsHookEx(13 /* WH_KEYBOARD_LL */, proc, GetModuleHandle(null), 0);
                 MSG m;
                 while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { }
-            }) { IsBackground = true, Name = "OpenDock keys" };
+            }) { IsBackground = true, Name = "GlassDock keys" };
             t.Start();
         }
 
@@ -122,7 +122,7 @@ namespace OpenDock
 
         public SwitcherWindow()
         {
-            Title = "OpenDock App Switcher";
+            Title = "GlassDock App Switcher";
             WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize; ShowInTaskbar = false; Topmost = true; ShowActivated = false;
             SizeToContent = SizeToContent.WidthAndHeight; FontFamily = Theme.Font;
             SetResourceReference(BackgroundProperty, "WinBg");

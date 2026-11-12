@@ -1,5 +1,5 @@
 import bpy, os
-FRAMES = (241, 282, 330, 420)
+FRAMES = (20, 330, 1050)
 ROOT = os.environ.get("OPENDOCK_VIDEO") or os.path.join(os.path.expanduser("~"), "Desktop", "mydockfinder-opensource", "video")
 scene = bpy.data.scenes["OpenDock Ad"]
 bpy.context.window.scene = scene

@@ -43,7 +43,7 @@ namespace OpenDock
 
         public MenuBarWindow()
         {
-            Title = "OpenDock Menu Bar";
+            Title = "GlassDock Menu Bar";
             WindowStyle = WindowStyle.None; AllowsTransparency = true; ShowInTaskbar = false; Topmost = true;
             ResizeMode = ResizeMode.NoResize; ShowActivated = false; Height = H;
             Settings.Changed += OnSettings;
@@ -74,7 +74,7 @@ namespace OpenDock
             logoMenu.Items.Add(Cmd("Lock Screen", null, LockScreen.Lock));
             logoMenu.Items.Add(Cmd("Log Out " + Environment.UserName + "…", null, () => { if (Confirm("log out")) Native.ExitWindowsEx(0, 0); }));
             logoMenu.Items.Add(new Separator());
-            logoMenu.Items.Add(Cmd("Quit OpenDock", null, App.Quit));
+            logoMenu.Items.Add(Cmd("Quit GlassDock", null, App.Quit));
 
             appMenu.Header = appName;
             appMenu.Style = (Style)Application.Current.Resources["BarItem"];
@@ -331,7 +331,7 @@ namespace OpenDock
                 mi.Items.Add(Cmd("Close", null, app.Quit));
                 mi.Items.Add(Cmd("Force Close…", null, () =>
                 {
-                    if (MessageBox.Show("Force close " + app.Name + "? Unsaved work in it will be lost.", "OpenDock", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) app.Kill();
+                    if (MessageBox.Show("Force close " + app.Name + "? Unsaved work in it will be lost.", "GlassDock", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) app.Kill();
                 }));
                 cm.Items.Add(mi);
             }
@@ -368,7 +368,7 @@ namespace OpenDock
 
         static bool Confirm(string what)
         {
-            return MessageBox.Show("Are you sure you want to " + what + " now?", "OpenDock", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
+            return MessageBox.Show("Are you sure you want to " + what + " now?", "GlassDock", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
         }
 
         // ---------- builders ----------

@@ -1,5 +1,5 @@
 @echo off
-rem Builds bin\OpenDock.exe with the C# compiler that ships with Windows (.NET Framework 4.8). No SDK needed.
+rem Builds bin\GlassDock.exe with the C# compiler that ships with Windows (.NET Framework 4.8). No SDK needed.
 setlocal
 cd /d "%~dp0"
 set FW=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319
@@ -12,6 +12,6 @@ if /i "%1"=="check" (
   bin\checks.exe %2
   exit /b
 )
-"%FW%\csc.exe" /nologo /target:winexe /optimize+ /out:bin\OpenDock.exe %REFS% src\*.cs
+"%FW%\csc.exe" /nologo /target:winexe /optimize+ /out:bin\GlassDock.exe %REFS% src\*.cs
 if errorlevel 1 exit /b 1
-echo Built bin\OpenDock.exe
+echo Built bin\GlassDock.exe

@@ -15,7 +15,7 @@ namespace OpenDock
 {
     static class Updater
     {
-        public const string CurrentTag = "v0.4.5";
+        public const string CurrentTag = "v0.4.6";
         public const string ReleasesPage = "https://github.com/leemadov/OpenDock/releases";
         const int MaximumBuild = 32 * 1024 * 1024;
         const string AssetPrefix = "https://github.com/leemadov/OpenDock/releases/download/";
@@ -66,11 +66,11 @@ namespace OpenDock
 
         public static bool ValidAsset(string tag, Asset asset)
         {
-            if (asset == null || asset.name != "OpenDock.exe" || asset.size < 512 || asset.size > MaximumBuild ||
+            if (asset == null || (asset.name != "GlassDock.exe" && asset.name != "OpenDock.exe") || asset.size < 512 || asset.size > MaximumBuild ||
                 asset.digest == null || !Regex.IsMatch(asset.digest, @"^sha256:[0-9a-fA-F]{64}$")) return false;
             Uri uri;
             return Uri.TryCreate(asset.browser_download_url, UriKind.Absolute, out uri) && uri.Scheme == "https" && uri.IsDefaultPort &&
-                string.IsNullOrEmpty(uri.UserInfo) && uri.AbsoluteUri == AssetPrefix + Uri.EscapeDataString(tag ?? "") + "/OpenDock.exe";
+                string.IsNullOrEmpty(uri.UserInfo) && uri.AbsoluteUri == AssetPrefix + Uri.EscapeDataString(tag ?? "") + "/" + asset.name;
         }
 
         public static Release SelectRelease(string json, bool includePreview, string current = CurrentTag)
@@ -95,7 +95,7 @@ namespace OpenDock
         {
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
             var request = (HttpWebRequest)WebRequest.Create(uri);
-            request.UserAgent = "OpenDock/" + CurrentTag; request.Accept = "application/vnd.github+json";
+            request.UserAgent = "GlassDock/" + CurrentTag; request.Accept = "application/vnd.github+json";
             request.AllowAutoRedirect = true;
             using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel))
             {
@@ -234,7 +234,7 @@ try {
         {
             Verify(bytes, digest);
             string directory = Path.GetDirectoryName(Path.GetFullPath(target));
-            string staged = Path.Combine(directory, ".OpenDock-update-" + Guid.NewGuid().ToString("N") + ".exe");
+            string staged = Path.Combine(directory, ".GlassDock-update-" + Guid.NewGuid().ToString("N") + ".exe");
             try { using (var file = new FileStream(staged, FileMode.CreateNew, FileAccess.Write)) { file.Write(bytes, 0, bytes.Length); file.Flush(true); } }
             catch { try { File.Delete(staged); } catch { } throw; }
             return staged;

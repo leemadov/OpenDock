@@ -1,8 +1,8 @@
 # Wallpaper credits
 
-The renders (Dune, Drift, Fold, Strata, Flux, Liquid, Glass) are original artwork made in Blender for OpenDock (`render.py`).
+The renders (Dune, Drift, Fold, Strata, Flux, Liquid, Glass) are original artwork made in Blender for GlassDock (`render.py`).
 
-The photos below are from Wikimedia Commons under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). They were scaled to 3840 px and cropped to 16:9 for OpenDock; those versions are shared under the same license.
+The photos below are from Wikimedia Commons under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). They were scaled to 3840 px and cropped to 16:9 for GlassDock; those versions are shared under the same license.
 
 | Wallpaper | Photo | Author | License |
 |---|---|---|---|

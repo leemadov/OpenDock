@@ -27,7 +27,7 @@ namespace OpenDock
         string asking, joining;      // the network whose password row is open / that we're joining
         bool scanning;
 
-        WifiPanel() : base("OpenDock Wi-Fi", 300 + 2 * Pad)
+        WifiPanel() : base("GlassDock Wi-Fi", 300 + 2 * Pad)
         {
             power.Changed += on =>
             {
@@ -165,7 +165,7 @@ namespace OpenDock
         Slider2 volume;
         TextBlock muteGlyph;
 
-        SoundPanel() : base("OpenDock Sound", 300 + 2 * Pad) { }
+        SoundPanel() : base("GlassDock Sound", 300 + 2 * Pad) { }
 
         protected override void Prepare() { Build(); }
 
@@ -236,7 +236,7 @@ namespace OpenDock
         readonly DispatcherTimer tick = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         TextBlock time, timerText;
 
-        ClockPanel() : base("OpenDock Notification Center", 4 * U + 3 * G + 2 * Pad)
+        ClockPanel() : base("GlassDock Notification Center", 4 * U + 3 * G + 2 * Pad)
         {
             tick.Tick += delegate
             {

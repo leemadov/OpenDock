@@ -250,7 +250,7 @@ namespace OpenDock
         Banner(Note n)
         {
             note = n;
-            Title = "OpenDock Notification";
+            Title = "GlassDock Notification";
             WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent; ShowInTaskbar = false; Topmost = true;
             ShowActivated = false; ResizeMode = ResizeMode.NoResize; SizeToContent = SizeToContent.Height; Width = W + 2 * Margin2;
             WindowStartupLocation = WindowStartupLocation.Manual; FontFamily = Theme.Font;

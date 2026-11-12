@@ -236,7 +236,7 @@ namespace OpenDock
 
         public IslandWindow()
         {
-            Title = "OpenDock Island";
+            Title = "GlassDock Island";
             WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = null;
             ShowInTaskbar = false; Topmost = true; ResizeMode = ResizeMode.NoResize; ShowActivated = false;
             Width = Frame; Height = FrameH;

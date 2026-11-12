@@ -18,7 +18,7 @@ namespace OpenDock
         static readonly string[] PhotoCredits = { "Photo: Carsten Steger, CC BY-SA 4.0", "Photo: Basile Morin, CC BY-SA 4.0", "Photo: Yoghya, edited by UnpetitproleX, CC BY-SA 4.0",
             "Photo: Florian Kriechbaumer, edited by Aristeas, CC BY-SA 4.0", "Photo: Timothy A. Gonsalves, CC BY-SA 4.0" };
         public static bool IsPhoto(string name) { return Array.IndexOf(Photos, name) >= 0; }
-        public static string Credit(string name) { int i = Array.IndexOf(Photos, name); return i >= 0 ? PhotoCredits[i] : "Original render for OpenDock"; }
+        public static string Credit(string name) { int i = Array.IndexOf(Photos, name); return i >= 0 ? PhotoCredits[i] : "Original render for GlassDock"; }
 
         // Most renders come in light and dark; Flux (liquid chrome) only works on black. Photos come as they are.
         public static bool Has(string name, bool dark) { return IsPhoto(name) ? !dark : dark || name != "Flux"; }
@@ -27,7 +27,12 @@ namespace OpenDock
         static string FileName(string name, bool dark) { return name.ToLowerInvariant().Replace(' ', '-') + "-" + (dark ? "dark" : "light") + ".jpg"; }
 
         // Where the picture sits in your library once picked.
-        public static string FileFor(string name, bool dark) { return Path.Combine(Settings.WallpaperDir, IsPhoto(name) ? name + ".jpg" : "OpenDock " + name + (dark ? " Dark" : " Light") + ".jpg"); }
+        public static string FileFor(string name, bool dark)
+        {
+            if (IsPhoto(name)) return Path.Combine(Settings.WallpaperDir, name + ".jpg");
+            string old = Path.Combine(Settings.WallpaperDir, "OpenDock " + name + (dark ? " Dark" : " Light") + ".jpg");   // picked before the rename
+            return File.Exists(old) ? old : Path.Combine(Settings.WallpaperDir, "GlassDock " + name + (dark ? " Dark" : " Light") + ".jpg");
+        }
 
         // The wallpapers folder that ships with OpenDock (next to the exe, or the project's when run from bin\).
         static string Local(string relative)
@@ -68,7 +73,7 @@ namespace OpenDock
             else
             {
                 ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-                using (var wc = new WebClient()) { wc.Headers[HttpRequestHeader.UserAgent] = "OpenDock"; wc.DownloadFile(Online + FileName(name, dark), tmp); }
+                using (var wc = new WebClient()) { wc.Headers[HttpRequestHeader.UserAgent] = "GlassDock"; wc.DownloadFile(Online + FileName(name, dark), tmp); }
             }
             if (File.Exists(dest)) File.Delete(tmp); else File.Move(tmp, dest);
             return dest;

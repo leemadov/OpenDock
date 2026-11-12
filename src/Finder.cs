@@ -1206,7 +1206,7 @@ namespace OpenDock
         {
             var about = Group(body);
             var info = new StackPanel { Margin = new Thickness(0, 6, 0, 6) };
-            info.Children.Add(Text("OpenDock", 20, "Fg", FontWeights.Bold));
+            info.Children.Add(Text("GlassDock", 20, "Fg", FontWeights.Bold));
             var sub = Text("A free, open-source macOS-style desktop for Windows.", 13, "FgDim"); sub.Margin = new Thickness(0, 4, 0, 2);
             info.Children.Add(sub);
             info.Children.Add(Text("MIT License", 11.5, "FgDim"));
@@ -1411,6 +1411,7 @@ namespace OpenDock
 
             body.Children.Add(Heading("Windows"));
             var wins = Group(body);
+            AddSwitch(wins, "Traffic lights on every app window", Settings.TrafficLights, v => Settings.TrafficLights = v);
             AddSwitch(wins, "Drag windows to screen edges to tile", Settings.DragTile, v => Settings.DragTile = v);
             AddSwitch(wins, "Hold Alt while dragging windows to tile", Settings.DragTileAlt, v => Settings.DragTileAlt = v);
             AddSwitch(wins, "Tiled windows have margins", Settings.TileMargins, v => Settings.TileMargins = v);
@@ -1424,7 +1425,7 @@ namespace OpenDock
                 var snapRow = new DockPanel();
                 var snapGo = Pill("Open Snap Settings", () => Launcher.Shell("ms-settings:multitasking"));
                 DockPanel.SetDock(snapGo, Dock.Right);
-                var snapText = Text("Windows Snap is on too, so dragging to an edge also shows Windows' own outline. Turn off “Snap windows” to see only OpenDock's.", 12, "FgDim");
+                var snapText = Text("Windows Snap is on too, so dragging to an edge also shows Windows' own outline. Turn off “Snap windows” to see only GlassDock's.", 12, "FgDim");
                 snapText.TextWrapping = TextWrapping.Wrap;
                 snapRow.Children.Add(snapGo); snapRow.Children.Add(snapText);
                 Row(wins, snapRow);
