@@ -508,7 +508,7 @@ namespace OpenDock
         {
             var look = Group(body);
             AddSwitch(look, "Use GlassDock's lock screen", Settings.CustomLockScreen, v => Settings.CustomLockScreen = v);
-            Note(body, "GlassDock's lock screen shows your wallpaper with a big clock, and you unlock it with Windows Hello (PIN, face or fingerprint). Windows checks it's you; GlassDock never sees it. It covers your desktop, but it isn't Windows' own secure lock: Ctrl+Alt+Del still gets past it, and Win+L always uses Windows' lock screen. Without Windows Hello set up, Lock Screen uses Windows' own.");
+            Note(body, "GlassDock's lock screen shows your wallpaper with a big clock, and you unlock it with Windows Hello (PIN, face or fingerprint). Windows checks it's you; GlassDock never sees it. It covers your desktop but isn't Windows' own secure lock, so if anything gets in front of it (Task Manager from Ctrl+Alt+Del, say), or GlassDock stops while it's up, Windows' own lock screen takes over. Win+L always uses Windows' lock screen. Without Windows Hello set up, Lock Screen uses Windows' own.");
             Load(body, () => new[] { Sys.Timeout("SUB_VIDEO", "VIDEOIDLE"), Sys.Timeout("SUB_SLEEP", "STANDBYIDLE") }, (t, slot) =>
             {
                 var g = Group(slot);

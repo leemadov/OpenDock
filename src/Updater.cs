@@ -15,10 +15,13 @@ namespace OpenDock
 {
     static class Updater
     {
-        public const string CurrentTag = "v0.4.7";
+        public const string CurrentTag = "v0.4.8";
         public const string ReleasesPage = "https://github.com/leemadov/OpenDock/releases";
         const int MaximumBuild = 32 * 1024 * 1024;
         const string AssetPrefix = "https://github.com/leemadov/OpenDock/releases/download/";
+        // the same repository under its old and new names: if it's renamed to GlassDock, GitHub hands out the new
+        // download addresses (and redirects the old API address), and updates must keep coming
+        static readonly string[] AssetPrefixes = { AssetPrefix, "https://github.com/leemadov/GlassDock/releases/download/" };
         static readonly Regex versionPattern = new Regex(@"^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$", RegexOptions.CultureInvariant);
 
         public class Asset
@@ -70,7 +73,7 @@ namespace OpenDock
                 asset.digest == null || !Regex.IsMatch(asset.digest, @"^sha256:[0-9a-fA-F]{64}$")) return false;
             Uri uri;
             return Uri.TryCreate(asset.browser_download_url, UriKind.Absolute, out uri) && uri.Scheme == "https" && uri.IsDefaultPort &&
-                string.IsNullOrEmpty(uri.UserInfo) && uri.AbsoluteUri == AssetPrefix + Uri.EscapeDataString(tag ?? "") + "/" + asset.name;
+                string.IsNullOrEmpty(uri.UserInfo) && AssetPrefixes.Any(p => uri.AbsoluteUri == p + Uri.EscapeDataString(tag ?? "") + "/" + asset.name);
         }
 
         public static Release SelectRelease(string json, bool includePreview, string current = CurrentTag)

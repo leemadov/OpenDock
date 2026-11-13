@@ -22,7 +22,27 @@ namespace OpenDock
         static readonly List<Control> open = new List<Control>();   // open ContextMenus, and MenuItems showing a submenu
         static readonly Dictionary<Window, Action> panels = new Dictionary<Window, Action>();   // open glass panels, and how to close them
         static readonly DispatcherTimer watch = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(40) };
-        static bool wasDown;
+        static bool wasDown, clicked;
+
+        // A tap quicker than the 40ms check would slip between two looks at the buttons, so while something is
+        // open a low-level mouse hook also notes every press (and is removed the moment nothing is open).
+        delegate IntPtr MouseProc(int code, IntPtr w, IntPtr l);
+        [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int id, MouseProc proc, IntPtr mod, uint thread);
+        [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr h);
+        [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr h, int code, IntPtr w, IntPtr l);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
+        static readonly MouseProc proc = (code, w, l) =>
+        {
+            int m = (int)w;
+            if (code >= 0 && (m == 0x0201 /* LBUTTONDOWN */ || m == 0x0204 /* RBUTTONDOWN */)) clicked = true;
+            return CallNextHookEx(hook, code, w, l);
+        };
+        static IntPtr hook;
+        static void Listen(bool on)
+        {
+            if (on && hook == IntPtr.Zero) hook = SetWindowsHookEx(14 /* WH_MOUSE_LL */, proc, GetModuleHandle(null), 0);
+            else if (!on && hook != IntPtr.Zero) { UnhookWindowsHookEx(hook); hook = IntPtr.Zero; }
+        }
 
         public static void Init()
         {
@@ -36,7 +56,8 @@ namespace OpenDock
         public static void Watch(Window w, Action dismiss)
         {
             panels[w] = dismiss;
-            wasDown = Down();
+            wasDown = Down(); clicked = false;
+            Listen(true);
             watch.Start();
         }
 
@@ -49,7 +70,8 @@ namespace OpenDock
         static void Track(Control c)
         {
             if (!open.Contains(c)) open.Add(c);
-            wasDown = Down();   // the click that opened the menu doesn't count
+            wasDown = Down(); clicked = false;   // the click that opened the menu doesn't count
+            Listen(true);
             watch.Start();
         }
 
@@ -57,9 +79,11 @@ namespace OpenDock
         {
             open.RemoveAll(c => !IsOpen(c));
             foreach (var w in panels.Keys.Where(w => !w.IsVisible).ToList()) panels.Remove(w);
-            if (open.Count == 0 && panels.Count == 0) { watch.Stop(); return; }
+            if (open.Count == 0 && panels.Count == 0) { watch.Stop(); Listen(false); clicked = false; return; }
             bool down = Down();
-            if (down && !wasDown)
+            bool press = (down && !wasDown) || clicked;
+            clicked = false;
+            if (press)
             {
                 Native.POINT p;
                 Native.GetCursorPos(out p);

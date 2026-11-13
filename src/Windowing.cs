@@ -19,6 +19,7 @@ namespace OpenDock
         {
             Action a;
             if (!actions.TryGetValue(id, out a)) return false;
+            if (LockScreen.Active) return true;   // nothing gets past the lock screen: no Mission Control thumbnails, no screenshots
             try { a(); } catch (Exception ex) { App.Log(ex); }
             return true;
         }
@@ -197,6 +198,8 @@ namespace OpenDock
         static int armed = -1;          // the corner the pointer is resting in
         static DateTime since;
         static bool fired;
+        static List<Sys.Display> screens;
+        static DateTime screensAt;
 
         public static void Sync()
         {
@@ -215,9 +218,11 @@ namespace OpenDock
         static void Check()
         {
             Native.POINT p;
-            if (!Native.GetCursorPos(out p)) return;
+            if (LockScreen.Active || !Native.GetCursorPos(out p)) return;
+            // the displays, looked up every couple of seconds rather than 25 times a second
+            if (screens == null || (DateTime.UtcNow - screensAt).TotalSeconds > 2) { screens = Sys.Screens(); screensAt = DateTime.UtcNow; }
             int corner = -1;
-            foreach (var s in Sys.Screens())
+            foreach (var s in screens)
             {
                 var b = s.Bounds;
                 bool left = p.X <= b.Left + 1, right = p.X >= b.Right - 2, top = p.Y <= b.Top + 1, bottom = p.Y >= b.Bottom - 2;

@@ -16,7 +16,10 @@ namespace OpenDock
             status.Margin = new Thickness(0, 8, 0, 10);
             var check = Pill("Check for Updates", null);
             var install = Pill("Download and Install", null); install.IsEnabled = false;
-            var rollback = Pill("Restore Previous Build", null); rollback.IsEnabled = Updater.CanRollback;
+            var rollback = Pill("Restore Previous Build", null); rollback.IsEnabled = false;
+            // finding a backup hashes each one: off the UI thread
+            Action checkRollback = () => System.Threading.Tasks.Task.Run(() => Updater.CanRollback).ContinueWith(t => rollback.IsEnabled = t.Result, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
+            checkRollback();
             var controls = new WrapPanel(); controls.Children.Add(check); controls.Children.Add(install); controls.Children.Add(rollback);
             Row(group, status); Row(group, controls);
             Updater.Release candidate = null;
@@ -63,7 +66,7 @@ namespace OpenDock
                 }
                 catch (Exception ex)
                 {
-                    if (!cancel.IsCancellationRequested) { status.Text = "Couldn't install: " + ex.Message; check.IsEnabled = install.IsEnabled = true; rollback.IsEnabled = Updater.CanRollback; }
+                    if (!cancel.IsCancellationRequested) { status.Text = "Couldn't install: " + ex.Message; check.IsEnabled = install.IsEnabled = true; checkRollback(); }
                 }
             };
             rollback.Click += delegate

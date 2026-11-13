@@ -34,7 +34,7 @@ namespace OpenDock
             get
             {
                 if (looks != null) return looks;
-                looks = new Dictionary<string, Look>(StringComparer.OrdinalIgnoreCase);
+                var read = new Dictionary<string, Look>(StringComparer.OrdinalIgnoreCase);
                 try
                 {
                     if (System.IO.File.Exists(File))
@@ -43,10 +43,18 @@ namespace OpenDock
                             var p = line.Split('\t');
                             if (p.Length < 3 || p[0].Length == 0) continue;
                             int c; int.TryParse(p[1], out c);
-                            looks[Norm(p[0])] = new Look { Color = c >= 0 && c < Names.Length ? c : -1, Symbol = p[2].Length > 0 ? p[2] : null };
+                            read[Norm(p[0])] = new Look { Color = c >= 0 && c < Names.Length ? c : -1, Symbol = p[2].Length > 0 ? p[2] : null };
                         }
                 }
-                catch (Exception ex) { App.Log(ex); }
+                catch (Exception ex)
+                {
+                    // couldn't read it this time (locked by a backup or sync tool...): try again next time, and don't
+                    // cache the empty list -- the next edit would save it over every tag and symbol you have
+                    App.Log(ex); unreadable = true;
+                    return read;
+                }
+                unreadable = false;
+                looks = read;
                 return looks;
             }
         }
@@ -58,10 +66,13 @@ namespace OpenDock
             return path.Length > 3 ? path.TrimEnd('\\') : path;
         }
 
+        static bool unreadable;
+
         static void Save()
         {
             try
             {
+                if (looks == null || unreadable) { App.Log("folders.txt couldn't be read; not overwriting it"); return; }
                 Directory.CreateDirectory(Settings.DataDir);
                 var lines = All.Where(kv => kv.Value.Color >= 0 || kv.Value.Symbol != null).Select(kv => kv.Key + "\t" + kv.Value.Color + "\t" + (kv.Value.Symbol ?? ""));
                 string tmp = File + ".tmp";

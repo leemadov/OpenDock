@@ -156,57 +156,125 @@ namespace OpenDock
             return list.OrderBy(x => x[0]).ToList();
         }
 
-        // ---------- Wi-Fi (netsh) ----------
+        // ---------- Wi-Fi (the Native Wifi API: the same answers in every Windows language, names in any script) ----------
 
-        public class WifiNet { public string Ssid; public int Signal; public bool Known, Secure; }
+        public class WifiNet { public string Ssid, Profile; public byte[] RawSsid; public int Signal; public bool Known, Secure; }
         public class WifiState { public bool HasAdapter, Connected; public string Ssid, Signal, Error; public List<WifiNet> Nets = new List<WifiNet>(); }
+
+        [DllImport("wlanapi.dll")] static extern int WlanOpenHandle(uint clientVersion, IntPtr reserved, out uint negotiated, out IntPtr handle);
+        [DllImport("wlanapi.dll")] static extern int WlanCloseHandle(IntPtr handle, IntPtr reserved);
+        [DllImport("wlanapi.dll")] static extern int WlanEnumInterfaces(IntPtr handle, IntPtr reserved, out IntPtr list);
+        [DllImport("wlanapi.dll")] static extern int WlanGetAvailableNetworkList(IntPtr handle, ref Guid iface, uint flags, IntPtr reserved, out IntPtr list);
+        [DllImport("wlanapi.dll", CharSet = CharSet.Unicode)] static extern int WlanSetProfile(IntPtr handle, ref Guid iface, uint flags, string xml, string security, bool overwrite, IntPtr reserved, out uint reason);
+        [DllImport("wlanapi.dll")] static extern int WlanConnect(IntPtr handle, ref Guid iface, ref WLAN_CONNECTION_PARAMETERS p, IntPtr reserved);
+        [DllImport("wlanapi.dll")] static extern int WlanDisconnect(IntPtr handle, ref Guid iface, IntPtr reserved);
+        [DllImport("wlanapi.dll")] static extern void WlanFreeMemory(IntPtr p);
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct WLAN_CONNECTION_PARAMETERS { public int wlanConnectionMode; public string strProfile; public IntPtr pDot11Ssid, pDesiredBssidList; public int dot11BssType; public uint dwFlags; }
+
+        // Runs `use` with a client handle and the first Wi-Fi adapter (and whether it's connected); false if there's none.
+        static bool WithWifi(Action<IntPtr, Guid, bool> use)
+        {
+            uint ver; IntPtr h;
+            if (WlanOpenHandle(2, IntPtr.Zero, out ver, out h) != 0) return false;   // no WLAN service: no Wi-Fi hardware
+            try
+            {
+                IntPtr list;
+                if (WlanEnumInterfaces(h, IntPtr.Zero, out list) != 0) return false;
+                try
+                {
+                    if (Marshal.ReadInt32(list) == 0) return false;
+                    // WLAN_INTERFACE_INFO_LIST: two DWORDs, then { GUID; WCHAR[256]; state } items
+                    var guid = (Guid)Marshal.PtrToStructure(list + 8, typeof(Guid));
+                    int state = Marshal.ReadInt32(list + 8 + 16 + 512);
+                    use(h, guid, state == 1 /* wlan_interface_state_connected */);
+                    return true;
+                }
+                finally { WlanFreeMemory(list); }
+            }
+            finally { WlanCloseHandle(h, IntPtr.Zero); }
+        }
 
         public static WifiState Wifi()
         {
             var w = new WifiState();
-            string inf = Run("netsh", "wlan show interfaces");
-            w.HasAdapter = Field(inf, "Name").Length > 0;
-            if (!w.HasAdapter) return w;
-            w.Connected = Field(inf, "State").StartsWith("connected", StringComparison.OrdinalIgnoreCase);
-            w.Ssid = Field(inf, "SSID"); w.Signal = Field(inf, "Signal");
-            var known = new HashSet<string>(Lines(Run("netsh", "wlan show profiles")).Where(l => l.Contains("All User Profile")).Select(l => l.Substring(l.IndexOf(':') + 1).Trim()));
-            string nets = Run("netsh", "wlan show networks mode=bssid");
-            WifiNet cur = null;
-            foreach (var l in Lines(nets))
+            try
             {
-                var t = l.Trim();
-                int c = t.IndexOf(':');
-                if (c < 0) continue;
-                string key = t.Substring(0, c).Trim(), val = t.Substring(c + 1).Trim();
-                if (key.StartsWith("SSID ")) { cur = new WifiNet { Ssid = val, Known = known.Contains(val) }; if (val.Length > 0) w.Nets.Add(cur); }
-                else if (cur != null && key == "Authentication") cur.Secure = val != "Open";
-                else if (cur != null && key == "Signal") { int s; if (int.TryParse(val.TrimEnd('%'), out s)) cur.Signal = Math.Max(cur.Signal, s); }
+                w.HasAdapter = WithWifi((h, iface, connected) =>
+                {
+                    w.Connected = connected;
+                    IntPtr list;
+                    int err = WlanGetAvailableNetworkList(h, ref iface, 0, IntPtr.Zero, out list);
+                    if (err == 5) { w.Error = "Turn on location access (Settings › Privacy › Location) to see Wi-Fi networks."; return; }
+                    if (err != 0) { w.Error = "Windows couldn't list Wi-Fi networks (error " + err + ")."; return; }
+                    try
+                    {
+                        int n = Marshal.ReadInt32(list);
+                        const int item = 628;   // WLAN_AVAILABLE_NETWORK
+                        for (int i = 0; i < n; i++)
+                        {
+                            IntPtr p = list + 8 + i * item;
+                            string profile = Marshal.PtrToStringUni(p);
+                            int len = Math.Min(32, Marshal.ReadInt32(p + 512));
+                            var raw = new byte[len]; Marshal.Copy(p + 516, raw, 0, len);
+                            string ssid = Encoding.UTF8.GetString(raw);
+                            // offsets in WLAN_AVAILABLE_NETWORK: name 0, SSID 512, BSS type 548, BSSIDs 552, connectable 556,
+                            // reason 560, PHY count 564, PHY types 568-599, more PHYs 600, signal 604, secure 608, auth 612,
+                            // cipher 616, flags 620
+                            int signal = Marshal.ReadInt32(p + 604);   // wlanSignalQuality, 0-100
+                            bool secure = Marshal.ReadInt32(p + 608) != 0;
+                            uint flags = (uint)Marshal.ReadInt32(p + 620);
+                            if (ssid.Length == 0) continue;   // hidden networks
+                            var net = new WifiNet { Ssid = ssid, RawSsid = raw, Profile = profile, Signal = signal, Secure = secure, Known = (flags & 2) != 0 /* HAS_PROFILE */ };
+                            w.Nets.Add(net);
+                            if ((flags & 1) != 0 /* CONNECTED */) { w.Ssid = ssid; w.Signal = signal + "%"; }
+                        }
+                    }
+                    finally { WlanFreeMemory(list); }
+                });
             }
-            if (w.Nets.Count == 0 && nets.Trim().Length > 0 && !nets.Contains("SSID")) w.Error = Lines(nets).First().Trim();   // e.g. location access is off
-            w.Nets = w.Nets.GroupBy(n => n.Ssid).Select(g => g.OrderByDescending(n => n.Signal).First()).OrderByDescending(n => n.Signal).ToList();
+            catch (Exception ex) { App.Log(ex); }
+            if (w.Ssid == null) w.Ssid = "";
+            if (w.Signal == null) w.Signal = "";
+            // one row per network name: its strongest entry (and the saved profile, when one has it)
+            w.Nets = w.Nets.GroupBy(n => n.Ssid).Select(g => g.OrderByDescending(n => n.Known).ThenByDescending(n => n.Signal).First()).OrderByDescending(n => n.Signal).ToList();
             return w;
         }
 
-        // Joins a network; a new one gets a profile first (WPA2-Personal with the password, or open).
+        // Joins a network; a new one gets a profile first (WPA2-Personal with the password, or open). The password
+        // goes straight to Windows -- it's never written to a file.
         public static void WifiConnect(WifiNet n, string password)
         {
-            if (!n.Known)
+            try
             {
-                string name = SecurityElement.Escape(n.Ssid);
-                string security = n.Secure
-                    ? "<authEncryption><authentication>WPA2PSK</authentication><encryption>AES</encryption><useOneX>false</useOneX></authEncryption><sharedKey><keyType>passPhrase</keyType><protected>false</protected><keyMaterial>" + SecurityElement.Escape(password ?? "") + "</keyMaterial></sharedKey>"
-                    : "<authEncryption><authentication>open</authentication><encryption>none</encryption><useOneX>false</useOneX></authEncryption>";
-                string xml = "<?xml version=\"1.0\"?><WLANProfile xmlns=\"http://www.microsoft.com/networking/WLAN/profile/v1\"><name>" + name + "</name><SSIDConfig><SSID><name>" + name +
-                    "</name></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>auto</connectionMode><MSM><security>" + security + "</security></MSM></WLANProfile>";
-                string f = Path.Combine(Path.GetTempPath(), "opendock-wifi.xml");
-                File.WriteAllText(f, xml);
-                Run("netsh", "wlan add profile filename=\"" + f + "\" user=current");
-                try { File.Delete(f); } catch { }
+                WithWifi((h, iface, connected) =>
+                {
+                    string profile = n.Known && !string.IsNullOrEmpty(n.Profile) ? n.Profile : n.Ssid;
+                    if (!n.Known)
+                    {
+                        string name = SecurityElement.Escape(n.Ssid);
+                        string hex = n.RawSsid != null ? string.Concat(n.RawSsid.Select(b => b.ToString("X2"))) : null;
+                        string security = n.Secure
+                            ? "<authEncryption><authentication>WPA2PSK</authentication><encryption>AES</encryption><useOneX>false</useOneX></authEncryption><sharedKey><keyType>passPhrase</keyType><protected>false</protected><keyMaterial>" + SecurityElement.Escape(password ?? "") + "</keyMaterial></sharedKey>"
+                            : "<authEncryption><authentication>open</authentication><encryption>none</encryption><useOneX>false</useOneX></authEncryption>";
+                        string xml = "<?xml version=\"1.0\"?><WLANProfile xmlns=\"http://www.microsoft.com/networking/WLAN/profile/v1\"><name>" + name + "</name><SSIDConfig><SSID>" +
+                            (hex != null ? "<hex>" + hex + "</hex>" : "") + "<name>" + name + "</name></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>auto</connectionMode><MSM><security>" + security + "</security></MSM></WLANProfile>";
+                        uint reason;
+                        int err = WlanSetProfile(h, ref iface, 2 /* WLAN_PROFILE_USER: this user only */, xml, null, true, IntPtr.Zero, out reason);
+                        if (err != 0) { App.Log("Wi-Fi: Windows refused the new profile (" + err + ", reason " + reason + ")"); return; }
+                    }
+                    var p = new WLAN_CONNECTION_PARAMETERS { wlanConnectionMode = 0 /* profile */, strProfile = profile, dot11BssType = 1 /* infrastructure */ };
+                    int c = WlanConnect(h, ref iface, ref p, IntPtr.Zero);
+                    if (c != 0) App.Log("Wi-Fi: couldn't connect (" + c + ")");
+                });
             }
-            Run("netsh", "wlan connect name=\"" + n.Ssid.Replace("\"", "") + "\"");
+            catch (Exception ex) { App.Log(ex); }
         }
 
-        public static void WifiDisconnect() { Run("netsh", "wlan disconnect"); }
+        public static void WifiDisconnect()
+        {
+            try { WithWifi((h, iface, connected) => WlanDisconnect(h, ref iface, IntPtr.Zero)); } catch (Exception ex) { App.Log(ex); }
+        }
 
         // ---------- Bluetooth (WMI) ----------
 
@@ -321,20 +389,33 @@ namespace OpenDock
             try { var pc = (IPolicyConfig)new PolicyConfigCo(); for (int role = 0; role < 3; role++) pc.SetDefaultEndpoint(id, role); } catch { }
         }
 
-        static IAudioEndpointVolume Volume(bool output)
+        // Runs `use` on the default device's volume control, then lets go of every COM object at once (a slider
+        // drag calls this dozens of times a second; leaving them to the garbage collector piles them up).
+        static T WithVolume<T>(bool output, Func<IAudioEndpointVolume, T> use, T otherwise)
         {
-            var en = (IMMDeviceEnumerator)new MMDeviceEnumeratorCo();
-            IMMDevice d;
-            if (en.GetDefaultAudioEndpoint(output ? 0 : 1, 1, out d) != 0) return null;
-            var iid = typeof(IAudioEndpointVolume).GUID;
-            object o;
-            return d.Activate(ref iid, 23 /* CLSCTX_ALL */, IntPtr.Zero, out o) == 0 ? o as IAudioEndpointVolume : null;
+            IMMDeviceEnumerator en = null; IMMDevice d = null; object o = null;
+            try
+            {
+                en = (IMMDeviceEnumerator)new MMDeviceEnumeratorCo();
+                if (en.GetDefaultAudioEndpoint(output ? 0 : 1, 1, out d) != 0) return otherwise;
+                var iid = typeof(IAudioEndpointVolume).GUID;
+                if (d.Activate(ref iid, 23 /* CLSCTX_ALL */, IntPtr.Zero, out o) != 0) return otherwise;
+                var v = o as IAudioEndpointVolume;
+                return v != null ? use(v) : otherwise;
+            }
+            catch { return otherwise; }
+            finally
+            {
+                if (o != null && Marshal.IsComObject(o)) Marshal.ReleaseComObject(o);
+                if (d != null) Marshal.ReleaseComObject(d);
+                if (en != null) Marshal.ReleaseComObject(en);
+            }
         }
 
-        public static float GetVolume(bool output) { try { var v = Volume(output); float f; return v != null && v.GetMasterVolumeLevelScalar(out f) == 0 ? f : -1; } catch { return -1; } }
-        public static void SetVolume(bool output, float f) { try { var v = Volume(output); var g = Guid.Empty; if (v != null) v.SetMasterVolumeLevelScalar(Math.Max(0, Math.Min(1, f)), ref g); } catch { } }
-        public static bool GetMute(bool output) { try { var v = Volume(output); bool m; return v != null && v.GetMute(out m) == 0 && m; } catch { return false; } }
-        public static void SetMute(bool output, bool m) { try { var v = Volume(output); var g = Guid.Empty; if (v != null) v.SetMute(m, ref g); } catch { } }
+        public static float GetVolume(bool output) { return WithVolume(output, v => { float f; return v.GetMasterVolumeLevelScalar(out f) == 0 ? f : -1; }, -1f); }
+        public static void SetVolume(bool output, float f) { WithVolume(output, v => { var g = Guid.Empty; return v.SetMasterVolumeLevelScalar(Math.Max(0, Math.Min(1, f)), ref g); }, 0); }
+        public static bool GetMute(bool output) { return WithVolume(output, v => { bool m; return v.GetMute(out m) == 0 && m; }, false); }
+        public static void SetMute(bool output, bool m) { WithVolume(output, v => { var g = Guid.Empty; return v.SetMute(m, ref g); }, 0); }
 
         // ---------- SystemParametersInfo (accessibility, keyboard, mouse, wallpaper) ----------
 

@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -74,8 +76,39 @@ namespace OpenDock
         public const int ABN_POSCHANGED = 1, ABN_FULLSCREENAPP = 2;
 
         // ---- Recycle bin ----
-        [StructLayout(LayoutKind.Sequential, Pack = 1)] public struct SHQUERYRBINFO { public int cbSize; public long i64Size; public long i64NumItems; }
-        [DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern int SHQueryRecycleBin(string root, ref SHQUERYRBINFO info);
+        // SHQUERYRBINFO is byte-packed only in 32-bit Windows (20 bytes); 64-bit aligns it (24). Read it by hand.
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern int SHQueryRecycleBin(string root, IntPtr info);
+        public static long RecycleBinItems()
+        {
+            int size = IntPtr.Size == 8 ? 24 : 20, at = IntPtr.Size == 8 ? 16 : 12;
+            IntPtr mem = Marshal.AllocHGlobal(24);
+            try
+            {
+                for (int i = 0; i < 24; i += 4) Marshal.WriteInt32(mem, i, 0);
+                Marshal.WriteInt32(mem, 0, size);
+                return SHQueryRecycleBin(null, mem) == 0 ? Marshal.ReadInt64(mem, at) : 0;
+            }
+            finally { Marshal.FreeHGlobal(mem); }
+        }
+
+        // SHFILEOPSTRUCT: byte-packed on 32-bit Windows, naturally aligned on 64-bit
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct SHFILEOP64 { public IntPtr hwnd; public uint wFunc; public string pFrom, pTo; public ushort fFlags; public int fAnyOperationsAborted; public IntPtr hNameMappings; public string lpszProgressTitle; }
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 1)]
+        struct SHFILEOP32 { public IntPtr hwnd; public uint wFunc; public string pFrom, pTo; public ushort fFlags; public int fAnyOperationsAborted; public IntPtr hNameMappings; public string lpszProgressTitle; }
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "SHFileOperationW")] static extern int SHFileOperation64(ref SHFILEOP64 op);
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "SHFileOperationW")] static extern int SHFileOperation32(ref SHFILEOP32 op);
+
+        // Into the Recycle Bin, the way Explorer does it: where an item can't be recycled (a network share, too big
+        // for the bin, a drive with the bin turned off) Windows asks before deleting it for good.
+        public static int RecycleFiles(IntPtr owner, IEnumerable<string> paths)
+        {
+            string from = string.Concat(paths.Select(p => p + "\0")) + "\0";
+            const ushort flags = 0x40 /* ALLOWUNDO */ | 0x10 /* NOCONFIRMATION */ | 0x4000 /* WANTNUKEWARNING */;
+            if (IntPtr.Size == 8) { var op = new SHFILEOP64 { hwnd = owner, wFunc = 3 /* FO_DELETE */, pFrom = from, fFlags = flags }; return SHFileOperation64(ref op); }
+            var op32 = new SHFILEOP32 { hwnd = owner, wFunc = 3, pFrom = from, fFlags = flags };
+            return SHFileOperation32(ref op32);
+        }
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern int SHEmptyRecycleBin(IntPtr h, string root, uint flags);
 
         [DllImport("shell32.dll")] public static extern int SHGetKnownFolderPath([MarshalAs(UnmanagedType.LPStruct)] Guid id, uint flags, IntPtr token, out IntPtr path);

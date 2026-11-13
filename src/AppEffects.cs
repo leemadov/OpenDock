@@ -42,8 +42,8 @@ namespace OpenDock
 
         public static void Start()
         {
-            Native.WinEventProc onMin = (hk, ev, h, obj, child, t, time) => { if (obj == 0 && child == 0) OnMinimize(h); };
-            Native.WinEventProc onGone = (hk, ev, h, obj, child, t, time) => { if (obj == 0 && child == 0) OnGone(h); };
+            Native.WinEventProc onMin = App.Guard((hk, ev, h, obj, child, t, time) => { if (obj == 0 && child == 0) OnMinimize(h); });
+            Native.WinEventProc onGone = App.Guard((hk, ev, h, obj, child, t, time) => { if (obj == 0 && child == 0) OnGone(h); });
             keep.Add(onMin); keep.Add(onGone);
             Native.SetWinEventHook(0x0016, 0x0016, IntPtr.Zero, onMin, 0, 0, 2);   // EVENT_SYSTEM_MINIMIZESTART
             Native.SetWinEventHook(0x8001, 0x8001, IntPtr.Zero, onGone, 0, 0, 2);   // EVENT_OBJECT_DESTROY
@@ -85,7 +85,8 @@ namespace OpenDock
         {
             if (!On || !AppWindow(h) || capturing != IntPtr.Zero || Windows.FullscreenOn(Sys.Screens().FirstOrDefault(s => s.Monitor == Native.MonitorFromWindow(h, 2)) ?? DisplayLayout.Selected)) return;
             Shot old;
-            if (shots.TryGetValue(h, out old) && (DateTime.UtcNow - old.At).TotalMilliseconds < (hurry ? 900 : 3000)) return;
+            // (a full-window capture: while the pointer rests near the buttons, every 2 s is plenty)
+            if (shots.TryGetValue(h, out old) && (DateTime.UtcNow - old.At).TotalMilliseconds < (hurry ? 2000 : 3000)) return;
             capturing = h;
             Task.Run(() => Take(h)).ContinueWith(t =>
             {

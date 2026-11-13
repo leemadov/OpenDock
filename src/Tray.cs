@@ -63,8 +63,22 @@ namespace OpenDock
             }, IntPtr.Zero);
         }
 
+        // An app's own exe: every copy of it (Discord, Steam... run several processes, all theirs). A shared host
+        // (scripts in python / node / java, rundll32 helpers): only this one process and what it started -- other
+        // programs running in the same host would lose their unsaved work too.
         public void Kill()
         {
+            if (Tray.IsHost(Exe))
+            {
+                if (Pid == 0 || !string.Equals(Native.ProcessPath(Pid), Exe, StringComparison.OrdinalIgnoreCase)) return;   // gone, or the id was reused
+                try
+                {
+                    var p = Process.Start(new ProcessStartInfo("taskkill.exe", "/PID " + Pid + " /T /F") { CreateNoWindow = true, UseShellExecute = false });
+                    if (p != null) p.WaitForExit(5000);
+                }
+                catch (Exception ex) { App.Log(ex); }
+                return;
+            }
             foreach (var p in Process.GetProcesses())
                 using (p)
                 {
@@ -130,6 +144,7 @@ namespace OpenDock
         }
 
         static readonly string[] hosts = { "python.exe", "pythonw.exe", "javaw.exe", "java.exe", "node.exe", "electron.exe", "rundll32.exe" };
+        public static bool IsHost(string exe) { return exe != null && hosts.Contains(Path.GetFileName(exe).ToLowerInvariant()); }
 
         static string NameFor(string exe, AppEntry entry, Dictionary<string, string> tips)
         {

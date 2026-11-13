@@ -57,6 +57,30 @@ namespace OpenDock
             var first = windows.First(w => w.Main);
             first.Activate();
             Hook(true);
+            // if GlassDock stops while this is up (a crash, the watchdog), its next start hands over to Windows' lock
+            try { File.WriteAllText(Marker, DateTime.Now.ToString("o")); } catch { }
+            if (!watchingDisplays) { watchingDisplays = true; Microsoft.Win32.SystemEvents.DisplaySettingsChanged += (s, e) => { if (Active) windows[0].Dispatcher.BeginInvoke(new Action(CoverNewDisplays)); }; }
+        }
+
+        static string Marker { get { return System.IO.Path.Combine(Settings.DataDir, "locked"); } }
+        static bool watchingDisplays;
+
+        // A display plugged in while locked gets covered too.
+        static void CoverNewDisplays()
+        {
+            if (!Active) return;
+            foreach (var s in Sys.Screens().Where(s => !windows.Any(w => w.Device == s.Device)))
+            {
+                var w = new LockWindow(s, false);
+                windows.Add(w);
+                w.Show();
+            }
+        }
+
+        // At startup: the lock screen was up when GlassDock last stopped, so Windows' own lock takes over.
+        public static void RecoverAfterCrash()
+        {
+            try { if (File.Exists(Marker)) { File.Delete(Marker); Native.LockWorkStation(); } } catch (Exception ex) { App.Log(ex); }
         }
 
         // Unlocked (or handed to Windows): everything goes, the desktop comes back.
@@ -65,7 +89,15 @@ namespace OpenDock
             Hook(false);
             foreach (var w in windows.ToList()) w.Leave();
             windows.Clear();
+            try { File.Delete(Marker); } catch { }
         }
+
+        // Windows drops a keyboard hook that ever answers too slowly, without saying so: put it back now and then.
+        internal static void Rearm() { if (Active) { Hook(false); Hook(true); } }
+
+        // Something else took the screen while locked (Task Manager from Ctrl+Alt+Del, an app forcing itself
+        // forward): this overlay can't keep it out, so Windows' own secure lock takes over.
+        internal static void Breached() { if (Active) UseWindowsLock(); }
 
         internal static void UseWindowsLock()
         {
@@ -157,6 +189,10 @@ namespace OpenDock
     class LockWindow : Window
     {
         public readonly bool Main;
+        public readonly string Device;
+        int guardTicks;
+        bool wasActive;
+        DateTime grace;
         readonly TextBlock clock = new TextBlock(), date = new TextBlock(), hint = new TextBlock();
         readonly StackPanel who = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom };
         readonly Grid content = new Grid();
@@ -181,6 +217,7 @@ namespace OpenDock
         LockWindow(Sys.Display screen, bool main, string name, DateTime at, ImageSource wallpaper)
         {
             Main = main;
+            Device = screen != null ? screen.Device : null;
             Title = "GlassDock Lock Screen";
             WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize; ShowInTaskbar = false; Topmost = true;
             Background = Brushes.Black; FontFamily = Theme.Font; Foreground = Brushes.White;
@@ -236,10 +273,20 @@ namespace OpenDock
             guard.Tick += delegate
             {
                 if (hwnd == IntPtr.Zero || verifying || leaving) return;
+                if (Main)
+                {
+                    // another program in front (not the secure desktop, where there's no foreground window at all)
+                    var fg = Native.GetForegroundWindow();
+                    uint pid; Native.GetWindowThreadProcessId(fg, out pid);
+                    bool settled = wasActive && DateTime.UtcNow > grace;   // not while it's still coming up, or the Hello prompt is going away
+                    if (settled && fg != IntPtr.Zero && pid != (uint)System.Diagnostics.Process.GetCurrentProcess().Id) { LockScreen.Breached(); return; }
+                    if (++guardTicks % 10 == 0) LockScreen.Rearm();
+                }
                 Native.SetWindowPos(hwnd, Native.HWND_TOPMOST, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
                 if (Main && !IsActive) Activate();
             };
             SourceInitialized += delegate { hwnd = new WindowInteropHelper(this).Handle; Native.MakeToolWindow(hwnd, false); tick.Start(); guard.Start(); };
+            Activated += delegate { if (!wasActive) { wasActive = true; grace = DateTime.UtcNow.AddSeconds(1); } };
             Closing += (s, e) => { if (!leaving) e.Cancel = true; };   // Alt+F4 and friends don't close it
             // any key or click asks for Windows Hello, as a Mac shows Touch ID
             PreviewKeyDown += (s, e) => { if (Main && !verifying) Unlock(); };
@@ -275,6 +322,7 @@ namespace OpenDock
             Hello.Verify(hwnd, "Unlock GlassDock", ok =>
             {
                 verifying = false;
+                grace = DateTime.UtcNow.AddSeconds(2);
                 if (unlockPill != null) unlockPill.Opacity = 1;
                 if (ok) LockScreen.Close();
                 else if (Main) Activate();

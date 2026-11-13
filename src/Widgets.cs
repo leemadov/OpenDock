@@ -649,12 +649,19 @@ namespace OpenDock
             }
         }
 
+        static bool loading;
+
         public static void Start()
         {
             timer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(30) };
             timer.Tick += delegate { Refresh(); };
             timer.Start();
-            Settings.Changed += delegate { if (Settings.WeatherPlace != fetched) Refresh(); };
+            // a new place, or the widget just turned on (or added) with nothing loaded yet
+            Settings.Changed += delegate
+            {
+                bool wanted = Settings.Widgets && Widgets.List.Contains("weather");
+                if (Settings.WeatherPlace != fetched || (wanted && Now == null && Error == null && !loading)) Refresh();
+            };
             Refresh();
         }
 
@@ -668,8 +675,10 @@ namespace OpenDock
             string url = string.Format(CultureInfo.InvariantCulture,
                 "https://api.open-meteo.com/v1/forecast?latitude={0}&longitude={1}&current=temperature_2m,weather_code,is_day&hourly=temperature_2m,weather_code,is_day&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=2{2}",
                 place.Lat, place.Lon, Imperial ? "&temperature_unit=fahrenheit" : "");
+            loading = true;
             Task.Run(() => Get(url)).ContinueWith(t =>
             {
+                loading = false;
                 try
                 {
                     if (t.Result == null) { Error = "Weather isn't available right now"; if (Changed != null) Changed(); return; }

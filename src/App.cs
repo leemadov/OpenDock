@@ -105,10 +105,24 @@ namespace OpenDock
             return typeof(Settings).GetFields(BindingFlags.Public | BindingFlags.Static).Where(f => f.FieldType == typeof(int) || f.FieldType == typeof(bool) || f.FieldType == typeof(string));
         }
 
+        // Set when settings.txt exists but couldn't be read (locked by another program, say): GlassDock runs on the
+        // defaults but never writes them over your real settings.
+        static bool unreadable;
+
         public static void Load()
         {
             if (!File.Exists(file)) return;
-            var saved=File.ReadAllLines(file);
+            string[] saved = null;
+            for (int attempt = 0; saved == null; attempt++)
+            {
+                try { saved = File.ReadAllLines(file); }
+                catch (Exception ex)
+                {
+                    if (attempt < 4 && (ex is IOException)) { System.Threading.Thread.Sleep(250); continue; }
+                    App.Log(ex); unreadable = true; return;
+                }
+            }
+            unreadable = false;
             Pins.Clear(); Hidden.Clear(); Wallpapers.Clear(); CustomIcons.Map.Clear();
             foreach (var line in saved)
             {
@@ -126,6 +140,7 @@ namespace OpenDock
 
         public static void Save()
         {
+            if (unreadable) { App.Log("settings.txt couldn't be read at startup; not overwriting it"); return; }
             Directory.CreateDirectory(DataDir);
             var lines = Fields().Select(f => f.Name + "=" + f.GetValue(null)).ToList();
             lines.AddRange(Pins.Select(p => "pin=" + p));
@@ -178,6 +193,7 @@ namespace OpenDock
                 else args = "/delete /tn GlassDock /f";
                 var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("schtasks.exe", args) { CreateNoWindow = true, UseShellExecute = false });
                 p.WaitForExit(10000);
+                if (on) try { File.Delete(Path.Combine(Path.GetTempPath(), "GlassDock-logon-task.xml")); } catch { }
                 // and the task from before the rename
                 var old = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("schtasks.exe", "/delete /tn OpenDock /f") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true });
                 old.WaitForExit(10000);
@@ -420,7 +436,13 @@ namespace OpenDock
                     }));
                 };
 
-                app.Startup += delegate { Start(); };
+                // If the core (menu bar, Dock, hotkeys) can't start, quit cleanly instead of running on invisibly
+                // while holding the single-instance lock.
+                app.Startup += delegate
+                {
+                    try { Start(); }
+                    catch (Exception ex) { Log("Startup failed: " + ex); Cleanup(); app.Shutdown(); }
+                };
                 app.Run();
                 Cleanup();
             }
@@ -443,19 +465,67 @@ namespace OpenDock
                     ui.BeginInvoke(new Action(() => Volatile.Write(ref answered, id)));
                     Thread.Sleep(2000);
                     misses = Volatile.Read(ref answered) == id ? 0 : misses + 1;
-                    if (misses < 6) continue;
-                    Log("UI unresponsive for ~12s; restarting");
-                    System.Diagnostics.Process.Start(Assembly.GetExecutingAssembly().Location, "--restart");
+                    // ~12 s normally; a long job the UI is doing on purpose (a big copy, a delete) gets ~10 minutes,
+                    // so a slow transfer isn't killed halfway
+                    if (misses < (Volatile.Read(ref busy) > 0 ? 300 : 6)) continue;
+                    bool again = MayRestart();
+                    Log(again ? "UI unresponsive for ~12s; restarting" : "UI unresponsive again; restarted too often, so stopping");
+                    Emergency();
+                    if (again) System.Diagnostics.Process.Start(Assembly.GetExecutingAssembly().Location, "--restart");
                     System.Diagnostics.Process.GetCurrentProcess().Kill();   // the stuck thread can't run a clean exit
                 }
             }) { IsBackground = true, Name = "GlassDock watchdog" };
             t.Start();
         }
 
+        // What can be put right from outside the stuck UI thread before the process goes: the taskbar comes back,
+        // and a lock screen that was up hands over to Windows' own lock.
+        static void Emergency()
+        {
+            try { if (LockScreen.Active) Native.LockWorkStation(); } catch { }
+            try { Taskbar.Release(); } catch { }
+            try { FocusMode.Suspend(); } catch { }
+        }
+
+        // No more than 3 automatic restarts in 10 minutes: a hang that comes back every time (a dead network drive,
+        // say) mustn't turn into an endless loop.
+        static bool MayRestart()
+        {
+            try
+            {
+                string f = Path.Combine(Settings.DataDir, "restarts.txt");
+                var now = DateTime.UtcNow;
+                var recent = (File.Exists(f) ? File.ReadAllLines(f) : new string[0])
+                    .Select(l => { long t; return long.TryParse(l, out t) ? new DateTime(t, DateTimeKind.Utc) : DateTime.MinValue; })
+                    .Where(t => (now - t).TotalMinutes < 10).ToList();
+                if (recent.Count >= 3) return false;
+                recent.Add(now);
+                File.WriteAllLines(f, recent.Select(t => t.Ticks.ToString()));
+            }
+            catch { }
+            return true;
+        }
+
+        // Long jobs the UI thread does on purpose: using (App.Busy()) { ... } tells the watchdog it isn't a hang.
+        static int busy;
+        public static IDisposable Busy() { Interlocked.Increment(ref busy); return new Done(() => Interlocked.Decrement(ref busy)); }
+        sealed class Done : IDisposable
+        {
+            Action undo;
+            public Done(Action undo) { this.undo = undo; }
+            public void Dispose() { var u = Interlocked.Exchange(ref undo, null); if (u != null) u(); }
+        }
+
+        // One feature failing to start mustn't take the rest down (or leave a half-started, invisible GlassDock).
+        static void Safe(string what, Action start)
+        {
+            try { start(); } catch (Exception ex) { Log(what + " didn't start: " + ex); }
+        }
+
         static void Start()
         {
-            StartWatchdog(Dispatcher.CurrentDispatcher);
-            ColorProfiles.Apply();
+            LockScreen.RecoverAfterCrash();
+            Safe("Color profile", ColorProfiles.Apply);
             if (Settings.LaunchAtLogin) System.Threading.Tasks.Task.Run(() => Settings.LaunchAtLogin = true);   // (also moves an OpenDock-era start to GlassDock)   // upgrade older "Run"-only installs; keeps the path current
             // Hidden top-level window: receives hotkeys and the TaskbarCreated broadcast (Explorer restarts).
             msgWindow = new HwndSource(new HwndSourceParameters("OpenDockHost") { WindowStyle = unchecked((int)0x80000000), Width = 0, Height = 0 });
@@ -465,7 +535,7 @@ namespace OpenDock
             uint lockMsg = Native.RegisterWindowMessage("OpenDockLock");
             msgWindow.AddHook((IntPtr h, int m, IntPtr w, IntPtr l, ref bool handled) =>
             {
-                if (m == Native.WM_HOTKEY && (int)w == 1) ToggleSpotlight();
+                if (m == Native.WM_HOTKEY && (int)w == 1 && !LockScreen.Active) ToggleSpotlight();
                 if (m == Native.WM_HOTKEY && Hotkeys.Handle((int)w)) handled = true;
                 if (m == shellHook && (int)w.ToInt64() == 0x8006 /* HSHELL_FLASH */ && WindowFlashed != null) WindowFlashed(l);
                 if (m == Native.WM_CLOSE) { handled = true; Quit(); }
@@ -518,20 +588,21 @@ namespace OpenDock
             slow.Tick += delegate { if (++ticks % 5 == 0) RefreshWindows(); foreach (var dock in Docks) dock.OnFullScreen(true); Taskbar.Enforce(); };
             slow.Start();
             RefreshWindows();
-            Living.Start();
-            Island.Start();
-            FocusMode.Start();
-            Notify.Start();
-            AppSwitcher.Start();
-            AppEffects.Start();
-            DragTile.Start();
-            StageManager.Start();
-            TrafficLights.Start();
+            Safe("Living icons", Living.Start);
+            Safe("Island", Island.Start);
+            Safe("Focus", FocusMode.Start);
+            Safe("Notifications", Notify.Start);
+            Safe("App switcher", AppSwitcher.Start);
+            Safe("App effects", AppEffects.Start);
+            Safe("Drag to tile", DragTile.Start);
+            Safe("Stage Manager", StageManager.Start);
+            Safe("Traffic lights", TrafficLights.Start);
             var warm = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             warm.Tick += delegate { warm.Stop(); WindowFx.Warm(); };
             warm.Start();
-            Widgets.Start();
+            Safe("Widgets", Widgets.Start);
             LastForeground = Native.GetForegroundWindow();
+            StartWatchdog(Dispatcher.CurrentDispatcher);   // only once GlassDock is really up
         }
 
         // Keep a window per connected monitor. Closing a removed dock also releases its appbar and timers.
@@ -579,8 +650,16 @@ namespace OpenDock
 
         static void Hook(uint min, uint max, Native.WinEventProc cb, uint flags = 2 /* OUTOFCONTEXT | SKIPOWNPROCESS */)
         {
-            hooks.Add(cb);
-            Native.SetWinEventHook(min, max, IntPtr.Zero, cb, 0, 0, flags);
+            var safe = Guard(cb);
+            hooks.Add(safe);
+            Native.SetWinEventHook(min, max, IntPtr.Zero, safe, 0, 0, flags);
+        }
+
+        // Windows calls WinEvent callbacks straight from the message loop, outside the Dispatcher's error handling:
+        // an exception in one would take GlassDock down, so each is caught and logged.
+        public static Native.WinEventProc Guard(Native.WinEventProc cb)
+        {
+            return (hk, ev, h, obj, child, t, time) => { try { cb(hk, ev, h, obj, child, t, time); } catch (Exception ex) { Log(ex); } };
         }
 
         public static void QueueRefresh() { if (refresh != null && !refresh.IsEnabled) refresh.Start(); }
@@ -671,6 +750,7 @@ namespace OpenDock
             try
             {
                 ColorProfiles.Stop();
+                FocusMode.Suspend();
                 StageManager.Shutdown();   // every window back where it was
                 TrafficLights.Shutdown();
                 foreach (var dock in Docks) if (dock.Bar != null) dock.Bar.Remove();

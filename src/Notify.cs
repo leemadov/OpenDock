@@ -141,7 +141,15 @@ namespace OpenDock
             timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
             timer.Tick += delegate { Expire(); };
             timer.Start();
+            if (Active) try { Sys.Toasts = false; } catch (Exception ex) { App.Log(ex); }   // a Focus left on at quit resumes
             Expire();
+        }
+
+        // On quit: Windows' notifications come back while GlassDock isn't running (they'd otherwise stay off for good
+        // if you quit or uninstall in the middle of a Focus); the Focus itself picks up again at the next start.
+        public static void Suspend()
+        {
+            if (Active && Settings.FocusSavedToasts >= 0) try { Sys.Toasts = Settings.FocusSavedToasts == 1; } catch { }
         }
 
         static void Expire()

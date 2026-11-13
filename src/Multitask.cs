@@ -32,8 +32,8 @@ namespace OpenDock
 
         public static void Start()
         {
-            onStart = (hk, ev, h, obj, child, t, time) => { if (obj == 0 && child == 0) Begin(h); };
-            onEnd = (hk, ev, h, obj, child, t, time) => { if (obj == 0 && child == 0) End(h); };
+            onStart = App.Guard((hk, ev, h, obj, child, t, time) => { if (obj == 0 && child == 0) Begin(h); });
+            onEnd = App.Guard((hk, ev, h, obj, child, t, time) => { if (obj == 0 && child == 0) End(h); });
             Native.SetWinEventHook(0x000A, 0x000A, IntPtr.Zero, onStart, 0, 0, 0);   // EVENT_SYSTEM_MOVESIZESTART (our windows too)
             Native.SetWinEventHook(0x000B, 0x000B, IntPtr.Zero, onEnd, 0, 0, 0);     // EVENT_SYSTEM_MOVESIZEEND
             poll = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
@@ -242,7 +242,7 @@ namespace OpenDock
             if (mine.Count < 2) return;
             if (!back) { Native.Activate(mine[mine.Count - 1]); return; }   // the backmost comes forward: A B C -> C A B
             Native.Activate(mine[1]);                                        // and back: A B C -> B C A
-            Native.SetWindowPos(mine[0], mine[mine.Count - 1], 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+            Native.SetWindowPos(mine[0], mine[mine.Count - 1], 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | 0x4000 /* ASYNC: a hung app can't freeze GlassDock */);
         }
     }
 
@@ -412,7 +412,7 @@ namespace OpenDock
                 foreach (var h in AppWindows(monitor).Where(h => AppKey(h) != key && !Parked(h)).Reverse()) Send(h);
                 var mine = away.Where(a => a.Key == key).OrderByDescending(a => a.Order).ToList();   // backmost first
                 foreach (var a in mine) Back(a);
-                foreach (var a in mine) Native.SetWindowPos(a.Hwnd, IntPtr.Zero, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);   // HWND_TOP, in order
+                foreach (var a in mine) Native.SetWindowPos(a.Hwnd, IntPtr.Zero, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | 0x4000 /* ASYNC */);   // HWND_TOP, in order
                 recent.Remove(key);
                 stage = key;
                 if (focus == IntPtr.Zero && mine.Count > 0) focus = mine[mine.Count - 1].Hwnd;

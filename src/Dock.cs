@@ -758,10 +758,10 @@ namespace OpenDock
             }
         }
 
-        void Launch(DockItem it, string args)
+        void Launch(DockItem it, string args, string[] files = null)
         {
             if (Directory.Exists(it.Target)) { App.NewFinder(it.Target); return; }
-            Launcher.Open(it.Target, args);
+            if (files != null) Launcher.OpenFiles(it.Target, files); else Launcher.Open(it.Target, args);
             if (Settings.Bounce && it.Wins.Count == 0)
             {
                 it.BounceT0 = clock.Elapsed.TotalSeconds;
@@ -1052,7 +1052,7 @@ namespace OpenDock
                 }
                 OpenMenu(menu,it.Root,false);
             }
-            else if (it.Kind == "app") Launch(it, Launcher.Quote(files));
+            else if (it.Kind == "app") Launch(it, null, files.ToArray());
         }
 
         // ---------- animation loop (runs only while something moves) ----------

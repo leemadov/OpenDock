@@ -35,9 +35,9 @@ namespace OpenDock
 
         public static void Start()
         {
-            onMove = (hk, ev, h, obj, child, t, time) => { if (obj == 0 && child == 0) { LightsWindow w; if (shown.TryGetValue(h, out w)) w.Follow(); } };
+            onMove = App.Guard((hk, ev, h, obj, child, t, time) => { if (obj == 0 && child == 0) { LightsWindow w; if (shown.TryGetValue(h, out w)) w.Follow(); } });
             // a window that came up empty is tried again when it's brought forward (its corner may have been covered)
-            onFore = (hk, ev, h, obj, child, t, time) => { unsupported.Remove(h); foreach (var w in shown.Values.ToList()) w.Follow(); };
+            onFore = App.Guard((hk, ev, h, obj, child, t, time) => { unsupported.Remove(h); foreach (var w in shown.Values.ToList()) w.Follow(); });
             Native.SetWinEventHook(0x800B, 0x800B, IntPtr.Zero, onMove, 0, 0, 2);   // EVENT_OBJECT_LOCATIONCHANGE
             Native.SetWinEventHook(0x0003, 0x0003, IntPtr.Zero, onFore, 0, 0, 2);   // EVENT_SYSTEM_FOREGROUND
             Native.SetWinEventHook(0x0016, 0x0017, IntPtr.Zero, onFore, 0, 0, 2);   // minimize start / end
@@ -92,7 +92,7 @@ namespace OpenDock
         // then the two buttons just left of it. Their places are kept relative to the window's top-right corner.
         internal static void Probe(IntPtr h, LightsWindow existing)
         {
-            probing.Add(h);
+            if (!probing.Add(h)) return;   // one lookup per window at a time
             Native.RECT wr; Native.GetWindowRect(h, out wr);
             Native.RECT fr; if (Native.DwmGetWindowAttribute(h, 9, out fr, 16) != 0) fr = wr;
             bool zoomed = Native.IsZoomed(h);
@@ -105,6 +105,9 @@ namespace OpenDock
                 ui.BeginInvoke(new Action(() =>
                 {
                     probing.Remove(h);
+                    // the patch this lookup was for has since closed or been replaced: leave the newer state alone
+                    LightsWindow current;
+                    if (existing != null && (existing.Gone || !shown.TryGetValue(h, out current) || current != existing)) return;
                     if (found == null) { if (existing != null) { existing.Close(); shown.Remove(h); } unsupported[h] = DateTime.UtcNow; return; }
                     unsupported.Remove(h);
                     var area = found.Value;   // relative to the frame's top-right corner (x <= 0)
@@ -223,6 +226,8 @@ namespace OpenDock
         public const double RowWidth = 3 * D + 2 * Gap + 14;   // the lights plus their right margin, in DIPs
         bool hover, active = true;
         DateTime sampled = DateTime.MinValue;
+        public bool Gone { get; private set; }
+        protected override void OnClosed(EventArgs e) { Gone = true; base.OnClosed(e); }
 
         public LightsWindow(IntPtr target, Rect area, bool zoomed)
         {
@@ -274,7 +279,7 @@ namespace OpenDock
         // Onto the buttons' spot, right above the window in the stack.
         public void Follow()
         {
-            if (hwnd == IntPtr.Zero || !Native.IsWindow(target)) return;
+            if (Gone || hwnd == IntPtr.Zero || !Native.IsWindow(target)) return;
             if (!Native.IsWindowVisible(target) || Native.IsIconic(target) || Native.IsCloaked(target)) { if (IsVisible) Hide(); return; }
             Native.RECT fr; if (Native.DwmGetWindowAttribute(target, 9, out fr, 16) != 0) Native.GetWindowRect(target, out fr);
             int x = (int)Math.Round(fr.Right + area.Left), y = (int)Math.Round(fr.Top + area.Top), w = (int)Math.Round(area.Width), h = (int)Math.Round(area.Height);

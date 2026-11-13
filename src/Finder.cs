@@ -806,19 +806,20 @@ namespace OpenDock
         void Transfer(string[] sources, bool copy, string folder=null)
         {
             folder=folder??path;
-            foreach (var src in sources)
-            {
-                try
+            using (App.Busy())   // a big transfer can take minutes: the watchdog mustn't take it for a hang
+                foreach (var src in sources)
                 {
-                    string dest=TransferDestination(src,folder);
-                    if (string.Equals(dest, System.IO.Path.GetFullPath(src), StringComparison.OrdinalIgnoreCase)) continue;
-                    bool dir = Directory.Exists(src);
-                    if (copy) { if (dir) VB.FileSystem.CopyDirectory(src, dest, VB.UIOption.AllDialogs); else VB.FileSystem.CopyFile(src, dest, VB.UIOption.AllDialogs); }
-                    else { if (dir) VB.FileSystem.MoveDirectory(src, dest, VB.UIOption.AllDialogs); else VB.FileSystem.MoveFile(src, dest, VB.UIOption.AllDialogs); }
+                    try
+                    {
+                        string dest=TransferDestination(src,folder);
+                        if (string.Equals(dest, System.IO.Path.GetFullPath(src), StringComparison.OrdinalIgnoreCase)) continue;
+                        bool dir = Directory.Exists(src);
+                        if (copy) { if (dir) VB.FileSystem.CopyDirectory(src, dest, VB.UIOption.AllDialogs); else VB.FileSystem.CopyFile(src, dest, VB.UIOption.AllDialogs); }
+                        else { if (dir) VB.FileSystem.MoveDirectory(src, dest, VB.UIOption.AllDialogs); else VB.FileSystem.MoveFile(src, dest, VB.UIOption.AllDialogs); }
+                    }
+                    catch (OperationCanceledException) { break; }   // Cancel stops the whole batch, not just this item
+                    catch (Exception ex) { MessageBox.Show(ex.Message, "Finder"); }
                 }
-                catch (OperationCanceledException) { }
-                catch (Exception ex) { MessageBox.Show(ex.Message, "Finder"); }
-            }
         }
 
         void OnDragOut(object s, MouseEventArgs e)

@@ -155,20 +155,31 @@ namespace OpenDock
         public static void Attach(Window w, string tintKey)
         {
             long sum = 0;
-            bool live = false;
+            bool live = false, capturing = false;
             var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
             var since = System.Diagnostics.Stopwatch.StartNew();
+            // The capture, hash and blur run on a worker thread (one at a time), so the glass never costs the UI thread
+            // more than setting the finished picture.
             Action update = delegate
             {
-                if (!live) return;
+                if (!live || capturing) return;
                 if (!w.IsVisible || w.WindowState == WindowState.Minimized) { t.Interval = TimeSpan.FromMilliseconds(300); return; }
                 since.Restart();
                 Native.RECT rc;
                 Native.GetWindowRect(new WindowInteropHelper(w).Handle, out rc);
-                var img = Behind(rc.Left, rc.Top, rc.Right - rc.Left, rc.Bottom - rc.Top, 2, ref sum);
-                if (img == null) { t.Interval = TimeSpan.FromMilliseconds(Math.Min(300, t.Interval.TotalMilliseconds * 1.5)); return; }
-                t.Interval = TimeSpan.FromMilliseconds(80);
-                w.Background = Pane(img, (Brush)w.FindResource(tintKey));
+                capturing = true;
+                long seen = sum;
+                System.Threading.Tasks.Task.Run(() => { long s = seen; var img = Behind(rc.Left, rc.Top, rc.Right - rc.Left, rc.Bottom - rc.Top, 2, ref s); return Tuple.Create(img, s); })
+                    .ContinueWith(task =>
+                    {
+                        capturing = false;
+                        var img = task.IsFaulted ? null : task.Result.Item1;
+                        if (img == null) { t.Interval = TimeSpan.FromMilliseconds(Math.Min(300, t.Interval.TotalMilliseconds * 1.5)); return; }
+                        sum = task.Result.Item2;
+                        if (!live) return;
+                        t.Interval = TimeSpan.FromMilliseconds(80);
+                        w.Background = Pane(img, (Brush)w.FindResource(tintKey));
+                    }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
             };
             // Wallpaper frost: the slice of wallpaper behind the window, so it follows the window like glass.
             Action frost = delegate

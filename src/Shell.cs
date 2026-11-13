@@ -541,20 +541,67 @@ namespace OpenDock
 
         public static void Shell(string uri) { try { Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true }); } catch { } }
 
+        // Files dropped on an app in the Dock. A Store app has no exe to hand them to on a command line, so Windows
+        // opens them in it the way "Open with" does.
+        public static void OpenFiles(string target, IList<string> files)
+        {
+            if (target.StartsWith("app:") && files.Count > 0)
+            {
+                var app = Apps.ById(target.Substring(4));
+                if ((app == null || app.Exe == null) && ActivateForFiles(target.Substring(4), files)) return;
+            }
+            Open(target, Quote(files));
+        }
+
+        [ComImport, Guid("2e941141-7f97-4756-ba1d-9decde894a3d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IApplicationActivationManager
+        {
+            [PreserveSig] int ActivateApplication([MarshalAs(UnmanagedType.LPWStr)] string aumid, [MarshalAs(UnmanagedType.LPWStr)] string args, int options, out uint pid);
+            [PreserveSig] int ActivateForFile([MarshalAs(UnmanagedType.LPWStr)] string aumid, IntPtr items, [MarshalAs(UnmanagedType.LPWStr)] string verb, out uint pid);
+        }
+        [ComImport, Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C")] class ApplicationActivationManager { }
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern IntPtr ILCreateFromPath(string path);
+        [DllImport("shell32.dll")] static extern void ILFree(IntPtr pidl);
+        [DllImport("shell32.dll")] static extern int SHCreateShellItemArrayFromIDLists(uint count, IntPtr[] pidls, out IntPtr array);
+
+        static bool ActivateForFiles(string aumid, IList<string> files)
+        {
+            var pidls = files.Select(f => ILCreateFromPath(f)).Where(p => p != IntPtr.Zero).ToArray();
+            IntPtr items = IntPtr.Zero;
+            try
+            {
+                if (pidls.Length == 0 || SHCreateShellItemArrayFromIDLists((uint)pidls.Length, pidls, out items) != 0) return false;
+                var am = (IApplicationActivationManager)new ApplicationActivationManager();
+                uint pid;
+                int hr = am.ActivateForFile(aumid, items, "open", out pid);
+                Marshal.ReleaseComObject(am);
+                if (hr != 0) App.Log("Opening dropped files in " + aumid + " failed: 0x" + hr.ToString("X"));
+                return hr == 0;
+            }
+            catch (Exception ex) { App.Log(ex); return false; }
+            finally
+            {
+                if (items != IntPtr.Zero) Marshal.Release(items);
+                foreach (var p in pidls) ILFree(p);
+            }
+        }
+
         public static string Quote(IEnumerable<string> files) { return string.Join(" ", files.Select(f => "\"" + f + new string('\\',f.Length-f.TrimEnd('\\').Length) + "\"")); }
 
         public static void Recycle(IEnumerable<string> paths)
         {
-            foreach (var p in paths)
+            var list = paths.Where(p => !string.IsNullOrEmpty(p) && (File.Exists(p) || Directory.Exists(p))).ToList();
+            if (list.Count == 0) return;
+            try
             {
-                try
+                var owner = Application.Current == null ? null : Application.Current.Windows.OfType<Window>().FirstOrDefault(w => w.IsActive);
+                using (App.Busy())   // a big delete can take a while: the watchdog mustn't take it for a hang
                 {
-                    if (Directory.Exists(p)) Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(p, Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
-                    else Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(p, Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                    int err = Native.RecycleFiles(owner == null ? IntPtr.Zero : new System.Windows.Interop.WindowInteropHelper(owner).Handle, list);
+                    if (err != 0 && err != 0x4C7 /* cancelled */) App.Log("Move to Trash failed: 0x" + err.ToString("X"));
                 }
-                catch (OperationCanceledException) { }
-                catch (Exception ex) { MessageBox.Show(ex.Message, "GlassDock"); }
             }
+            catch (Exception ex) { MessageBox.Show(ex.Message, "GlassDock"); }
         }
 
         public static readonly string Downloads = Native.KnownFolder(new Guid("374DE290-123F-4565-9164-39C4925E467B")) ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -562,8 +609,7 @@ namespace OpenDock
 
         public static bool TrashFull()
         {
-            var info = new Native.SHQUERYRBINFO { cbSize = Marshal.SizeOf(typeof(Native.SHQUERYRBINFO)) };
-            return Native.SHQueryRecycleBin(null, ref info) == 0 && info.i64NumItems > 0;
+            return Native.RecycleBinItems() > 0;
         }
     }
 

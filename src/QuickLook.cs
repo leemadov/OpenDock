@@ -49,8 +49,11 @@ namespace OpenDock
 
         QuickLook(Window owner)
         {
+            // a Finder tab or split pane is a Window that's never shown itself: use the window it's showing in
+            if (owner != null && (new WindowInteropHelper(owner).Handle == IntPtr.Zero || !owner.IsVisible))
+                owner = Application.Current.Windows.OfType<Window>().FirstOrDefault(w => w.IsActive && w.IsVisible && w != this);
             this.owner = owner;
-            Owner = owner;
+            if (owner != null) Owner = owner;
             WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent; ResizeMode = ResizeMode.NoResize;
             ShowInTaskbar = false; ShowActivated = false; Focusable = false; FontFamily = Theme.Font; Title = "Quick Look";
             var bar = new DockPanel { Height = 40, Margin = new Thickness(14, 0, 10, 0) };
@@ -115,7 +118,22 @@ namespace OpenDock
 
         Size ShowPicture(string path)
         {
-            var bi = new BitmapImage(); bi.BeginInit(); bi.CacheOption = BitmapCacheOption.OnLoad; bi.UriSource = new Uri(path); bi.DecodePixelWidth = 1800; bi.EndInit(); bi.Freeze();
+            // decoded no bigger than the preview can show (1800 px on the long side), and never blown up past its own size
+            int w0 = 0, h0 = 0;
+            try
+            {
+                using (var fs = File.OpenRead(path))
+                {
+                    var f = BitmapDecoder.Create(fs, BitmapCreateOptions.DelayCreation | BitmapCreateOptions.IgnoreColorProfile, BitmapCacheOption.None).Frames[0];
+                    w0 = f.PixelWidth; h0 = f.PixelHeight;
+                }
+            }
+            catch { }
+            var bi = new BitmapImage(); bi.BeginInit(); bi.CacheOption = BitmapCacheOption.OnLoad; bi.UriSource = new Uri(path);
+            if (w0 == 0) bi.DecodePixelWidth = 1800;
+            else if (w0 >= h0 && w0 > 1800) bi.DecodePixelWidth = 1800;
+            else if (h0 > w0 && h0 > 1800) bi.DecodePixelHeight = 1800;
+            bi.EndInit(); bi.Freeze();
             var img = new Image { Source = bi, Stretch = Stretch.Uniform };
             RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.HighQuality);
             stage.Children.Add(img);

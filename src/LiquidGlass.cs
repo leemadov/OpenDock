@@ -156,6 +156,9 @@ namespace OpenDock
     class Spring : EasingFunctionBase
     {
         public double Damping = 0.5, Stiffness = 300, Seconds = 0.6;
+        // the curve below is the spring itself, start to finish: WPF's default (EaseOut) would play it backwards,
+        // wobbling first and snapping at the end
+        public Spring() { EasingMode = EasingMode.EaseIn; }
         protected override double EaseInCore(double t)
         {
             double w0 = Math.Sqrt(Stiffness), z = Damping, wd = w0 * Math.Sqrt(1 - z * z), s = t * Seconds;
