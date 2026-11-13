@@ -26,7 +26,8 @@ namespace OpenDock
     static class TrafficLights
     {
         static readonly Dictionary<IntPtr, LightsWindow> shown = new Dictionary<IntPtr, LightsWindow>();
-        static readonly HashSet<IntPtr> probing = new HashSet<IntPtr>(), unsupported = new HashSet<IntPtr>();
+        static readonly HashSet<IntPtr> probing = new HashSet<IntPtr>();
+        static readonly Dictionary<IntPtr, DateTime> unsupported = new Dictionary<IntPtr, DateTime>();   // when each was last tried
         static Native.WinEventProc onMove, onFore;   // kept alive: Windows calls them
         static DispatcherTimer sweep;
         static readonly uint myPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
@@ -35,7 +36,8 @@ namespace OpenDock
         public static void Start()
         {
             onMove = (hk, ev, h, obj, child, t, time) => { if (obj == 0 && child == 0) { LightsWindow w; if (shown.TryGetValue(h, out w)) w.Follow(); } };
-            onFore = (hk, ev, h, obj, child, t, time) => { foreach (var w in shown.Values.ToList()) w.Follow(); };
+            // a window that came up empty is tried again when it's brought forward (its corner may have been covered)
+            onFore = (hk, ev, h, obj, child, t, time) => { unsupported.Remove(h); foreach (var w in shown.Values.ToList()) w.Follow(); };
             Native.SetWinEventHook(0x800B, 0x800B, IntPtr.Zero, onMove, 0, 0, 2);   // EVENT_OBJECT_LOCATIONCHANGE
             Native.SetWinEventHook(0x0003, 0x0003, IntPtr.Zero, onFore, 0, 0, 2);   // EVENT_SYSTEM_FOREGROUND
             Native.SetWinEventHook(0x0016, 0x0017, IntPtr.Zero, onFore, 0, 0, 2);   // minimize start / end
@@ -56,7 +58,9 @@ namespace OpenDock
         {
             if (!Native.IsWindow(h) || !Native.IsWindowVisible(h) || Native.IsIconic(h) || Native.IsCloaked(h) || IsHungAppWindow(h)) return false;
             int style = Native.GetWindowLong(h, Native.GWL_STYLE), ex = Native.GetWindowLong(h, Native.GWL_EXSTYLE);
-            if ((style & 0x00080000) == 0 /* WS_SYSMENU */ || (ex & Native.WS_EX_TOOLWINDOW) != 0) return false;
+            // a window with buttons: WS_SYSMENU, or a minimize / maximize box (Electron apps like Claude drop WS_SYSMENU)
+            if ((style & 0x00080000) == 0 && (style & 0x00030000) == 0) return false;
+            if ((ex & Native.WS_EX_TOOLWINDOW) != 0) return false;
             uint pid; Native.GetWindowThreadProcessId(h, out pid);
             if (pid == myPid || Elevated(pid)) return false;
             var screen = Sys.Screens().FirstOrDefault(s => s.Monitor == Native.MonitorFromWindow(h, 2));
@@ -71,12 +75,14 @@ namespace OpenDock
             {
                 var want = Settings.TrafficLights ? App.Wins.Select(w => w.Hwnd).Where(Wanted).ToList() : new List<IntPtr>();
                 foreach (var h in shown.Keys.Where(k => !want.Contains(k)).ToList()) { shown[h].Close(); shown.Remove(h); }
-                foreach (var h in unsupported.Where(k => !Native.IsWindow(k)).ToList()) unsupported.Remove(h);
+                foreach (var h in unsupported.Keys.Where(k => !Native.IsWindow(k)).ToList()) unsupported.Remove(h);
                 foreach (var h in want)
                 {
                     LightsWindow w;
                     if (shown.TryGetValue(h, out w)) { w.Check(); continue; }
-                    if (!probing.Contains(h) && !unsupported.Contains(h)) Probe(h, null);
+                    // a window that came up empty is looked at again every few seconds (its corner may have been covered)
+                    DateTime tried;
+                    if (!probing.Contains(h) && (!unsupported.TryGetValue(h, out tried) || (DateTime.UtcNow - tried).TotalSeconds > 5)) Probe(h, null);
                 }
             }
             catch (Exception ex) { App.Log(ex); }
@@ -99,7 +105,8 @@ namespace OpenDock
                 ui.BeginInvoke(new Action(() =>
                 {
                     probing.Remove(h);
-                    if (found == null) { if (existing == null) unsupported.Add(h); else { existing.Close(); shown.Remove(h); unsupported.Add(h); } return; }
+                    if (found == null) { if (existing != null) { existing.Close(); shown.Remove(h); } unsupported[h] = DateTime.UtcNow; return; }
+                    unsupported.Remove(h);
                     var area = found.Value;   // relative to the frame's top-right corner (x <= 0)
                     if (existing != null) { existing.Set(area, zoomed); return; }
                     if (!Settings.TrafficLights || !Wanted(h) || shown.ContainsKey(h)) return;
@@ -135,6 +142,9 @@ namespace OpenDock
             var min = button((int)max.Value.Left - 6, mid);
             if (min == null || Math.Abs(min.Value.Height - c.Height) > 4 || min.Value.Right < max.Value.Left - 6) return null;
             var all = new Rect(min.Value.Left, c.Top, c.Right - min.Value.Left, c.Height);
+            // real caption buttons are ~46 px each; a tight cluster of small web buttons (the NVIDIA app) can't hold the lights
+            uint dpi = GetDpiForWindow(h); double k = (dpi == 0 ? 96 : dpi) / 96.0;
+            if (all.Width < LightsWindow.RowWidth * k) return null;
             return new Rect(all.Left - fr.Right, all.Top - fr.Top, all.Width, all.Height);
         }
 
@@ -161,10 +171,25 @@ namespace OpenDock
                 Native.RECT min = info.rgrect[2], close = info.rgrect[5];
                 if ((info.rgstate[2] & invisible) != 0 || (info.rgstate[5] & invisible) != 0) return null;
                 int w = close.Right - min.Left, ht = close.Bottom - close.Top;
-                if (w < 60 || w > 400 || ht < 16 || ht > 70 || close.Right < fr.Right - 30 || close.Right > fr.Right + 4 || close.Top > fr.Top + 24) return null;
+                uint dpi = GetDpiForWindow(h);
+                if (w < LightsWindow.RowWidth * (dpi == 0 ? 96 : dpi) / 96.0 || w > 400 || ht < 16 || ht > 70 || close.Right < fr.Right - 30 || close.Right > fr.Right + 4 || close.Top > fr.Top + 24) return null;
+                // Windows answers for every captioned window, even ones that paint their own title bar over that
+                // spot (the NVIDIA app and other web-page apps) -- there the lights would land on the app's own
+                // controls. So ask the window itself what's at those points; only real caption buttons say so.
+                if (Hit(h, close) != 20 /* HTCLOSE */ || Hit(h, min) != 8 /* HTMINBUTTON */) return null;
                 return new Rect(min.Left - fr.Right, close.Top - fr.Top, w, ht);
             }
             finally { Marshal.FreeHGlobal(mem); }
+        }
+
+        [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr h);
+
+        static int Hit(IntPtr h, Native.RECT r)
+        {
+            int x = (r.Left + r.Right) / 2, y = (r.Top + r.Bottom) / 2;
+            IntPtr res;
+            if (Native.SendMessageTimeout(h, 0x0084 /* WM_NCHITTEST */, IntPtr.Zero, (IntPtr)((y << 16) | (x & 0xFFFF)), 2, 300, out res) == IntPtr.Zero) return -1;
+            return (int)res;
         }
 
         static bool Elevated(uint pid)
@@ -194,7 +219,8 @@ namespace OpenDock
         readonly Ellipse[] dots = new Ellipse[3];
         readonly TextBlock[] marks = new TextBlock[3];
         static readonly Color[] On = { Color.FromRgb(0xFF, 0x5F, 0x57), Color.FromRgb(0xFE, 0xBC, 0x2E), Color.FromRgb(0x28, 0xC8, 0x40) };
-        const double D = 12, Gap = 8;
+        const double D = 17, Gap = 9;   // bigger than a Mac's: they sit where Windows' wide buttons were
+        public const double RowWidth = 3 * D + 2 * Gap + 14;   // the lights plus their right margin, in DIPs
         bool hover, active = true;
         DateTime sampled = DateTime.MinValue;
 
@@ -203,16 +229,22 @@ namespace OpenDock
             this.target = target; this.area = area; this.zoomed = zoomed;
             WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent; ResizeMode = ResizeMode.NoResize;
             ShowInTaskbar = false; ShowActivated = false; Focusable = false; Title = "GlassDock Traffic Lights";
-            var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(14, 0, 0, 0) };
+            // each light where the Windows button with the same job was: yellow (minimize), green (maximize), red (close) on the right
+            var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 14, 0) };
             string[] glyphs = { "✕", "−", "+" };
-            for (int i = 0; i < 3; i++)
+            foreach (int i in new[] { 1, 2, 0 })
             {
                 int which = i;
-                var g = new Grid { Width = D, Height = D, Margin = new Thickness(0, 0, i < 2 ? Gap : 0, 0), Cursor = Cursors.Arrow, Background = Brushes.Transparent };
+                var g = new Grid { Width = D, Height = D, Margin = new Thickness(0, 0, i != 0 ? Gap : 0, 0), Cursor = Cursors.Arrow, Background = Brushes.Transparent };
                 dots[i] = new Ellipse { Width = D, Height = D, StrokeThickness = 0.6 };
-                marks[i] = new TextBlock { Text = glyphs[i], FontSize = i == 0 ? 7.5 : 10, FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Color.FromArgb(150, 0, 0, 0)),
+                marks[i] = new TextBlock { Text = glyphs[i], FontSize = i == 0 ? 10 : 13, FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Color.FromArgb(150, 0, 0, 0)),
                     HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, i == 0 ? 0 : -2, 0, 0), Opacity = 0, IsHitTestVisible = false };
-                g.Children.Add(dots[i]); g.Children.Add(marks[i]);
+                // the reflections: light caught in the bottom of the bead, and a bright window reflection across its top
+                var glow = new Ellipse { Width = D * 0.8, Height = D * 0.5, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 0, 1), IsHitTestVisible = false,
+                    Fill = new RadialGradientBrush(Color.FromArgb(110, 255, 255, 255), Color.FromArgb(0, 255, 255, 255)) { Center = new Point(0.5, 0.85), GradientOrigin = new Point(0.5, 0.95), RadiusX = 0.6, RadiusY = 0.7 } };
+                var shine = new Ellipse { Width = D * 0.66, Height = D * 0.42, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, D * 0.07, 0, 0), IsHitTestVisible = false,
+                    Fill = new LinearGradientBrush(Color.FromArgb(225, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), 90) };
+                g.Children.Add(dots[i]); g.Children.Add(glow); g.Children.Add(shine); g.Children.Add(marks[i]);
                 g.MouseLeftButtonUp += (s, e) => { e.Handled = true; Press(which); };
                 row.Children.Add(g);
             }
@@ -275,11 +307,18 @@ namespace OpenDock
         }
         Color grayOff = Color.FromRgb(0xDD, 0xDD, 0xDF);
 
+        static Color Mix(Color a, Color b, double t)
+        {
+            return Color.FromRgb((byte)(a.R + (b.R - a.R) * t), (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t));
+        }
+
         void Paint()
         {
             for (int i = 0; i < 3; i++)
             {
-                dots[i].Fill = new SolidColorBrush(active || hover ? On[i] : grayOff);
+                Color c = active || hover ? On[i] : grayOff;   // a bead: lighter at the top, a touch deeper at the bottom
+                dots[i].Fill = new LinearGradientBrush(new GradientStopCollection {
+                    new GradientStop(Mix(c, Colors.White, 0.22), 0), new GradientStop(c, 0.5), new GradientStop(Mix(c, Colors.Black, 0.18), 1) }, 90);
                 marks[i].Opacity = hover ? 1 : 0;
             }
             marks[2].Text = Native.IsWindow(target) && Native.IsZoomed(target) ? "–" : "+";
