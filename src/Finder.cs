@@ -1043,8 +1043,13 @@ namespace OpenDock
             Layout.ColumnDefinitions.Add(new ColumnDefinition());
 
             // ----- sidebar -----
-            var side = new Border();
-            side.SetResourceReference(Border.BackgroundProperty, "SideBg");
+            // macOS 26: the sidebar is a floating glass pane, inset from the window's edge (as in the Finder)
+            var sideHolder = new Grid { Margin = new Thickness(8, 8, 4, 8) };
+            var sideShadow = new Border { CornerRadius = new CornerRadius(16), Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 16, ShadowDepth = 2, Direction = 270, Opacity = 0.13 } };
+            sideShadow.SetResourceReference(Border.BackgroundProperty, "SidePane");
+            var side = new Border { CornerRadius = new CornerRadius(16), BorderThickness = new Thickness(1) };
+            side.SetResourceReference(Border.BackgroundProperty, "SidePane");
+            side.SetResourceReference(Border.BorderBrushProperty, "SidePaneEdge");
             var sideGrid = new Grid();
             sideGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(52) });
             sideGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -1061,8 +1066,16 @@ namespace OpenDock
             sg.ColumnDefinitions.Add(new ColumnDefinition());
             Grid.SetColumn(ph, 1); Grid.SetColumn(search, 1);
             sg.Children.Add(mag); sg.Children.Add(ph); sg.Children.Add(search);
-            var searchBox = new Border { Height = 28, CornerRadius = new CornerRadius(7), Padding = new Thickness(8, 0, 8, 0), Margin = new Thickness(12, 0, 12, 10), Child = sg };
+            // macOS 26: the search field is a capsule of Liquid Glass floating over the list -- the rows scroll
+            // underneath it and bend at its rim (GlassSearch below refracts what's really under it).
+            sg.Margin = new Thickness(11, 0, 11, 0);
+            var searchSheen = new Border { CornerRadius = new CornerRadius(15), IsHitTestVisible = false };
+            var searchLayers = new Grid();
+            searchLayers.Children.Add(searchSheen); searchLayers.Children.Add(sg);
+            var searchBox = new Border { Height = 32, CornerRadius = new CornerRadius(16), Margin = new Thickness(10, 0, 10, 0), Child = searchLayers, BorderThickness = new Thickness(1), VerticalAlignment = VerticalAlignment.Top,
+                Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 12, ShadowDepth = 2, Direction = 270, Opacity = 0.16 } };
             searchBox.SetResourceReference(Border.BackgroundProperty, "Field");
+            Panel.SetZIndex(searchBox, 2);
             search.TextChanged += delegate { ph.Visibility = search.Text.Length == 0 ? Visibility.Visible : Visibility.Hidden; Filter(search.Text.Trim()); };
             // Enter opens the best match; Esc clears the search.
             search.KeyDown += (s, e) => { if (e.Key == Key.Enter) { OpenFirstResult(); e.Handled = true; } else if (e.Key == Key.Escape && search.Text.Length > 0) { search.Text = ""; e.Handled = true; } };
@@ -1071,11 +1084,11 @@ namespace OpenDock
             Grid.SetRow(searchBox, 1);
             sideGrid.Children.Add(searchBox);
 
+            // the account card and the list scroll together, under the search field (which they start below)
             var card = UserCard(() => Show("Users & Groups", true));
-            Grid.SetRow(card, 2);
-            sideGrid.Children.Add(card);
-
-            var nav = new StackPanel { Margin = new Thickness(10, 4, 10, 16) };
+            var nav = new StackPanel { Margin = new Thickness(10, 42, 10, 16) };
+            card.Margin = new Thickness(0, 0, 0, 10);
+            nav.Children.Add(card);
             foreach (var group in cats)
             {
                 var sec = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
@@ -1083,11 +1096,17 @@ namespace OpenDock
                 sections.Add(sec);
                 nav.Children.Add(sec);
             }
-            var navScroll = new ScrollViewer { Content = nav, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-            Grid.SetRow(navScroll, 3);
+            var navScroll = new ScrollViewer { Content = nav, VerticalScrollBarVisibility = ScrollBarVisibility.Hidden };   // macOS: scrolls, no bar
+            // rows fade away as they pass up behind the field, instead of poking out above it
+            var fade = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(0, 12), MappingMode = BrushMappingMode.Absolute };
+            fade.GradientStops.Add(new GradientStop(Color.FromArgb(0, 0, 0, 0), 0)); fade.GradientStops.Add(new GradientStop(Color.FromArgb(0, 0, 0, 0), 0.2)); fade.GradientStops.Add(new GradientStop(Colors.Black, 1));
+            navScroll.OpacityMask = fade;
+            Grid.SetRow(navScroll, 1); Grid.SetRowSpan(navScroll, 3);
             sideGrid.Children.Add(navScroll);
+            GlassSearch(searchBox, searchSheen, navScroll, side);
             side.Child = sideGrid;
-            Layout.Children.Add(side);
+            sideHolder.Children.Add(sideShadow); sideHolder.Children.Add(side);
+            Layout.Children.Add(sideHolder);
 
             // ----- pane -----
             var main = new Grid();
@@ -1096,8 +1115,17 @@ namespace OpenDock
             var head = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(16, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
             back = Arrow("", () => Go(-1));
             forward = Arrow("", () => Go(1));
-            title.Margin = new Thickness(10, 0, 0, 0);
-            head.Children.Add(back); head.Children.Add(forward); head.Children.Add(title);
+            title.Margin = new Thickness(12, 0, 0, 0);
+            // macOS 26: back and forward share one glass capsule, a hairline between them
+            var arrows = new StackPanel { Orientation = Orientation.Horizontal };
+            var divider = new Border { Width = 1, Height = 16, VerticalAlignment = VerticalAlignment.Center };
+            divider.SetResourceReference(Border.BackgroundProperty, "MenuSep");
+            arrows.Children.Add(back); arrows.Children.Add(divider); arrows.Children.Add(forward);
+            var arrowPill = new Border { Child = arrows, CornerRadius = new CornerRadius(17), Height = 34, Padding = new Thickness(4, 0, 4, 0), BorderThickness = new Thickness(1),
+                Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 10, ShadowDepth = 1, Direction = 270, Opacity = 0.10 } };
+            arrowPill.SetResourceReference(Border.BackgroundProperty, "SidePane");
+            arrowPill.SetResourceReference(Border.BorderBrushProperty, "SidePaneEdge");
+            head.Children.Add(arrowPill); head.Children.Add(title);
             main.Children.Add(head);
             Grid.SetRow(paneHost, 1);
             main.Children.Add(paneHost);
@@ -1108,6 +1136,75 @@ namespace OpenDock
         }
 
         static Cat C(string name, string glyph, string color, Action<StackPanel> build) { return new Cat { Name = name, Glyph = glyph, Color = color, Build = build }; }
+
+        // Makes `box` a piece of Liquid Glass over `under` (the scrolling list): what's really beneath it is drawn to
+        // a picture, lightly frosted, bent at the rim by the same lens as the Dock and Control Center, and shown
+        // under a tint, a corner-lit rim and a sheen. Redone whenever the list scrolls, resizes or changes.
+        Action refreshSearchGlass;
+        void GlassSearch(Border box, Border sheen, ScrollViewer under, Border pane)
+        {
+            bool busy = false;
+            Action draw = () =>
+            {
+                if (busy || !box.IsVisible || under.ActualWidth < 2 || under.ActualHeight < 2 || box.ActualWidth < 2) return;
+                busy = true;
+                try
+                {
+                    double k = App.Dpi;
+                    // the strip of the list around the field (a margin each way, for the lens to look past the rim)
+                    var at = box.TransformToVisual(under).Transform(new Point(0, 0));
+                    const double m = 24;
+                    var strip = new Rect(at.X - m, at.Y - m, box.ActualWidth + 2 * m, box.ActualHeight + 2 * m);
+                    int w = Math.Max(1, (int)Math.Round(strip.Width * k)), h = Math.Max(1, (int)Math.Round(strip.Height * k));
+                    // the list as it's drawn right now (clipped to its viewport, faded at the top), then the strip cut
+                    // out of it over the sidebar's own colour
+                    var off = VisualTreeHelper.GetOffset(under);
+                    int lw = Math.Max(1, (int)Math.Ceiling((off.X + under.ActualWidth) * k)), lh2 = Math.Max(1, (int)Math.Ceiling((off.Y + strip.Bottom) * k));
+                    var list = new RenderTargetBitmap(lw, lh2, 96 * k, 96 * k, PixelFormats.Pbgra32);
+                    list.Render(under);
+                    var dv = new DrawingVisual();
+                    using (var dc = dv.RenderOpen())
+                    {
+                        var all = new Rect(0, 0, strip.Width, strip.Height);
+                        dc.DrawRectangle((Brush)FindResource("WinBg"), null, all);
+                        dc.DrawRectangle(pane.Background, null, all);
+                        dc.PushClip(new RectangleGeometry(all));
+                        dc.DrawImage(list, new Rect(-(off.X + strip.X), -(off.Y + strip.Y), lw / k, lh2 / k));
+                        dc.Pop();
+                    }
+                    var rtb = new RenderTargetBitmap(w, h, 96 * k, 96 * k, PixelFormats.Pbgra32);
+                    rtb.Render(dv);
+                    var px = new byte[w * h * 4]; rtb.CopyPixels(px, w * 4, 0);
+                    Icons.BoxBlur(px, w, h, Math.Max(1, (int)Math.Round(3 * k)), 3);   // frosted enough to read "Search" over the rows passing under it
+                    double lh, la;
+                    Liquid.Strength(box.ActualHeight, out lh, out la);
+                    var lens = Liquid.Lens(px, w, h, new Rect(m * k, m * k, box.ActualWidth * k, box.ActualHeight * k), box.ActualHeight / 2 * k, lh * k, la * k, false);
+                    box.Background = Glass.Slice(lens, new Rect(0, 0, 1, 1), Theme.B(Theme.Dark ? "#24FFFFFF" : "#73FFFFFF"));
+                }
+                catch (Exception ex) { App.Log(ex); }
+                finally { busy = false; }
+            };
+            Action look = () =>
+            {
+                // the rim catches light at the top-left and bottom-right; the sheen fades down from the top
+                var rim = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 1) };
+                string[] c = Theme.Dark ? new[] { "#B3FFFFFF", "#40FFFFFF", "#0DFFFFFF", "#40FFFFFF", "#A6FFFFFF" } : new[] { "#F2FFFFFF", "#80FFFFFF", "#33FFFFFF", "#80FFFFFF", "#E6FFFFFF" };
+                double[] stops = { 0, 0.22, 0.5, 0.78, 1 };
+                for (int i = 0; i < c.Length; i++) rim.GradientStops.Add(new GradientStop(Hex(c[i]), stops[i]));
+                rim.Freeze();
+                box.BorderBrush = rim;
+                sheen.Background = new LinearGradientBrush(Hex(Theme.Dark ? "#2EFFFFFF" : "#80FFFFFF"), Hex("#00FFFFFF"), 90);
+                draw();
+            };
+            Action later = () => Dispatcher.BeginInvoke(draw, DispatcherPriority.Loaded);
+            refreshSearchGlass = later;
+            under.ScrollChanged += delegate { draw(); };
+            box.SizeChanged += delegate { later(); };
+            Loaded += delegate { look(); };
+            Action themed = () => Dispatcher.BeginInvoke(look, DispatcherPriority.Loaded);
+            Theme.Changed += themed;
+            Closed += delegate { Theme.Changed -= themed; };
+        }
 
         static FrameworkElement UserCard(Action open)
         {
@@ -1144,7 +1241,7 @@ namespace OpenDock
             DockPanel.SetDock(tile, Dock.Left);
             var dp = new DockPanel();
             dp.Children.Add(tile); dp.Children.Add(label);
-            var box = new Border { Child = dp, Padding = new Thickness(6, 4, 8, 4), CornerRadius = new CornerRadius(6), Background = Brushes.Transparent, Cursor = Cursors.Hand };
+            var box = new Border { Child = dp, Padding = new Thickness(7, 5, 8, 5), CornerRadius = new CornerRadius(9), Background = Brushes.Transparent, Cursor = Cursors.Hand };
             rows.Add(new NavRow { Cat = c, Box = box, Label = label });
             box.MouseEnter += delegate { if (current != c.Name) box.SetResourceReference(Border.BackgroundProperty, "Hover"); };
             box.MouseLeave += delegate { if (current != c.Name) box.Background = Brushes.Transparent; };
@@ -1181,7 +1278,9 @@ namespace OpenDock
                 bool sel = r == row;
                 if (sel) r.Box.SetResourceReference(Border.BackgroundProperty, "Accent"); else r.Box.Background = Brushes.Transparent;
                 if (sel) r.Label.Foreground = Brushes.White; else r.Label.SetResourceReference(TextBlock.ForegroundProperty, "Fg");
+                r.Label.FontWeight = sel ? FontWeights.SemiBold : FontWeights.Normal;   // the chosen row is bold, as on a Mac
             }
+            if (refreshSearchGlass != null) refreshSearchGlass();   // the chosen row may be under the glass
             title.Text = current;
             Title = current;
             App.QueueRefresh();
@@ -1418,6 +1517,7 @@ namespace OpenDock
             AddSwitch(wins, "Tiled windows have margins", Settings.TileMargins, v => Settings.TileMargins = v);
             AddSwitch(wins, "Tile windows with Ctrl+Alt+arrow keys", Settings.TilingKeys, v => Settings.TilingKeys = v);
             AddSwitch(wins, "Cycle an app's windows with Alt+`", Settings.CycleWindowsKey, v => Settings.CycleWindowsKey = v);
+            AddSwitch(wins, "Arrange the windows you use most with Ctrl+Alt+R", Settings.RecentArrangeKey, v => Settings.RecentArrangeKey = v);
             InfoRow(wins, "Halves \u00B7 Fill \u00B7 Previous size", "Ctrl+Alt+\u2190 \u2192  \u00B7  Enter  \u00B7  Backspace");
             InfoRow(wins, "More layouts", "Window \u25B8 Move & Resize, or hold the green button");
             // Windows' own Snap shows its outline and Snap Assist too when you drag to an edge.

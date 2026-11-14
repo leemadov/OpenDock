@@ -131,6 +131,7 @@ namespace OpenDock
             tile.Items.Add(Cmd("Right & Left", null, () => Tiling.Arrange(Tiling.Spot.Right, Tiling.Spot.Left)));
             tile.Items.Add(Cmd("Top & Bottom", null, () => Tiling.Arrange(Tiling.Spot.Top, Tiling.Spot.Bottom)));
             tile.Items.Add(Cmd("Quarters", null, Tiling.Quarters));
+            tile.Items.Add(Cmd("Recent Windows", "Ctrl+Alt+R", RecentArrange.Arrange));
             tile.Items.Add(new Separator());
             tile.Items.Add(Cmd("Return to Previous Size", "Ctrl+Alt+Backspace", () => Tiling.Move(TargetHandle(), Tiling.Spot.Restore)));
             window.Items.Add(tile);

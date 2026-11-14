@@ -50,6 +50,8 @@ namespace OpenDock
             Set(18, Settings.ScreenshotKeys, Ctrl | Shift, 0x33, Screenshots.Screen);
             Set(19, Settings.ScreenshotKeys, Ctrl | Shift, 0x34, Screenshots.Area);
             Set(20, Settings.ScreenshotKeys, Ctrl | Shift, 0x35, Screenshots.Toolbar);
+            // the windows you've been jumping between, laid out with the wallpaper showing round them
+            Set(21, Settings.RecentArrangeKey, Ctrl | Alt, 0x52 /* R */, RecentArrange.Arrange);
         }
     }
 
@@ -193,7 +195,7 @@ namespace OpenDock
     // Push the pointer into a screen corner and something happens -- Mission Control, the desktop, Launchpad...
     static class HotCorners
     {
-        public static readonly string[] Actions = { "—", "Mission Control", "Application Windows", "Desktop", "Notification Center", "Control Center", "Launchpad", "Start Screen Saver", "Put Display to Sleep", "Lock Screen" };
+        public static readonly string[] Actions = { "—", "Mission Control", "Application Windows", "Desktop", "Notification Center", "Control Center", "Launchpad", "Start Screen Saver", "Put Display to Sleep", "Lock Screen", "Arrange Recent Windows" };
         static DispatcherTimer timer;
         static int armed = -1;          // the corner the pointer is resting in
         static DateTime since;
@@ -252,6 +254,7 @@ namespace OpenDock
                 case 7: Native.PostMessage(Hotkeys.Host, 0x0112, (IntPtr)0xF140, IntPtr.Zero); break;   // SC_SCREENSAVE
                 case 8: Native.PostMessage(Hotkeys.Host, 0x0112, (IntPtr)0xF170, (IntPtr)2); break;     // SC_MONITORPOWER off
                 case 9: LockScreen.Lock(); break;
+                case 10: RecentArrange.Arrange(); break;
             }
         }
     }

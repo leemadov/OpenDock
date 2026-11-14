@@ -156,14 +156,14 @@ namespace OpenDock
         {
             long sum = 0;
             bool live = false, capturing = false;
-            var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+            var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(10) };
             var since = System.Diagnostics.Stopwatch.StartNew();
             // The capture, hash and blur run on a worker thread (one at a time), so the glass never costs the UI thread
             // more than setting the finished picture.
             Action update = delegate
             {
                 if (!live || capturing) return;
-                if (!w.IsVisible || w.WindowState == WindowState.Minimized) { t.Interval = TimeSpan.FromMilliseconds(300); return; }
+                if (!w.IsVisible || w.WindowState == WindowState.Minimized) { t.Interval = TimeSpan.FromMilliseconds(200); return; }
                 since.Restart();
                 Native.RECT rc;
                 Native.GetWindowRect(new WindowInteropHelper(w).Handle, out rc);
@@ -174,10 +174,10 @@ namespace OpenDock
                     {
                         capturing = false;
                         var img = task.IsFaulted ? null : task.Result.Item1;
-                        if (img == null) { t.Interval = TimeSpan.FromMilliseconds(Math.Min(300, t.Interval.TotalMilliseconds * 1.5)); return; }
+                        if (img == null) { t.Interval = TimeSpan.FromMilliseconds(Math.Min(200, t.Interval.TotalMilliseconds * 1.5)); return; }
                         sum = task.Result.Item2;
                         if (!live) return;
-                        t.Interval = TimeSpan.FromMilliseconds(80);
+                        t.Interval = TimeSpan.FromMilliseconds(10);
                         w.Background = Pane(img, (Brush)w.FindResource(tintKey));
                     }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
             };
@@ -202,7 +202,7 @@ namespace OpenDock
             w.SourceInitialized += delegate { configure(); };
             w.LocationChanged += moved;
             w.SizeChanged += delegate { moved(w, EventArgs.Empty); };
-            w.IsVisibleChanged += delegate { t.Interval = TimeSpan.FromMilliseconds(80); };
+            w.IsVisibleChanged += delegate { t.Interval = TimeSpan.FromMilliseconds(10); };
             Theme.Changed += configure;
             Settings.Changed += configure;
             Wallpaper.Changed += configure;

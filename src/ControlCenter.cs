@@ -415,17 +415,27 @@ namespace OpenDock
         }
     }
 
-    // A thick macOS-style slider: a pale track that fills up. Drag or click anywhere on it.
+    // macOS 26's slider: a fine line that fills up (it thickens a little under the pointer). Drag or click
+    // anywhere in its row -- the hit area is much taller than the line.
     class Slider2 : Grid
     {
-        readonly Border fill = new Border { CornerRadius = new CornerRadius(7), HorizontalAlignment = HorizontalAlignment.Left };
+        const double Thin = 5, Thick = 8;
+        readonly Border fill = new Border { CornerRadius = new CornerRadius(4), HorizontalAlignment = HorizontalAlignment.Left, Height = Thin, VerticalAlignment = VerticalAlignment.Center };
         double value;
         public event Action<double> Changed;
 
         public Slider2()
         {
-            Height = 14; Cursor = Cursors.Hand; Background = Brushes.Transparent;
-            var track = new Border { CornerRadius = new CornerRadius(7) };
+            Height = 20; Cursor = Cursors.Hand; Background = Brushes.Transparent;
+            var track = new Border { CornerRadius = new CornerRadius(4), Height = Thin, VerticalAlignment = VerticalAlignment.Center };
+            Action<double> thickness = h =>
+            {
+                var a = new System.Windows.Media.Animation.DoubleAnimation(h, TimeSpan.FromMilliseconds(140));
+                track.BeginAnimation(HeightProperty, a); fill.BeginAnimation(HeightProperty, a);
+            };
+            MouseEnter += delegate { thickness(Thick); };
+            MouseLeave += delegate { if (!IsMouseCaptured) thickness(Thin); };
+            LostMouseCapture += delegate { if (!IsMouseOver) thickness(Thin); };
             track.SetResourceReference(Border.BackgroundProperty, "CcTrack");
             fill.SetResourceReference(Border.BackgroundProperty, "CcFill");
             Children.Add(track);
@@ -444,6 +454,6 @@ namespace OpenDock
             if (Changed != null) Changed(value);
         }
 
-        void Draw() { fill.Width = Math.Max(Height, ActualWidth * value); }
+        void Draw() { fill.Width = Math.Max(Thin, ActualWidth * value); }
     }
 }

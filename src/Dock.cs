@@ -127,7 +127,7 @@ namespace OpenDock
         bool live;
         long glassSum;
         double wallX, wallY;   // where the backdrop image sits on the canvas
-        readonly DispatcherTimer glassTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+        readonly DispatcherTimer glassTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(10) };
 
         public DockWindow(string device = null)
         {
@@ -208,7 +208,7 @@ namespace OpenDock
 
         void OnForeground(IntPtr h)
         {
-            glassTimer.Interval = TimeSpan.FromMilliseconds(80);
+            glassTimer.Interval = TimeSpan.FromMilliseconds(GlassFrameMs);
             h = Native.GetAncestor(h, 2);
             foreach (var it in items.Where(i => i.Attention && i.Wins.Any(w => w.Hwnd == h)))
             {
@@ -294,21 +294,44 @@ namespace OpenDock
 
         // Frosts whatever is behind the dock: a 1/4-size capture around the pane (with room for it to widen while
         // magnifying), blurred, and redone only when the picture changes.
+        // The capture, hash and blur run on a worker thread, one at a time, so the glass can follow what's behind it
+        // at up to 60 frames a second without costing the UI thread (the Dock's own animation) anything but the
+        // bend itself.
+        // 10 ms, not 16: Windows timers tick every 15.6 ms, so 16 would wait two ticks (~32 fps); 10 fires every tick (~64)
+        const int GlassFrameMs = 10, GlassIdleMs = 200;
+        bool capturing;
+
         void RefreshGlass()
         {
-            if (!IsVisible || hide > 0.99 || bgR <= bgL) return;
+            if (capturing || !IsVisible || hide > 0.99 || bgR <= bgL) return;
             double d = App.Dpi, x0 = Math.Max(0, Math.Floor(bgL - magSlot)), x1 = Math.Min(W, Math.Ceiling(bgR + magSlot)), y0 = Math.Max(0, Math.Floor(bgTop - 8));
             var area = Physical(new Rect(x0, y0, Math.Max(1, x1 - x0), Math.Max(1, H - y0)));
-            var shot = Glass.Behind((int)Math.Round((Left + area.Left) * d), (int)Math.Round((Top + area.Top) * d), (int)Math.Round(area.Width * d), (int)Math.Round(area.Height * d), 1, ref glassSum, 2);   // half resolution: crisp enough to see the backdrop bend
-            // Nothing changed: check less and less often (down to once a second). A change brings back ~12 checks a second.
-            if (shot == null) { glassTimer.Interval = TimeSpan.FromMilliseconds(Math.Min(1000, glassTimer.Interval.TotalMilliseconds * 1.5)); return; }
-            glassTimer.Interval = TimeSpan.FromMilliseconds(80);
-            wall.Source = shot;
-            wallX = area.Left; wallY = area.Top; wall.Width = area.Width; wall.Height = area.Height;
-            capW = shot.PixelWidth; capH = shot.PixelHeight; capPx = new byte[capW * capH * 4]; shot.CopyPixels(capPx, capW * 4, 0);
-            capRect = area; lensDirty = true; capVersion++;
-            Canvas.SetLeft(wall, wallX); Canvas.SetTop(wall, wallY);
-            StartLoop();   // re-clip to the pane at the new spot
+            int sx = (int)Math.Round((Left + area.Left) * d), sy = (int)Math.Round((Top + area.Top) * d), sw = (int)Math.Round(area.Width * d), sh = (int)Math.Round(area.Height * d);
+            long seen = glassSum;
+            capturing = true;
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                long s = seen;
+                var shot = Glass.Behind(sx, sy, sw, sh, 1, ref s, 2);   // half resolution: crisp enough to see the backdrop bend
+                byte[] px = null;
+                if (shot != null) { px = new byte[shot.PixelWidth * shot.PixelHeight * 4]; shot.CopyPixels(px, shot.PixelWidth * 4, 0); }
+                return Tuple.Create(shot, s, px);
+            }).ContinueWith(t =>
+            {
+                capturing = false;
+                if (closed || t.IsFaulted) return;
+                var shot = t.Result.Item1;
+                // Nothing changed: check less often (down to 5 times a second); a change brings back 60 a second.
+                if (shot == null) { glassTimer.Interval = TimeSpan.FromMilliseconds(Math.Min(GlassIdleMs, glassTimer.Interval.TotalMilliseconds * 1.5)); return; }
+                glassSum = t.Result.Item2;
+                glassTimer.Interval = TimeSpan.FromMilliseconds(GlassFrameMs);
+                wall.Source = shot;
+                wallX = area.Left; wallY = area.Top; wall.Width = area.Width; wall.Height = area.Height;
+                capW = shot.PixelWidth; capH = shot.PixelHeight; capPx = t.Result.Item3;
+                capRect = area; lensDirty = true; capVersion++;
+                Canvas.SetLeft(wall, wallX); Canvas.SetTop(wall, wallY);
+                StartLoop();   // re-clip and re-bend at the new picture
+            }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
         }
 
         // Bends the captured backdrop at the pane's edge -- only when the pane moved or the picture changed.

@@ -47,6 +47,7 @@ namespace OpenDock
         public static bool DragTile = true;        // drag a window to a screen edge or corner to tile it (macOS 15)
         public static bool DragTileAlt = true;     // hold Alt while dragging a window to tile it anywhere (macOS: Option)
         public static bool TileMargins = true;     // tiled windows have margins
+        public static bool RecentArrangeKey = true; // Ctrl+Alt+R lays out the windows you've been switching between most
         public static bool CycleWindowsKey = true; // Alt+` cycles the front app's windows (macOS: Cmd+`)
         public static bool StageManager = false;   // Stage Manager: the app you're using in the middle, recent apps in a strip
         public static bool TrafficLights = true;   // Mac traffic lights over every app window's own buttons
@@ -597,6 +598,7 @@ namespace OpenDock
             Safe("Drag to tile", DragTile.Start);
             Safe("Stage Manager", StageManager.Start);
             Safe("Traffic lights", TrafficLights.Start);
+            Safe("Recent windows", RecentArrange.Start);
             var warm = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             warm.Tick += delegate { warm.Stop(); WindowFx.Warm(); };
             warm.Start();
