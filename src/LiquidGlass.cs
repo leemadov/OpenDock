@@ -205,6 +205,18 @@ namespace OpenDock
             var band = new Border { CornerRadius = inner, IsHitTestVisible = false, BorderThickness = new Thickness(Math.Max(2, Math.Min(at.Width, at.Height) * 0.045)),
                 BorderBrush = new LinearGradientBrush(new GradientStopCollection { new GradientStop(Color.FromArgb(90, 255, 255, 255), 0), new GradientStop(Color.FromArgb(0, 255, 255, 255), 0.35),
                     new GradientStop(Color.FromArgb(0, 0, 0, 0), 0.7), new GradientStop(Color.FromArgb(46, 0, 0, 0), 1) }, new Point(0, 0), new Point(0, 1)) };
+            // reflections: a soft glint of window light near the top-left corner, and a thin bright streak following
+            // the curve of the top edge, as light catches on curved glass
+            double sw = Math.Min(at.Width, at.Height);
+            var glint = new Border { CornerRadius = inner, IsHitTestVisible = false, Background = new RadialGradientBrush
+            {
+                MappingMode = BrushMappingMode.Absolute, Center = new Point(sw * 0.32, sw * 0.18), GradientOrigin = new Point(sw * 0.28, sw * 0.12),
+                RadiusX = Math.Min(at.Width * 0.45, sw * 0.9), RadiusY = sw * 0.38,
+                GradientStops = new GradientStopCollection { new GradientStop(Color.FromArgb(70, 255, 255, 255), 0), new GradientStop(Color.FromArgb(18, 255, 255, 255), 0.55), new GradientStop(Color.FromArgb(0, 255, 255, 255), 1) }
+            } };
+            var streak = new Border { CornerRadius = inner, IsHitTestVisible = false, BorderThickness = new Thickness(0, Math.Max(1.2, sw * 0.03), 0, 0), Margin = new Thickness(sw * 0.08, 1.5, sw * 0.08, 0),
+                BorderBrush = new LinearGradientBrush(new GradientStopCollection { new GradientStop(Color.FromArgb(0, 255, 255, 255), 0), new GradientStop(Color.FromArgb(150, 255, 255, 255), 0.25),
+                    new GradientStop(Color.FromArgb(60, 255, 255, 255), 0.6), new GradientStop(Color.FromArgb(0, 255, 255, 255), 1) }, new Point(0, 0), new Point(1, 0)) };
             hover = new Border { CornerRadius = inner, Opacity = 0, IsHitTestVisible = false };
             hover.SetResourceReference(BackgroundProperty, "CcHover");
             // the interactive highlight: white 8% all over plus a 15% glow, 1.5x the tile's short side across, under the pointer
@@ -217,7 +229,7 @@ namespace OpenDock
             glowLayers.Children.Add(new Border { Background = light });
             glow = new Border { CornerRadius = inner, Opacity = 0, IsHitTestVisible = false, Child = glowLayers, ClipToBounds = true };
             var g = new Grid();
-            g.Children.Add(sheen); g.Children.Add(shade); g.Children.Add(hover); g.Children.Add(glow); g.Children.Add(Body);
+            g.Children.Add(sheen); g.Children.Add(shade); g.Children.Add(glint); g.Children.Add(streak); g.Children.Add(hover); g.Children.Add(glow); g.Children.Add(Body);
             Child = g;
             MouseEnter += delegate { hover.Opacity = 1; };
             MouseLeave += delegate { hover.Opacity = 0; Release(); };
