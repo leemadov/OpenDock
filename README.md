@@ -66,6 +66,8 @@ bin\GlassDock.exe
 
 `build.bat` uses the C# compiler that ships with Windows (.NET Framework 4.8), so there's nothing to install. `build.bat check` runs the self-checks in `tests/`. `build.bat check --ui` additionally runs opt-in desktop integration checks and writes UI snapshots to `bin/qa/`; `build.bat check --preview` keeps the isolated test windows open for inspection. See [Testing](docs/TESTING.md) for coverage and hardware checks.
 
+**x64 and ARM64.** `GlassDock.exe` is one "any CPU" build. On Windows on ARM with .NET Framework 4.8.1 (included in Windows 11 22H2 and later) it runs natively as an ARM64 program. With only 4.8 installed, Windows runs it through x64 emulation instead. **Settings › General › About › Architecture** shows which one you're getting.
+
 - Quit from the menu bar logo menu with **Quit GlassDock**, or run `GlassDock.exe --quit`.
 - Settings live in `%APPDATA%\GlassDock\settings.txt` and errors are written to `error.log` in the same folder.
 

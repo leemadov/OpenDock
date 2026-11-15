@@ -201,6 +201,10 @@ namespace OpenDock
             // the library's inner shadow: a soft darkening just inside the top edge, as if the rim stood proud
             var shade = new Border { CornerRadius = inner, IsHitTestVisible = false,
                 Background = new LinearGradientBrush(new GradientStopCollection { new GradientStop(Color.FromArgb(26, 0, 0, 0), 0), new GradientStop(Color.FromArgb(0, 0, 0, 0), Math.Min(0.45, 14 / Math.Max(1, at.Height))) }, new Point(0, 0), new Point(0, 1)) };
+            // the glass's thickness, as on GlassDock's icons: a band inside the edge, lit at the top, shadowed at the bottom
+            var band = new Border { CornerRadius = inner, IsHitTestVisible = false, BorderThickness = new Thickness(Math.Max(2, Math.Min(at.Width, at.Height) * 0.045)),
+                BorderBrush = new LinearGradientBrush(new GradientStopCollection { new GradientStop(Color.FromArgb(90, 255, 255, 255), 0), new GradientStop(Color.FromArgb(0, 255, 255, 255), 0.35),
+                    new GradientStop(Color.FromArgb(0, 0, 0, 0), 0.7), new GradientStop(Color.FromArgb(46, 0, 0, 0), 1) }, new Point(0, 0), new Point(0, 1)) };
             hover = new Border { CornerRadius = inner, Opacity = 0, IsHitTestVisible = false };
             hover.SetResourceReference(BackgroundProperty, "CcHover");
             // the interactive highlight: white 8% all over plus a 15% glow, 1.5x the tile's short side across, under the pointer
@@ -382,22 +386,30 @@ namespace OpenDock
             if (Glass.Exclude(hwnd))
             {
                 long sum = 0;
-                var shot = Glass.Behind((int)Math.Round(Left * d), (int)Math.Round(Top * d), (int)Math.Round(Width * d), (int)Math.Round(Height * d), 2, ref sum, scale);
+                var shot = Glass.Behind((int)Math.Round(Left * d), (int)Math.Round(Top * d), (int)Math.Round(Width * d), (int)Math.Round(Height * d), FrostBlur, ref sum, scale);
                 if (shot != null) { pw = shot.PixelWidth; ph = shot.PixelHeight; px = new byte[pw * ph * 4]; shot.CopyPixels(px, pw * 4, 0); }
             }
             Palette(px != null ? Bright(px) : Wallpaper.TopIsLight);
             var tint = (Brush)Resources["CcTint"];
             foreach (var t in tiles)
             {
-                var r = t.At;
-                double lh, la;
-                Liquid.Strength(Math.Min(r.Width, r.Height), out lh, out la);
-                bool small = r.Width * r.Height < 140 * 140;   // dispersion on the small, round pieces, as the library does on its thumbs
-                t.Glass = px != null
-                    ? Glass.Slice(Liquid.Lens(px, pw, ph, new Rect(r.X * k, r.Y * k, r.Width * k, r.Height * k), t.Radius * k, lh * k, la * k, small), new Rect(0, 0, 1, 1), tint)
-                    : Glass.WallpaperPane(tint, new Rect(Left + r.X, Top + r.Y, r.Width, r.Height));
+                t.Glass = px != null ? TileGlass(px, pw, ph, t.At, t.Radius, k, tint) : Glass.WallpaperPane(tint, new Rect(Left + t.At.X, Top + t.At.Y, t.At.Width, t.At.Height));
                 t.Paint(light);
             }
+        }
+
+        // macOS 26's Control Center glass is clear and thick: barely frosted, a deep bend at the rim that magnifies
+        // what's behind it, vivid colour, no rainbow fringe to speak of.
+        public const int FrostBlur = 2;                                   // box-blur radius (3 passes) of the capture
+        const double LensDepth = 1, LensPull = 1, Vibrancy = 1.5;    // on top of Liquid.Strength's rule
+
+        // One tile's glass from the panel's capture (`px`, `k` capture px per DIP): its slice of the backdrop, bent, under the tint.
+        public static Brush TileGlass(byte[] px, int pw, int ph, Rect r, double radius, double k, Brush tint)
+        {
+            double lh, la;
+            Liquid.Strength(Math.Min(r.Width, r.Height), out lh, out la);
+            var lens = Liquid.Lens(px, pw, ph, new Rect(r.X * k, r.Y * k, r.Width * k, r.Height * k), radius * k, lh * LensDepth * k, la * LensPull * k, r.Width * r.Height < 140 * 140, 0, Vibrancy);   // dispersion on the small, round pieces
+            return Glass.Slice(lens, new Rect(0, 0, 1, 1), tint);
         }
 
         // Mostly bright, or a big bright patch (a white window under part of it): white text would get lost there.
@@ -418,6 +430,7 @@ namespace OpenDock
         {
             light = bright;
             string[] keys = { "CcFg", "CcDim", "CcInner", "CcTrack", "CcFill", "CcHover", "CcTint", "CcRow" };
+            // the tint (index 6) is light: macOS 26's Control Center lets the backdrop through nearly untouched
             string[] dark = { "#F2FFFFFF", "#B3FFFFFF", "#33FFFFFF", "#40FFFFFF", "#F2FFFFFF", "#14FFFFFF", "#1FFFFFFF", "#1FFFFFFF" };
             string[] pale = { "#E6000000", "#8C000000", "#17000000", "#21000000", "#80000000", "#0D000000", "#40FFFFFF", "#12000000" };   // light glass stays see-through
             for (int i = 0; i < keys.Length; i++) Resources[keys[i]] = Theme.B(bright ? pale[i] : dark[i]);
@@ -426,6 +439,7 @@ namespace OpenDock
             Resources["CcRim"] = Gradient(new Point(0, 0), new Point(1, 1), bright
                 ? new[] { "#E6FFFFFF", "#66FFFFFF", "#0AFFFFFF", "#66FFFFFF", "#D9FFFFFF" }
                 : new[] { "#B3FFFFFF", "#40FFFFFF", "#05FFFFFF", "#40FFFFFF", "#A6FFFFFF" }, new[] { 0, 0.22, 0.5, 0.78, 1 });
+            // a light sheen only along the top: a strong one washes clear glass milky
             Resources["CcSheen"] = Gradient(new Point(0, 0), new Point(0, 1), bright
                 ? new[] { "#80FFFFFF", "#1AFFFFFF", "#00FFFFFF" } : new[] { "#2EFFFFFF", "#0AFFFFFF", "#00FFFFFF" }, new[] { 0, 0.4, 1.0 });
             shadow.Opacity = bright ? 0.16 : 0.3;

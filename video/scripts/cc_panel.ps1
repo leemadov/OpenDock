@@ -65,17 +65,22 @@ if ($backdrop) {
   $rtc = New-Object Windows.Media.Imaging.RenderTargetBitmap ([int]$W), ([int]$H), 96, 96, ([Windows.Media.PixelFormats]::Pbgra32); $rtc.Render($dv)
   $cv2 = New-Object Windows.Media.Imaging.FormatConvertedBitmap $rtc, ([Windows.Media.PixelFormats]::Bgr32), $null, 0
   $pw = $cv2.PixelWidth; $ph = $cv2.PixelHeight; [byte[]]$px = [byte[]]::new($pw * $ph * 4); $cv2.CopyPixels($px, $pw * 4, 0)
-  (T Icons).GetMethod("BoxBlur").Invoke($null, [object[]]@($px, $pw, $ph, 2, 3))          # Glass.Behind's light frost
+  $fb = 2; $fbF = (T GlassPanel).GetField("FrostBlur", $all); if ($fbF) { $fb = [int]$fbF.GetValue($null) }
+  (T Icons).GetMethod("BoxBlur").Invoke($null, [object[]]@($px, $pw, $ph, $fb, 3))          # Glass.Behind's frost, as Frost() asks for it
   $bright = $CCT.BaseType.GetMethod("Bright", $all).Invoke($null, [object[]]@(, $px))
   $pal = $null; for ($t = $CCT; $t -and -not $pal; $t = $t.BaseType) { $pal = $t.GetMethod("Palette", $all) }; [void]$pal.Invoke($cc, [object[]]@([bool]$bright))
   $tilesF = $null; for ($t = $CCT; $t -and -not $tilesF; $t = $t.BaseType) { $tilesF = $t.GetField("tiles", $all) }
   $lightF = $null; for ($t = $CCT; $t -and -not $lightF; $t = $t.BaseType) { $lightF = $t.GetField("light", $all) }
   $tint = $cc.Resources["CcTint"]; $L = T Liquid; $G = T Glass
   foreach ($tl in $tilesF.GetValue($cc)) {
-    $r = $tl.At; $s = [object[]]@([double][Math]::Min($r.Width, $r.Height), [double]0, [double]0); [void]$L.GetMethod("Strength").Invoke($null, $s)
-    $small = ($r.Width * $r.Height) -lt (140 * 140)
-    $lens = $L.GetMethod("Lens").Invoke($null, [object[]]@($px, $pw, $ph, $r, [double]$tl.Radius, [double]$s[1], [double]$s[2], [bool]$small, [double]0, [double]1.5))
-    $tl.Glass = $G.GetMethod("Slice").Invoke($null, [object[]]@($lens, [Windows.Rect]::new(0, 0, 1, 1), $tint))
+    $tg = (T GlassPanel).GetMethod("TileGlass", $all)
+    if ($tg) { $tl.Glass = $tg.Invoke($null, [object[]]@($px, $pw, $ph, $tl.At, [double]$tl.Radius, [double]1, $tint)) }   # the panel's own recipe
+    else {   # (builds from before TileGlass existed)
+      $r = $tl.At; $s = [object[]]@([double][Math]::Min($r.Width, $r.Height), [double]0, [double]0); [void]$L.GetMethod("Strength").Invoke($null, $s)
+      $small = ($r.Width * $r.Height) -lt (140 * 140)
+      $lens = $L.GetMethod("Lens").Invoke($null, [object[]]@($px, $pw, $ph, $r, [double]$tl.Radius, [double]$s[1], [double]$s[2], [bool]$small, [double]0, [double]1.5))
+      $tl.Glass = $G.GetMethod("Slice").Invoke($null, [object[]]@($lens, [Windows.Rect]::new(0, 0, 1, 1), $tint))
+    }
     $tl.Paint([bool]$lightF.GetValue($cc))
   }
   "frosted from the backdrop at $left,$top (bright: $bright)"

@@ -177,10 +177,22 @@ namespace OpenDock
                 var tg = new TransformGroup(); tg.Children.Add(squash); tg.Children.Add(move); g.RenderTransform = tg;
                 g.Children.Add(e); g.Children.Add(edge); g.Children.Add(shine); g.Children.Add(t);
                 bool pressed = false;
+                var holdGreen = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(550) };
+                if (i == 2) holdGreen.Tick += delegate
+                {
+                    // held down (finger or mouse): Move & Resize instead of a click
+                    holdGreen.Stop();
+                    if (!pressed) return;
+                    pressed = false; g.ReleaseMouseCapture();
+                    Bead(squash, move, 1, 1, 0, 0, 620, true);
+                    TileMenu(g);
+                };
                 g.MouseLeftButtonDown += (s, a) =>
                 {
                     pressed = true; g.CaptureMouse(); a.Handled = true;
                     Bead(squash, move, 0.84, 0.84, 0, 0, 90, false);
+                    if (a.StylusDevice != null) GrowLights(row, true);   // a finger or pen: big lights, as on a Mac's touchscreen
+                    if (i == 2) holdGreen.Start();
                 };
                 g.MouseMove += (s, a) =>
                 {
@@ -193,6 +205,7 @@ namespace OpenDock
                 };
                 g.MouseLeftButtonUp += (s, a) =>
                 {
+                    holdGreen.Stop();
                     if (!pressed) return;
                     pressed = false; g.ReleaseMouseCapture();
                     var p = a.GetPosition(g);
@@ -213,32 +226,45 @@ namespace OpenDock
                 row.Children.Add(g);
             }
             row.MouseEnter += delegate { foreach (var m in marks) m.Opacity = 1; };
-            row.MouseLeave += delegate { foreach (var m in marks) m.Opacity = 0; };
+            row.MouseLeave += delegate { if (!lightsGrown) foreach (var m in marks) m.Opacity = 0; };
+            // touch: grow on the first touch, shrink a moment after the last finger lifts
+            row.RenderTransform = lightsScale; row.RenderTransformOrigin = new Point(0, 0);
+            row.PreviewTouchDown += delegate { GrowLights(row, true); };
+            row.TouchUp += delegate { lightsShrink.Stop(); lightsShrink.Start(); };
+            row.TouchLeave += delegate { lightsShrink.Stop(); lightsShrink.Start(); };
+            lightsShrink.Tick += delegate { lightsShrink.Stop(); GrowLights(row, false); };
             Paint(true);
             return row;
         }
 
+        // Under a fingertip the lights swell (with their symbols showing) and spring back after it lifts.
+        readonly ScaleTransform lightsScale = new ScaleTransform(1, 1);
+        readonly DispatcherTimer lightsShrink = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1600) };
+        bool lightsGrown;
+        void GrowLights(FrameworkElement row, bool on)
+        {
+            if (on) lightsShrink.Stop();
+            if (lightsGrown == on) return;
+            lightsGrown = on;
+            foreach (var m in marks) m.Opacity = on || row.IsMouseOver ? 1 : 0;
+            var a = new System.Windows.Media.Animation.DoubleAnimation(on ? 1.75 : 1, TimeSpan.FromMilliseconds(600)) { EasingFunction = new Spring() };
+            lightsScale.BeginAnimation(ScaleTransform.ScaleXProperty, a);
+            lightsScale.BeginAnimation(ScaleTransform.ScaleYProperty, a);
+        }
+
+        // Move & Resize: the finger-sized layout panel, under the green light.
         void TileMenu(FrameworkElement green)
         {
             var owner = Window.GetWindow(green) ?? this;
             var h = new WindowInteropHelper(owner).Handle;
-            var cm = new ContextMenu { PlacementTarget = green, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom, HorizontalOffset = -16, VerticalOffset = -2 };
-            Action<Tiling.Spot> add = s =>
-            {
-                var mi = new MenuItem { Header = Tiling.Name(s), Icon = Diagram(s) };
-                mi.Click += delegate { Tiling.Move(h, s); };
-                cm.Items.Add(mi);
-            };
-            add(Tiling.Spot.Fill); add(Tiling.Spot.Center);
-            cm.Items.Add(new Separator());
-            foreach (var s in Tiling.MoveSpots) { if (s == Tiling.Spot.TopLeft) cm.Items.Add(new Separator()); add(s); }
-            cm.Items.Add(new Separator());
-            add(Tiling.Spot.Restore);
-            cm.IsOpen = true;
+            var p = green.PointToScreen(new Point(0, green.ActualHeight));
+            double k = VisualTreeHelper.GetDpi(green).DpiScaleX;
+            TileChooser.Show(h, new Point(p.X / k, p.Y / k));
+            if (lightsGrown) lightsShrink.Start();
         }
 
         // A tiny screen with the spot a layout fills.
-        static FrameworkElement Diagram(Tiling.Spot s)
+        internal static FrameworkElement Diagram(Tiling.Spot s)
         {
             var c = new Grid { Width = 20, Height = 14 };
             var frame = new Border { CornerRadius = new CornerRadius(2.5), BorderThickness = new Thickness(1.1) };

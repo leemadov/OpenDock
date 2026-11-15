@@ -1,6 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Windows;
 
 namespace OpenDock
@@ -13,6 +14,15 @@ namespace OpenDock
 
         public static void Run()
         {
+            // One build for x64 and ARM64: IL only, never forced or preferred 32-bit (that would run it as x86 under
+            // emulation on ARM64 instead of natively).
+            PortableExecutableKinds peKind; ImageFileMachine peMachine;
+            typeof(App).Module.GetPEKind(out peKind, out peMachine);
+            Need((peKind & PortableExecutableKinds.ILOnly) != 0, "build is not IL-only");
+            Need((peKind & (PortableExecutableKinds.Required32Bit | PortableExecutableKinds.Preferred32Bit)) == 0, "build is forced to 32-bit: it wouldn't run natively on ARM64");
+            Need(Sys.MachineName(0xAA64) == "ARM64" && Sys.MachineName(0x8664) == "x64" && Sys.MachineName(0) == null, "machine names");
+            Need(Sys.Architecture().Contains("natively") || Sys.Architecture().Contains("runs as") || Sys.Architecture().Contains("emulated"), "architecture text");
+
             // Liquid Glass: 50 keeps the standard tint, 0 is nearly clear, 100 nearly solid, and it only ever rises.
             Need(Theme.GlassAlpha(0x99, 50) == 0x99, "glass slider changes the standard look");
             Need(Theme.GlassAlpha(0x99, 0) < 0x20, "clear glass is still tinted");

@@ -8,10 +8,10 @@ set WPF=%FW%\WPF
 if not exist bin mkdir bin
 set REFS=/r:"%WPF%\PresentationFramework.dll" /r:"%WPF%\PresentationCore.dll" /r:"%WPF%\WindowsBase.dll" /r:System.Xaml.dll /r:System.Drawing.dll /r:System.Data.dll /r:System.Core.dll /r:Microsoft.CSharp.dll /r:Microsoft.VisualBasic.dll /r:"%WPF%\UIAutomationClient.dll" /r:"%WPF%\UIAutomationTypes.dll" /r:System.Management.dll /r:System.Web.Extensions.dll /r:"%FW%\System.Runtime.dll" /r:"%FW%\System.Runtime.InteropServices.WindowsRuntime.dll" /r:"%WINDIR%\System32\WinMetadata\Windows.Foundation.winmd" /r:"%WINDIR%\System32\WinMetadata\Windows.Media.winmd" /r:"%WINDIR%\System32\WinMetadata\Windows.Devices.winmd" /r:"%WINDIR%\System32\WinMetadata\Windows.Storage.winmd" /r:"%WINDIR%\System32\WinMetadata\Windows.UI.winmd" /r:"%WINDIR%\System32\WinMetadata\Windows.ApplicationModel.winmd" /r:"%WINDIR%\System32\WinMetadata\Windows.Security.winmd"
 if /i "%1"=="check" (
-  "%FW%\csc.exe" /nologo /target:exe /main:OpenDock.Checks /out:bin\checks.exe %REFS% src\*.cs tests\*.cs || exit /b 1
+  "%FW%\csc.exe" /nologo /target:exe /platform:anycpu /main:OpenDock.Checks /out:bin\checks.exe %REFS% src\*.cs tests\*.cs || exit /b 1
   bin\checks.exe %2
   exit /b
 )
-"%FW%\csc.exe" /nologo /target:winexe /optimize+ /out:bin\GlassDock.exe %REFS% src\*.cs
+"%FW%\csc.exe" /nologo /target:winexe /platform:anycpu /optimize+ /out:bin\GlassDock.exe %REFS% src\*.cs
 if errorlevel 1 exit /b 1
 echo Built bin\GlassDock.exe

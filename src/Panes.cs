@@ -607,6 +607,7 @@ namespace OpenDock
                 var g = Group(slot);
                 InfoRow(g, "Name", i.Name);
                 InfoRow(g, "Chip", i.Chip);
+                InfoRow(g, "Architecture", Sys.Architecture());
                 InfoRow(g, "Memory", i.Memory);
                 InfoRow(g, "Graphics", i.Graphics);
                 InfoRow(g, "Serial number", i.Serial);

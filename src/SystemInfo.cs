@@ -103,6 +103,32 @@ namespace OpenDock
 
         static bool Junk(string s) { return string.IsNullOrWhiteSpace(s) || s.IndexOf("System", StringComparison.OrdinalIgnoreCase) >= 0 || s.IndexOf("Default", StringComparison.OrdinalIgnoreCase) >= 0 || s.Contains("O.E.M") || s.Contains("To be filled"); }
 
+        // Which processor Windows runs on, and whether GlassDock runs natively on it. GlassDock is one "any CPU" build:
+        // on Windows on ARM with .NET Framework 4.8.1 it runs as a native ARM64 program; with only 4.8 installed,
+        // Windows runs it through its x64 emulation instead (it still works, just slower).
+        [DllImport("kernel32.dll")] static extern bool IsWow64Process2(IntPtr process, out ushort processMachine, out ushort nativeMachine);
+        [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+
+        public static string MachineName(ushort m) { return m == 0xAA64 ? "ARM64" : m == 0x8664 ? "x64" : m == 0x014C ? "x86" : null; }
+
+        public static string Architecture()
+        {
+            ushort processMachine = 0, nativeMachine = 0;
+            try { IsWow64Process2(GetCurrentProcess(), out processMachine, out nativeMachine); } catch (EntryPointNotFoundException) { }   // before Windows 10 1709
+            string native = MachineName(nativeMachine) ?? (Environment.Is64BitOperatingSystem ? "x64" : "x86");
+            string mine;
+            switch (RuntimeInformation.ProcessArchitecture)
+            {
+                case System.Runtime.InteropServices.Architecture.Arm64: mine = "ARM64"; break;
+                case System.Runtime.InteropServices.Architecture.X64: mine = "x64"; break;
+                case System.Runtime.InteropServices.Architecture.X86: mine = "x86"; break;
+                default: mine = RuntimeInformation.ProcessArchitecture.ToString(); break;
+            }
+            if (mine == native) return native + " · GlassDock runs natively";
+            if (native == "ARM64") return "ARM64 · GlassDock runs emulated as " + mine + " (install .NET Framework 4.8.1 to run natively)";
+            return native + " · GlassDock runs as " + mine;
+        }
+
         public static Info About()
         {
             var i = new Info { Name = Environment.MachineName };

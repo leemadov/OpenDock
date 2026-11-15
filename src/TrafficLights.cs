@@ -9,6 +9,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 
@@ -28,7 +29,8 @@ namespace OpenDock
         static readonly Dictionary<IntPtr, LightsWindow> shown = new Dictionary<IntPtr, LightsWindow>();
         static readonly HashSet<IntPtr> probing = new HashSet<IntPtr>();
         static readonly Dictionary<IntPtr, DateTime> unsupported = new Dictionary<IntPtr, DateTime>();   // when each was last tried
-        static Native.WinEventProc onMove, onFore;   // kept alive: Windows calls them
+        static Native.WinEventProc onMove, onFore, onMoveSize, onReorder;   // kept alive: Windows calls them
+        static bool restackQueued;
         static DispatcherTimer sweep;
         static readonly uint myPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
         [DllImport("user32.dll")] static extern bool IsHungAppWindow(IntPtr h);
@@ -41,6 +43,22 @@ namespace OpenDock
             Native.SetWinEventHook(0x800B, 0x800B, IntPtr.Zero, onMove, 0, 0, 2);   // EVENT_OBJECT_LOCATIONCHANGE
             Native.SetWinEventHook(0x0003, 0x0003, IntPtr.Zero, onFore, 0, 0, 2);   // EVENT_SYSTEM_FOREGROUND
             Native.SetWinEventHook(0x0016, 0x0017, IntPtr.Zero, onFore, 0, 0, 2);   // minimize start / end
+            // a window being dragged or resized: its lights follow it every frame until it's let go
+            onMoveSize = App.Guard((hk, ev, h, obj, child, t, time) =>
+            {
+                if (obj != 0 || child != 0) return;
+                LightsWindow w; if (shown.TryGetValue(h, out w)) w.Tracking(ev == 0x000A);
+            });
+            Native.SetWinEventHook(0x000A, 0x000B, IntPtr.Zero, onMoveSize, 0, 0, 2);   // EVENT_SYSTEM_MOVESIZESTART / END
+            // windows changed places in the stack (one brought forward, another sent back): every patch goes straight
+            // back right above its own window, so the buttons under it never show through (at most once per pass of the UI loop)
+            onReorder = App.Guard((hk, ev, h, obj, child, t, time) =>
+            {
+                if (restackQueued || shown.Count == 0) return;
+                restackQueued = true;
+                System.Windows.Threading.Dispatcher.CurrentDispatcher.BeginInvoke(new Action(() => { restackQueued = false; foreach (var w in shown.Values.ToList()) w.Follow(); }), System.Windows.Threading.DispatcherPriority.Input);
+            });
+            Native.SetWinEventHook(0x8004, 0x8004, IntPtr.Zero, onReorder, 0, 0, 2);   // EVENT_OBJECT_REORDER
             sweep = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
             sweep.Tick += delegate { Sweep(); };
             App.WindowsChanged += delegate { Sweep(); };
@@ -192,7 +210,7 @@ namespace OpenDock
             int x = (r.Left + r.Right) / 2, y = (r.Top + r.Bottom) / 2;
             IntPtr res;
             if (Native.SendMessageTimeout(h, 0x0084 /* WM_NCHITTEST */, IntPtr.Zero, (IntPtr)((y << 16) | (x & 0xFFFF)), 2, 300, out res) == IntPtr.Zero) return -1;
-            return (int)res;
+            return unchecked((int)res.ToInt64());   // ((int)IntPtr throws on a 64-bit value an odd app might return)
         }
 
         static bool Elevated(uint pid)
@@ -213,6 +231,108 @@ namespace OpenDock
         [DllImport("advapi32.dll")] static extern bool GetTokenInformation(IntPtr token, int cls, out int info, int len, out int ret);
     }
 
+    // macOS's Move & Resize panel, opened by holding the green button: big layout pictures you can tap with a
+    // finger -- the halves under "Move & Resize", fill / centre / side by side / quarters under "Fill & Arrange",
+    // and a way back to the window's previous size. Used by GlassDock's own windows and the lights on other apps.
+    class TileChooser : Window
+    {
+        static TileChooser open;
+        readonly IntPtr target;
+
+        public static void Show(IntPtr target, Point screenDip)
+        {
+            if (target == IntPtr.Zero || !Native.IsWindow(target)) return;
+            if (open != null) open.Close();
+            open = new TileChooser(target);
+            open.Left = screenDip.X - 12; open.Top = screenDip.Y + 6;
+            open.Show();
+            open.Activate();
+            open.KeepOnScreen();
+        }
+
+        TileChooser(IntPtr target)
+        {
+            this.target = target;
+            WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent; ResizeMode = ResizeMode.NoResize;
+            ShowInTaskbar = false; Topmost = true; SizeToContent = SizeToContent.WidthAndHeight; FontFamily = Theme.Font; Title = "Move & Resize";
+            var stack = new StackPanel { Margin = new Thickness(12, 10, 12, 10) };
+            stack.Children.Add(Heading("Move & Resize"));
+            stack.Children.Add(Row(new[] { Tiling.Spot.Left, Tiling.Spot.Right, Tiling.Spot.Top, Tiling.Spot.Bottom }));
+            stack.Children.Add(Heading("Fill & Arrange"));
+            var arrange = Row(new[] { Tiling.Spot.Fill, Tiling.Spot.Center });
+            arrange.Children.Add(Button(Pair(true), "Left & Right", () => Arrange(() => Tiling.Arrange(Tiling.Spot.Left, Tiling.Spot.Right))));
+            arrange.Children.Add(Button(Quads(), "Quarters", () => Arrange(Tiling.Quarters)));
+            stack.Children.Add(arrange);
+            var back = new TextBlock { Text = "Return to Previous Size", FontSize = 13, Margin = new Thickness(6, 8, 6, 2), Cursor = Cursors.Hand, Padding = new Thickness(4, 6, 4, 6) };
+            back.SetResourceReference(TextBlock.ForegroundProperty, "MenuFg");
+            back.MouseLeftButtonUp += delegate { Tiling.Move(target, Tiling.Spot.Restore); Close(); };
+            stack.Children.Add(back);
+            var card = new Border { Child = stack, CornerRadius = new CornerRadius(16), BorderThickness = new Thickness(1), Margin = new Thickness(18),
+                Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 24, ShadowDepth = 4, Direction = 270, Opacity = 0.3 } };
+            card.SetResourceReference(Border.BackgroundProperty, "MenuBg");
+            card.SetResourceReference(Border.BorderBrushProperty, "MenuBorder");
+            Content = card;
+            Deactivated += delegate { if (IsVisible) Close(); };
+            KeyDown += (s, e) => { if (e.Key == Key.Escape) Close(); };
+            Closed += delegate { if (open == this) open = null; };
+            SourceInitialized += delegate { Native.MakeToolWindow(new WindowInteropHelper(this).Handle, false); };
+        }
+
+        void KeepOnScreen()
+        {
+            UpdateLayout();
+            var b = DisplayLayout.Dip((Sys.Screens().FirstOrDefault(s => s.Monitor == Native.MonitorFromWindow(new WindowInteropHelper(this).Handle, 2)) ?? DisplayLayout.Selected).Work);
+            Left = Math.Max(b.Left, Math.Min(Left, b.Right - ActualWidth));
+            Top = Math.Max(b.Top, Math.Min(Top, b.Bottom - ActualHeight));
+        }
+
+        // the side-by-side layouts work on the front window: bring this one forward first
+        void Arrange(Action a) { Native.Activate(target); Close(); Dispatcher.BeginInvoke(a, System.Windows.Threading.DispatcherPriority.Background); }
+
+        static TextBlock Heading(string text)
+        {
+            var t = new TextBlock { Text = text, FontSize = 11.5, FontWeight = FontWeights.SemiBold, Margin = new Thickness(6, 4, 6, 6) };
+            t.SetResourceReference(TextBlock.ForegroundProperty, "MenuFgDim");
+            return t;
+        }
+
+        StackPanel Row(Tiling.Spot[] spots)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
+            foreach (var s in spots) { var spot = s; row.Children.Add(Button(MacWindow.Diagram(spot), Tiling.Name(spot), () => { Tiling.Move(target, spot); Close(); })); }
+            return row;
+        }
+
+        // a finger-sized button (56 x 44 DIP) with the layout drawn large
+        static Border Button(FrameworkElement picture, string tip, Action click)
+        {
+            var b = new Border { Width = 56, Height = 44, Margin = new Thickness(3), CornerRadius = new CornerRadius(10), Background = Brushes.Transparent, Cursor = Cursors.Hand, ToolTip = tip,
+                Child = new Viewbox { Width = 34, Height = 24, Child = picture } };
+            b.MouseEnter += delegate { b.SetResourceReference(Border.BackgroundProperty, "Hover"); };
+            b.MouseLeave += delegate { b.Background = Brushes.Transparent; };
+            b.MouseLeftButtonUp += (s, e) => { e.Handled = true; click(); };
+            return b;
+        }
+
+        // two windows side by side / four in quarters, drawn like Diagram's tiny screens
+        static FrameworkElement Pair(bool sideBySide) { return Multi(new[] { new Rect(2.2, 2.2, 6.7, 9.6), new Rect(11.1, 2.2, 6.7, 9.6) }); }
+        static FrameworkElement Quads() { return Multi(new[] { new Rect(2.2, 2.2, 6.7, 3.7), new Rect(11.1, 2.2, 6.7, 3.7), new Rect(2.2, 8.1, 6.7, 3.7), new Rect(11.1, 8.1, 6.7, 3.7) }); }
+        static FrameworkElement Multi(Rect[] parts)
+        {
+            var c = new Grid { Width = 20, Height = 14 };
+            var frame = new Border { CornerRadius = new CornerRadius(2.5), BorderThickness = new Thickness(1.1) };
+            frame.SetResourceReference(Border.BorderBrushProperty, "MenuFg");
+            c.Children.Add(frame);
+            foreach (var r in parts)
+            {
+                var fill = new Border { CornerRadius = new CornerRadius(1), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(r.Left, r.Top, 0, 0), Width = r.Width, Height = r.Height };
+                fill.SetResourceReference(Border.BackgroundProperty, "MenuFg");
+                c.Children.Add(fill);
+            }
+            return c;
+        }
+    }
+
     class LightsWindow : Window
     {
         readonly IntPtr target;
@@ -226,7 +346,52 @@ namespace OpenDock
         public const double RowWidth = 3 * D + 2 * Gap + 14;   // the lights plus their right margin, in DIPs
         bool hover, active = true;
         DateTime sampled = DateTime.MinValue;
+        // touch: how much the lights grow under a finger, and the timers for holding / resting on green
+        const double Grow = 1.75;
+        readonly ScaleTransform growT = new ScaleTransform(1, 1);
+        bool grown, held;
+        FrameworkElement green;
+        readonly System.Windows.Threading.DispatcherTimer hold = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(550) };
+        readonly System.Windows.Threading.DispatcherTimer rest = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(650) };
+        readonly System.Windows.Threading.DispatcherTimer shrink = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1600) };
+        IntPtr monitor;
         public bool Gone { get; private set; }
+
+        // Big lights for a fingertip (with their symbols), springing back after the finger lifts.
+        void SetGrown(bool on)
+        {
+            if (on) shrink.Stop();
+            if (grown == on) return;
+            grown = on;
+            Paint();
+            if (on) Follow();   // the room to grow into first
+            var a = new DoubleAnimation(on ? Grow : 1, TimeSpan.FromMilliseconds(600)) { EasingFunction = new Spring() };
+            if (!on) a.Completed += delegate { if (!grown) Follow(); };   // then give the room back
+            growT.BeginAnimation(ScaleTransform.ScaleXProperty, a);
+            growT.BeginAnimation(ScaleTransform.ScaleYProperty, a);
+        }
+
+        // Move & Resize, under the green light.
+        void OpenTiles()
+        {
+            if (green == null || !green.IsVisible) return;
+            var p = green.PointToScreen(new Point(0, green.ActualHeight));
+            double k = VisualTreeHelper.GetDpi(this).DpiScaleX;
+            shrink.Stop();
+            TileChooser.Show(target, new Point(p.X / k, p.Y / k));
+            if (grown) shrink.Start();
+        }
+
+        // While the window is being dragged or resized, the lights are moved with it every frame (the events
+        // Windows sends about it arrive late and in bursts).
+        bool tracking;
+        public void Tracking(bool on)
+        {
+            if (on == tracking) return;
+            tracking = on;
+            if (on) CompositionTarget.Rendering += OnFrame; else { CompositionTarget.Rendering -= OnFrame; Follow(); }
+        }
+        void OnFrame(object s, EventArgs e) { if (Gone || !Native.IsWindow(target)) Tracking(false); else Follow(); }
         protected override void OnClosed(EventArgs e) { Gone = true; base.OnClosed(e); }
 
         public LightsWindow(IntPtr target, Rect area, bool zoomed)
@@ -250,13 +415,42 @@ namespace OpenDock
                 var shine = new Ellipse { Width = D * 0.66, Height = D * 0.42, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, D * 0.07, 0, 0), IsHitTestVisible = false,
                     Fill = new LinearGradientBrush(Color.FromArgb(225, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), 90) };
                 g.Children.Add(dots[i]); g.Children.Add(glow); g.Children.Add(shine); g.Children.Add(marks[i]);
-                g.MouseLeftButtonUp += (s, e) => { e.Handled = true; Press(which); };
+                g.PreviewMouseLeftButtonDown += (s, e) =>
+                {
+                    if (e.StylusDevice != null) SetGrown(true);   // a finger or pen: big lights, as on a Mac's touchscreen
+                    if (which == 2) { held = false; hold.Start(); }
+                };
+                g.MouseLeftButtonUp += (s, e) =>
+                {
+                    e.Handled = true; hold.Stop();
+                    if (which == 2 && held) { held = false; return; }   // the hold opened Move & Resize instead
+                    Press(which);
+                };
+                if (which == 2)
+                {
+                    green = g;
+                    g.MouseEnter += delegate { if (Mouse.LeftButton != MouseButtonState.Pressed) rest.Start(); };
+                    g.MouseLeave += delegate { rest.Stop(); hold.Stop(); };
+                }
                 row.Children.Add(g);
             }
             row.MouseEnter += delegate { hover = true; Paint(); };
             row.MouseLeave += delegate { hover = false; Paint(); };
+            // touch: grow on the first touch, shrink a moment after the last finger lifts
+            row.PreviewTouchDown += delegate { SetGrown(true); };
+            row.TouchUp += delegate { shrink.Stop(); shrink.Start(); };
+            row.TouchLeave += delegate { shrink.Stop(); shrink.Start(); };
+            row.RenderTransform = growT; row.RenderTransformOrigin = new Point(1, 0);
+            hold.Tick += delegate { hold.Stop(); held = true; OpenTiles(); };
+            rest.Tick += delegate { rest.Stop(); if (green != null && green.IsMouseOver && Mouse.LeftButton != MouseButtonState.Pressed) OpenTiles(); };
+            shrink.Tick += delegate { shrink.Stop(); SetGrown(false); };
             patch.Child = row;
-            Content = patch;
+            patch.HorizontalAlignment = HorizontalAlignment.Right; patch.VerticalAlignment = VerticalAlignment.Top;
+            // (the window can be bigger than the patch while the lights are grown: the rest of it is transparent,
+            // and clicks there go straight through to the app)
+            var holder = new Grid();
+            holder.Children.Add(patch);
+            Content = holder;
             SourceInitialized += delegate
             {
                 hwnd = new WindowInteropHelper(this).Handle;
@@ -281,15 +475,29 @@ namespace OpenDock
         {
             if (Gone || hwnd == IntPtr.Zero || !Native.IsWindow(target)) return;
             if (!Native.IsWindowVisible(target) || Native.IsIconic(target) || Native.IsCloaked(target)) { if (IsVisible) Hide(); return; }
+            // moved to another display: its buttons may be another size there (another DPI), so they're found again
+            var mon = Native.MonitorFromWindow(target, 2);
+            if (monitor != IntPtr.Zero && mon != monitor) { monitor = mon; TrafficLights.Probe(target, this); return; }
+            monitor = mon;
             Native.RECT fr; if (Native.DwmGetWindowAttribute(target, 9, out fr, 16) != 0) Native.GetWindowRect(target, out fr);
-            int x = (int)Math.Round(fr.Right + area.Left), y = (int)Math.Round(fr.Top + area.Top), w = (int)Math.Round(area.Width), h = (int)Math.Round(area.Height);
+            // cover the buttons edge to edge: right up to the frame's top and right when they stop a pixel or two short
+            double ax = area.Left, ay = area.Top, aw = area.Width, ah = area.Height;
+            if (ay > 0 && ay <= 3) { ah += ay; ay = 0; }
+            if (ax + aw < 0 && ax + aw >= -3) aw = -ax;
+            int x = (int)Math.Round(fr.Right + ax), y = (int)Math.Round(fr.Top + ay), w = (int)Math.Round(aw), h = (int)Math.Round(ah);
+            double k = hwnd != IntPtr.Zero ? VisualTreeHelper.GetDpi(this).DpiScaleX : App.Dpi;
+            if (k <= 0) k = App.Dpi;
+            patch.Width = w / k; patch.Height = h / k;
+            // grown lights get room to the left and below (transparent, so the app underneath still takes clicks)
+            int ww = w, wh = h;
+            if (grown) { ww = Math.Max(w, (int)Math.Ceiling((RowWidth * Grow + 12) * k)); wh = Math.Max(h, (int)Math.Ceiling(((h / k - D) / 2 + D * Grow + 10) * k)); }
             bool fore = Native.GetAncestor(Native.GetForegroundWindow(), 2) == target;
             if (fore != active) { active = fore; sampled = DateTime.MinValue; }
             if ((DateTime.UtcNow - sampled).TotalMilliseconds > 1000) Sample(x, y, w, h);
             if (!IsVisible) Show();
             var above = Native.GetWindow(target, 3 /* GW_HWNDPREV */);
             if (above == hwnd) above = Native.GetWindow(hwnd, 3);
-            Native.SetWindowPos(hwnd, above == IntPtr.Zero ? IntPtr.Zero : above, x, y, w, h, Native.SWP_NOACTIVATE | (above == IntPtr.Zero ? 0x4u /* NOZORDER */ : 0));
+            Native.SetWindowPos(hwnd, above == IntPtr.Zero ? IntPtr.Zero : above, x + w - ww, y, ww, wh, Native.SWP_NOACTIVATE | (above == IntPtr.Zero ? 0x4u /* NOZORDER */ : 0));
             Paint();
         }
 
@@ -324,7 +532,7 @@ namespace OpenDock
                 Color c = active || hover ? On[i] : grayOff;   // a bead: lighter at the top, a touch deeper at the bottom
                 dots[i].Fill = new LinearGradientBrush(new GradientStopCollection {
                     new GradientStop(Mix(c, Colors.White, 0.22), 0), new GradientStop(c, 0.5), new GradientStop(Mix(c, Colors.Black, 0.18), 1) }, 90);
-                marks[i].Opacity = hover ? 1 : 0;
+                marks[i].Opacity = hover || grown ? 1 : 0;
             }
             marks[2].Text = Native.IsWindow(target) && Native.IsZoomed(target) ? "–" : "+";
         }

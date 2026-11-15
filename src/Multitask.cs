@@ -54,7 +54,7 @@ namespace OpenDock
             var at = (IntPtr)unchecked((int)(((uint)(p.Y & 0xFFFF) << 16) | (uint)(p.X & 0xFFFF)));
             if (Native.SendMessageTimeout(h, 0x84 /* WM_NCHITTEST */, IntPtr.Zero, at, 2 /* ABORTIFHUNG */, 60, out hit) != IntPtr.Zero)
             {
-                int ht = hit.ToInt32();
+                int ht = unchecked((int)hit.ToInt64());   // (ToInt32 throws on a 64-bit value an odd app might return)
                 if (ht >= 10 && ht <= 17) return;   // HTLEFT..HTBOTTOMRIGHT: a resize
             }
             if (!Native.GetWindowRect(h, out startRect)) return;
