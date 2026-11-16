@@ -650,6 +650,7 @@ namespace OpenDock
         }
 
         static bool loading;
+        static int fetchedUnit;
 
         public static void Start()
         {
@@ -660,17 +661,25 @@ namespace OpenDock
             Settings.Changed += delegate
             {
                 bool wanted = Settings.Widgets && Widgets.List.Contains("weather");
-                if (Settings.WeatherPlace != fetched || (wanted && Now == null && Error == null && !loading)) Refresh();
+                if (Settings.WeatherPlace != fetched || Settings.WeatherUnit != fetchedUnit || (wanted && Now == null && Error == null && !loading)) Refresh();
             };
             Refresh();
         }
 
-        static bool Imperial { get { try { return !new RegionInfo(CultureInfo.CurrentCulture.Name).IsMetric; } catch { return false; } } }
+        static bool Imperial
+        {
+            get
+            {
+                if (Settings.WeatherUnit == 1) return false;
+                if (Settings.WeatherUnit == 2) return true;
+                try { return !new RegionInfo(CultureInfo.CurrentCulture.Name).IsMetric; } catch { return false; }
+            }
+        }
 
         public static void Refresh()
         {
             var place = Place;
-            fetched = Settings.WeatherPlace;
+            fetched = Settings.WeatherPlace; fetchedUnit = Settings.WeatherUnit;
             if (place == null || !Settings.Widgets || !Widgets.List.Contains("weather")) { if (place == null) { Now = null; if (Changed != null) Changed(); } return; }
             string url = string.Format(CultureInfo.InvariantCulture,
                 "https://api.open-meteo.com/v1/forecast?latitude={0}&longitude={1}&current=temperature_2m,weather_code,is_day&hourly=temperature_2m,weather_code,is_day&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=2{2}",

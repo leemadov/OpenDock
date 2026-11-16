@@ -1514,6 +1514,8 @@ namespace OpenDock
             cityRow.Children.Add(setCity); cityRow.Children.Add(cityBox); cityRow.Children.Add(found);
             cityRow.Children.Add(Text("Weather location", 13, "Fg"));
             Row(wg, cityRow);
+            var unit = new ComboBox { MinWidth = 180, ItemsSource = new[] { "Automatic (by region)", "Celsius (°C)", "Fahrenheit (°F)" }, SelectedIndex = Math.Max(0, Math.Min(2, Settings.WeatherUnit)) };
+            AddChoice(wg, "Temperature", unit, () => Settings.WeatherUnit = unit.SelectedIndex);
             var resetRow = new DockPanel();
             var reset = Pill("Reset Positions", Widgets.ResetPositions);
             DockPanel.SetDock(reset, Dock.Right);

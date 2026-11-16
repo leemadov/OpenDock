@@ -42,6 +42,7 @@ namespace OpenDock
         public static bool Widgets = true;         // macOS desktop widgets
         public static string WidgetList = "";      // which, in order ("" = the starter set, "none" = none)
         public static string WidgetPos = "";       // "kind:fromRight,fromTop;..." in DIPs from the work area's top-right
+        public static int WeatherUnit = 0;         // 0 = automatic (by region), 1 = Celsius, 2 = Fahrenheit
         public static string WeatherPlace = "";    // "Name|lat|lon" for the weather widget
         public static bool TilingKeys = true;      // Ctrl+Alt+arrows tile the front window; Ctrl+Alt+Up/Down = Mission Control / App Exposé
         public static bool DragTile = true;        // drag a window to a screen edge or corner to tile it (macOS 15)
