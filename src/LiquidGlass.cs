@@ -27,7 +27,12 @@ namespace OpenDock
     static class Liquid
     {
         // `src` is a Bgr32 capture (sw x sh); `r`, `radius`, `height` and `amount` are in its pixels.
-        public static BitmapSource Lens(byte[] src, int sw, int sh, Rect r, double radius, double height, double amount, bool dispersion, double depth = 0, double saturation = 1.5)
+        // `bevel` (0..1) lights the rim as the rounded side of a thick slab -- a flat top whose edge curves down
+        // like a quarter circle (macOS's Dock): the upper curve catches the light, the lower one falls into shade,
+        // a glint runs where the curve leaves the flat top, and the very edge glows (glass seen edge-on).
+        // `glint` scales that glint: on a long bar it is a fine line; on a small tile its curved corners squeeze it into
+        // two bright spots, so icons go without.
+        public static BitmapSource Lens(byte[] src, int sw, int sh, Rect r, double radius, double height, double amount, bool dispersion, double depth = 0, double saturation = 1.5, double bevel = 0, double glint = 1)
         {
             int w = Math.Max(1, (int)Math.Round(r.Width)), h = Math.Max(1, (int)Math.Round(r.Height));
             var dst = new byte[w * h * 4];
@@ -42,7 +47,7 @@ namespace OpenDock
                 {
                     double px = r.X + i + 0.5, py = r.Y + j + 0.5, ux = px - cx, uy = py - cy;
                     double sd = SdRoundRect(ux, uy, hx, hy, radius);
-                    double sx = px, sy = py, dx = 0, dy = 0;
+                    double sx = px, sy = py, dx = 0, dy = 0, rimX = 0, nx = 0, ny = 0;
                     bool bent = -sd < height;
                     if (bent)
                     {
@@ -54,6 +59,7 @@ namespace OpenDock
                         double d = (0.6 * (1 - Math.Sqrt(Math.Max(0, 1 - x * x))) + 0.4 * x * x) * amount;
                         double gx, gy;
                         GradRoundRect(ux, uy, hx, hy, gradRadius, out gx, out gy);
+                        rimX = x; nx = gx; ny = gy;
                         if (depth != 0) { double l = Math.Sqrt(ux * ux + uy * uy); if (l > 1e-6) { gx += depth * ux / l; gy += depth * uy / l; } }
                         double gl = Math.Sqrt(gx * gx + gy * gy);
                         if (gl > 1e-6) { gx /= gl; gy /= gl; }
@@ -81,15 +87,49 @@ namespace OpenDock
                     // vibrancy: the library's colour matrix, luminance weights 0.213 / 0.715 / 0.072
                     double lum = 0.213 * c[2] + 0.715 * c[1] + 0.072 * c[0];
                     int o = (j * w + i) * 4;
-                    dst[o] = Clamp(lum + (c[0] - lum) * saturation);
-                    dst[o + 1] = Clamp(lum + (c[1] - lum) * saturation);
-                    dst[o + 2] = Clamp(lum + (c[2] - lum) * saturation);
+                    double b0 = lum + (c[0] - lum) * saturation, b1 = lum + (c[1] - lum) * saturation, b2 = lum + (c[2] - lum) * saturation;
+                    if (bevel > 0 && bent && rimX > 0)
+                    {
+                        double add, mul;
+                        Bevel(rimX, nx, ny, glint, out add, out mul);
+                        add *= bevel; mul = 1 - (1 - mul) * bevel;
+                        b0 = b0 * mul + add; b1 = b1 * mul + add; b2 = b2 * mul + add;
+                    }
+                    dst[o] = Clamp(b0);
+                    dst[o + 1] = Clamp(b1);
+                    dst[o + 2] = Clamp(b2);
                     dst[o + 3] = 255;
                 }
             });
             var b = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, dst, w * 4);
             b.Freeze();
             return b;
+        }
+
+        // The slab's rounded side, lit. `x` runs 0 (where the flat top ends) to 1 (the outer edge) across the rim;
+        // (nx, ny) is the edge's outward direction on screen (y down). The side is a quarter circle, so its surface
+        // tilts out by asin(x). Light comes from above and a little left; a weaker second light from below right
+        // gives the bottom edge the reflection thick glass shows there. Returns light to add (0..255) and a factor
+        // to darken by.
+        static readonly double[] KeyLight = Normalize(-0.3, -0.85, 0.55), FillLight = Normalize(0.35, 0.8, 0.5);
+        static readonly double[] KeyHalf = Normalize(KeyLight[0], KeyLight[1], KeyLight[2] + 1), FillHalf = Normalize(FillLight[0], FillLight[1], FillLight[2] + 1);
+
+        static double[] Normalize(double x, double y, double z) { double l = Math.Sqrt(x * x + y * y + z * z); return new[] { x / l, y / l, z / l }; }
+
+        static void Bevel(double x, double nx, double ny, double glint, out double add, out double mul)
+        {
+            double s = Math.Min(1, x), cz = Math.Sqrt(Math.Max(0, 1 - s * s));
+            double Nx = nx * s, Ny = ny * s, Nz = cz;                           // the curved side's surface normal
+            // diffuse: compared with the flat top, so the top stays as it is and only the curve changes
+            double lit = (Nx * KeyLight[0] + Ny * KeyLight[1] + Nz * KeyLight[2]) - KeyLight[2];
+            // the glint where the curve catches the light, and the second light's softer one
+            double k = Math.Max(0, Nx * KeyHalf[0] + Ny * KeyHalf[1] + Nz * KeyHalf[2]);
+            double f = Math.Max(0, Nx * FillHalf[0] + Ny * FillHalf[1] + Nz * FillHalf[2]);
+            double spec = (Math.Pow(k, 60) * 0.85 + Math.Pow(f, 40) * 0.35) * glint;
+            // the edge itself, seen edge-on through the glass, glows a little all round
+            double fresnel = Math.Pow(s, 6) * 0.22;
+            add = (Math.Max(0, lit) * 0.55 + spec + fresnel) * 255;
+            mul = 1 - Math.Max(0, -lit) * 0.45;                                  // the side turned from the light, in shade
         }
 
         // Signed distance to a rounded rectangle centred on the origin (negative inside).

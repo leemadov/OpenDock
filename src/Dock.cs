@@ -344,7 +344,8 @@ namespace OpenDock
                 var r = new Rect((pane.X - capRect.X) * sx, (pane.Y - capRect.Y) * sy, pane.Width * sx, pane.Height * sy);
                 double lh, la;
                 Liquid.Strength(pane.Height, out lh, out la);
-                lensImg.Source = Liquid.Lens(capPx, capW, capH, r, radius * sy, lh * sy, la * sy, false);
+                // the Dock reads as a thick slab of glass: its rounded sides lit (see Liquid.Bevel)
+                lensImg.Source = Liquid.Lens(capPx, capW, capH, r, radius * sy, lh * sy, la * sy, false, 0, 1.5, 1);
                 lensAt = pane; lensDirty = false;
             }
             Canvas.SetLeft(lensImg, pane.X); Canvas.SetTop(lensImg, pane.Y);
@@ -371,7 +372,9 @@ namespace OpenDock
                 var cr = new Rect((r.X - capRect.X) * sx, (r.Y - capRect.Y) * sy, Math.Max(2, r.Width * sx), Math.Max(2, r.Height * sy));
                 double lh, la;
                 Liquid.Strength(r.Width, out lh, out la);
-                it.Lens.Source = Liquid.Lens(capPx, capW, capH, cr, r.Width * 0.26 * sx, lh * sx, la * 1.15 * sx, true);
+                // each icon's glass tile is a small thick slab like the Dock (Liquid.Bevel); the logo sits on it, untouched.
+                // A gentle bend, no rainbow and no glint, which on a tile this small turns into two bright spots.
+                it.Lens.Source = Liquid.Lens(capPx, capW, capH, cr, r.Width * 0.26 * sx, lh * sx, la * 0.35 * sx, false, 0, 1.5, 1, 0);
                 it.LensAt = r; it.LensVersion = capVersion;
             }
             if (iconClip == null || Math.Abs(iconClipSize - tile) > 0.01) { iconClip = IconLook.Squircle(tile); iconClip.Freeze(); iconClipSize = tile; }

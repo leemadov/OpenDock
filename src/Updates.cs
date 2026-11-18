@@ -27,6 +27,7 @@ namespace OpenDock
             {
                 Settings.IncludePreviewUpdates = value; candidate = null; install.IsEnabled = false;
             });
+            AddSwitch(group, "Notify me when an update is available", Settings.UpdateBanner, value => Settings.UpdateBanner = value);
             var description = Text("Updates download from this project's GitHub releases and verify the file's SHA-256 before installation. GlassDock restarts, retaining its settings and a copy of the previous executable.", 12, "FgDim");
             description.TextWrapping = TextWrapping.Wrap; description.Margin = new Thickness(4, 12, 4, 4); body.Children.Add(description);
             if (!string.IsNullOrEmpty(Updater.LastResult))

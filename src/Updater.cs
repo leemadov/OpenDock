@@ -15,7 +15,7 @@ namespace OpenDock
 {
     static class Updater
     {
-        public const string CurrentTag = "v0.4.12";
+        public const string CurrentTag = "v0.4.13";
         public const string ReleasesPage = "https://github.com/leemadov/OpenDock/releases";
         const int MaximumBuild = 32 * 1024 * 1024;
         const string AssetPrefix = "https://github.com/leemadov/OpenDock/releases/download/";
@@ -125,6 +125,47 @@ namespace OpenDock
         {
             var bytes = await Read(new Uri("https://api.github.com/repos/leemadov/OpenDock/releases?per_page=30"), 2 * 1024 * 1024, cancel).ConfigureAwait(false);
             return SelectRelease(Encoding.UTF8.GetString(bytes), includePreview);
+        }
+
+        // ---------- the update notification ----------
+        // A minute after startup, then every six hours, GlassDock asks GitHub whether there's a newer release. When
+        // there is, a notification says so (once per release); clicking it opens Settings > Software Update, where
+        // installing stays your choice. Off with Settings.UpdateBanner.
+        static System.Windows.Threading.DispatcherTimer watch;
+        static bool watching;
+
+        public static void Watch()
+        {
+            if (watch != null) return;
+            watch = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
+            watch.Tick += async delegate
+            {
+                watch.Interval = TimeSpan.FromHours(6);
+                if (!Settings.UpdateBanner || watching) return;
+                watching = true;
+                try
+                {
+                    var found = await Check(Settings.IncludePreviewUpdates, CancellationToken.None);
+                    if (found != null) Announce(found);
+                }
+                catch (Exception ex) { App.Log("update check: " + ex.Message); }   // offline, GitHub busy: try again later
+                finally { watching = false; }
+            };
+            watch.Start();
+        }
+
+        public static void Announce(Release found)
+        {
+            if (found == null || !Settings.UpdateBanner || string.Equals(Settings.UpdateNotified, found.tag_name, StringComparison.OrdinalIgnoreCase)) return;
+            Settings.UpdateNotified = found.tag_name; Settings.Save();
+            Notify.Post(new Note
+            {
+                App = "GlassDock",
+                Title = "Update available",
+                Body = "GlassDock " + found.tag_name + " is ready to install. You have " + CurrentTag + ".",
+                Glyph = "",
+                Open = () => App.OpenSettings("Updates")
+            });
         }
 
         public static string Hash(byte[] bytes)

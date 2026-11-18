@@ -25,6 +25,8 @@ namespace OpenDock
         public static bool FinderListView = false;
         public static int IconRevision = 0;
         public static bool IncludePreviewUpdates = true;
+        public static bool UpdateBanner = true;    // a notification when GlassDock finds a newer release on GitHub
+        public static string UpdateNotified = "";  // the release it last told you about (each is announced once)
         public static int IconSize = 60;          // dock slot size (DIP)
         public static int MagnifySize = 100;
         public static bool Magnify = true;
@@ -600,6 +602,7 @@ namespace OpenDock
             Safe("Stage Manager", StageManager.Start);
             Safe("Traffic lights", TrafficLights.Start);
             Safe("Recent windows", RecentArrange.Start);
+            Safe("Update notifications", Updater.Watch);
             var warm = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             warm.Tick += delegate { warm.Stop(); WindowFx.Warm(); };
             warm.Start();
