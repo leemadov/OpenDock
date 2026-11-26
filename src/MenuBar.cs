@@ -61,7 +61,6 @@ namespace OpenDock
             };
             var logoMenu = Bar0(logo);
             logoMenu.Items.Add(Cmd("About This PC", null, AboutWindow.ShowIt));
-            if (FeedbackWindow.Active) logoMenu.Items.Add(Cmd("Share Your Feedback…", null, FeedbackWindow.ShowIt));
             logoMenu.Items.Add(new Separator());
             logoMenu.Items.Add(Cmd("System Settings…", null, () => App.OpenSettings("General")));
             logoMenu.Items.Add(Cmd("Shelf…", null, ShelfWindow.Open));

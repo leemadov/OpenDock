@@ -1531,7 +1531,6 @@ namespace OpenDock
             Row(about, info);
             var links = new StackPanel { Orientation = Orientation.Horizontal };
             links.Children.Add(Pill("View on GitHub", () => Launcher.Shell("https://github.com/leemadov/OpenDock")));
-            if (FeedbackWindow.Active) links.Children.Add(Pill("Share Feedback", FeedbackWindow.ShowIt));
             Row(about, links);
 
             body.Children.Add(new Border { Height = 16 });

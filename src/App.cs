@@ -33,7 +33,6 @@ namespace OpenDock
         public static int IconRevision = 0;
         public static bool IncludePreviewUpdates = true;
         public static bool UpdateBanner = true;    // a notification when GlassDock finds a newer release on GitHub
-        public static string FeedbackAsked = "";   // the release the feedback request was shown for (once)
         public static string UpdateNotified = "";  // the release it last told you about (each is announced once)
         public static bool SetupDone = false;      // Mac Setup has been applied
         public static bool SetupOffered = false;   // the one-time "Make Windows feel like a Mac" notification was shown
@@ -637,7 +636,6 @@ namespace OpenDock
             Safe("Recent windows", RecentArrange.Start);
             Safe("Update notifications", Updater.Watch);
             Safe("Mac Setup offer", MacSetup.Offer);
-            Safe("Feedback request", FeedbackWindow.Offer);
             var warm = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             warm.Tick += delegate { warm.Stop(); WindowFx.Warm(); };
             warm.Start();

@@ -46,6 +46,18 @@ namespace OpenDock
             Sweep();
         }
 
+        // The corner radius (physical px) GlassDock's cut-out gives this window right now, or 0 when it has Windows' own.
+        public static double RadiusPx(IntPtr h)
+        {
+            string key;
+            if (!done.TryGetValue(h, out key) || string.IsNullOrEmpty(key)) return 0;
+            var probe = Native.CreateRoundRectRgn(0, 0, 1, 1, 0, 0);
+            int has = GetWindowRgn(h, probe); Native.DeleteObject(probe);
+            if (has == 0) return 0;   // the app took its shape back
+            int slash = key.LastIndexOf('/');
+            int d; return slash >= 0 && int.TryParse(key.Substring(slash + 1), out d) ? d / 2.0 : 0;
+        }
+
         static bool Active { get { return Settings.RoundOtherWindows && Settings.WindowCorner > 8; } }
 
         static int Radius { get { return Math.Max(8, Math.Min(40, Settings.WindowCorner)); } }

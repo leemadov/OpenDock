@@ -674,8 +674,10 @@ namespace OpenDock
             patch.Margin = new Thickness(0, it / k, ir / k, 0);
             // exactly Windows 11's corner: 8 px at 100%, scaled with the display -- the same curve, so the two edges are one
             uint tdpi = GetDpiForWindow(target);
-            double cornerPx = Settings.RoundOtherWindows && Settings.WindowCorner > 8 ? Math.Min(40, Settings.WindowCorner) : 8;   // GlassDock's own corner, or Windows' 8 px
-            patch.CornerRadius = new CornerRadius(0, corner ? cornerPx * (tdpi == 0 ? 96 : tdpi) / 96.0 / k : 0, 0, 0);
+            // the corner this window really has: GlassDock's cut-out if it's on it, else Windows' own 8 px (scaled)
+            double actual = WindowCorners.RadiusPx(target);
+            double cornerPx = actual > 0 ? actual : 8 * (tdpi == 0 ? 96 : tdpi) / 96.0;
+            patch.CornerRadius = new CornerRadius(0, corner ? cornerPx / k : 0, 0, 0);
             // the window moved or changed size: no fresh picture of its title bar until it has been still a moment
             if (x != lastX || y != lastY || w != lastW || h != lastH) { bool real = lastW != 0; lastX = x; lastY = y; lastW = w; lastH = h; if (real) moved = DateTime.UtcNow; }
             // grown lights get room to the left and below (transparent, so the app underneath still takes clicks)
