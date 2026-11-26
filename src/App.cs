@@ -27,11 +27,13 @@ namespace OpenDock
         public static bool ShowInCaptures = false;  // GlassDock always shows in screenshots and screen sharing (else only while one is taken)
         public static bool LiveGlass = true;     // original live blur; excluded from screen capture to avoid feedback
         public static bool FinderListView = false;
+        public static bool RoundOtherWindows = true;   // the corner radius applies to other apps' windows too
         public static int WindowCorner = 20;          // corner radius (px) of GlassDock's own small windows; 8 = Windows 11's own
         public static bool FinderGallery = false;     // Finder's Gallery view (a big preview over a strip)
         public static int IconRevision = 0;
         public static bool IncludePreviewUpdates = true;
         public static bool UpdateBanner = true;    // a notification when GlassDock finds a newer release on GitHub
+        public static string FeedbackAsked = "";   // the release the feedback request was shown for (once)
         public static string UpdateNotified = "";  // the release it last told you about (each is announced once)
         public static bool SetupDone = false;      // Mac Setup has been applied
         public static bool SetupOffered = false;   // the one-time "Make Windows feel like a Mac" notification was shown
@@ -628,12 +630,14 @@ namespace OpenDock
             Safe("Drag to tile", DragTile.Start);
             Safe("Stage Manager", StageManager.Start);
             Safe("Traffic lights", TrafficLights.Start);
+            Safe("Window corners", WindowCorners.Start);
             Safe("Capture guard", CaptureGuard.Start);
             Safe("Finder as default", FinderDefault.Start);
             if (pendingOpen != null) { var folder = pendingOpen; pendingOpen = null; Dispatcher.CurrentDispatcher.BeginInvoke(new Action(() => FinderDefault.Open(folder)), DispatcherPriority.ApplicationIdle); }
             Safe("Recent windows", RecentArrange.Start);
             Safe("Update notifications", Updater.Watch);
             Safe("Mac Setup offer", MacSetup.Offer);
+            Safe("Feedback request", FeedbackWindow.Offer);
             var warm = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             warm.Tick += delegate { warm.Stop(); WindowFx.Warm(); };
             warm.Start();
@@ -811,6 +815,7 @@ namespace OpenDock
                 FocusMode.Suspend();
                 StageManager.Shutdown();   // every window back where it was
                 TrafficLights.Shutdown();
+                WindowCorners.Restore();   // every window Windows draws again as it was
                 foreach (var dock in Docks) if (dock.Bar != null) dock.Bar.Remove();
                 if (MenuBar != null) MenuBar.Bar.Remove();
                 if (Settings.HideTaskbar) Taskbar.Release(); else Taskbar.Restore();

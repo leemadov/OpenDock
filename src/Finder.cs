@@ -69,8 +69,7 @@ namespace OpenDock
             Closed += delegate { CloseEffect(true); };
         }
 
-        // A window is "small" when it covers under 60% of the screen's work area; maximized or big ones keep Windows'
-        // own corners. The window is clipped to a rounded region of the chosen radius (Settings > Desktop & Dock).
+        // Every window that isn't maximized gets the chosen corner. The window is clipped to a rounded region of the chosen radius (Settings > Desktop & Dock).
         string roundKey = "";
 
         static void DwmOutline(IntPtr h, bool custom)
@@ -86,7 +85,7 @@ namespace OpenDock
                 if (h == IntPtr.Zero) return;
                 int radius = Math.Max(8, Math.Min(40, Settings.WindowCorner));
                 var work = DisplayLayout.ActiveWorkArea;
-                bool small = WindowState == WindowState.Normal && ActualWidth * ActualHeight < 0.6 * work.Width * work.Height;
+                bool small = WindowState == WindowState.Normal;   // every window that isn't maximized
                 if (radius <= 8 || !small) { if (roundKey != "") { roundKey = ""; Native.SetWindowRgn(h, IntPtr.Zero, true); DwmOutline(h, false); } return; }
                 Native.RECT wr, fr;
                 if (!Native.GetWindowRect(h, out wr)) return;
@@ -1532,6 +1531,7 @@ namespace OpenDock
             Row(about, info);
             var links = new StackPanel { Orientation = Orientation.Horizontal };
             links.Children.Add(Pill("View on GitHub", () => Launcher.Shell("https://github.com/leemadov/OpenDock")));
+            if (FeedbackWindow.Active) links.Children.Add(Pill("Share Feedback", FeedbackWindow.ShowIt));
             Row(about, links);
 
             body.Children.Add(new Border { Height = 16 });
@@ -1610,7 +1610,8 @@ namespace OpenDock
             var corners = Group(body);
             // small GlassDock windows (Finder, Settings...) get a macOS-sized corner; 8 is Windows 11's own
             AddSlider(corners, "Window corner radius (small windows)", 8, 36, Settings.WindowCorner, v => Settings.WindowCorner = (int)Math.Round(v));
-            Note(body, "Small GlassDock windows use this corner radius, like macOS. 8 is Windows 11's own. Large and maximized windows keep Windows' corners.");
+            AddSwitch(corners, "Round other apps' windows too", Settings.RoundOtherWindows, v => Settings.RoundOtherWindows = v);
+            Note(body, "Windows get this corner radius, like macOS. 8 is Windows 11's own, with its shadow. Rounded windows lose their drop shadow and their edge is not smoothed. Maximized and full-screen windows, and apps running as administrator, are left alone. Turn it off and every window goes back exactly as it was.");
 
             body.Children.Add(Heading("Icons"));
             var icons = Group(body);
