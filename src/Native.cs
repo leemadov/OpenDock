@@ -59,6 +59,8 @@ namespace OpenDock
 
         [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int value, int size);
         [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int value, int size);
+        [DllImport("gdi32.dll")] public static extern IntPtr CreateRoundRectRgn(int l, int t, int r, int b, int w, int h);
+        [DllImport("user32.dll")] public static extern int SetWindowRgn(IntPtr h, IntPtr rgn, bool redraw);
         [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT value, int size);
         [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
         [DllImport("gdi32.dll")] public static extern uint GetPixel(IntPtr dc, int x, int y);
@@ -71,6 +73,15 @@ namespace OpenDock
         [StructLayout(LayoutKind.Sequential)]
         public struct APPBARDATA { public int cbSize; public IntPtr hWnd; public uint uCallbackMessage; public uint uEdge; public RECT rc; public IntPtr lParam; }
         [DllImport("shell32.dll")] public static extern IntPtr SHAppBarMessage(uint msg, ref APPBARDATA data);
+        // The same, without waiting on a shell that has stopped answering (a hung taskbar would otherwise freeze
+        // GlassDock with it): after 1.5 s GlassDock carries on as if the shell had said no.
+        public static IntPtr AppBar(uint msg, ref APPBARDATA d, int timeout = 1500)
+        {
+            var copy = d; IntPtr res = IntPtr.Zero;
+            var t = System.Threading.Tasks.Task.Run(() => { var c = copy; res = SHAppBarMessage(msg, ref c); copy = c; });
+            if (!t.Wait(timeout)) return IntPtr.Zero;
+            d = copy; return res;
+        }
         public const uint ABM_NEW = 0, ABM_REMOVE = 1, ABM_QUERYPOS = 2, ABM_SETPOS = 3, ABM_GETSTATE = 4, ABM_WINDOWPOSCHANGED = 9, ABM_SETSTATE = 10;
         public const uint ABE_LEFT = 0, ABE_TOP = 1, ABE_RIGHT = 2, ABE_BOTTOM = 3;
         public const int ABN_POSCHANGED = 1, ABN_FULLSCREENAPP = 2;

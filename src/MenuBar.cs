@@ -25,6 +25,8 @@ namespace OpenDock
         readonly StackPanel right = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 10, 0) };
         readonly DropShadowEffect glow = new DropShadowEffect { BlurRadius = 6, ShadowDepth = 0, Opacity = 0.35 };
         readonly Grid battery = new Grid { Width = 27, Height = 13, VerticalAlignment = VerticalAlignment.Center };
+        // macOS 27: the charge, as a number inside the battery
+        readonly TextBlock batteryText = new TextBlock { FontSize = 8.5, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, Width = 24, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, -0.5, 0, 0) };
         readonly Rectangle batteryFill = new Rectangle { RadiusX = 1.5, RadiusY = 1.5, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(2.2, 2.2, 0, 2.2) };
         readonly Path bolt = new Path { Data = Geometry.Parse("M7,0 L2,7 L5.5,7 L4,13 L10,5 L6.5,5 Z"), Width = 8, Height = 10, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 3, 0) };
         readonly TextBlock net = new TextBlock { FontFamily = Theme.Glyphs, FontSize = 15, VerticalAlignment = VerticalAlignment.Center };
@@ -71,7 +73,7 @@ namespace OpenDock
             logoMenu.Items.Add(Cmd("Restart…", null, () => { if (Confirm("restart")) Process.Start("shutdown", "/r /t 0"); }));
             logoMenu.Items.Add(Cmd("Shut Down…", null, () => { if (Confirm("shut down")) Process.Start("shutdown", "/s /t 0"); }));
             logoMenu.Items.Add(new Separator());
-            logoMenu.Items.Add(Cmd("Lock Screen", null, LockScreen.Lock));
+            logoMenu.Items.Add(Cmd("Lock Screen", Settings.LockKey ? "Ctrl+Alt+Q" : null, LockScreen.Lock));
             logoMenu.Items.Add(Cmd("Log Out " + Environment.UserName + "…", null, () => { if (Confirm("log out")) Native.ExitWindowsEx(0, 0); }));
             logoMenu.Items.Add(new Separator());
             logoMenu.Items.Add(Cmd("Quit GlassDock", null, App.Quit));
@@ -248,7 +250,11 @@ namespace OpenDock
                 batteryFill.Width = Math.Max(1.5, 19.6 * ps.BatteryLifePercent / 100.0);
                 batteryFill.Fill = ps.BatteryLifePercent <= 15 && ps.ACLineStatus != 1 ? Theme.B("#FF453A") : fg;
                 bolt.Visibility = ps.ACLineStatus == 1 ? Visibility.Visible : Visibility.Collapsed;
-                batteryFill.Opacity = ps.ACLineStatus == 1 ? 0.45 : 1;
+                // the level shows as a soft fill behind the number (the number is what you read, as on macOS 27);
+                // charging, the bolt takes the number's place
+                batteryFill.Opacity = ps.ACLineStatus == 1 ? 0.3 : 0.38;
+                batteryText.Text = ps.BatteryLifePercent.ToString();
+                batteryText.Visibility = ps.ACLineStatus == 1 ? Visibility.Collapsed : Visibility.Visible;
                 batteryButton.ToolTip = ps.BatteryLifePercent + "%" + (ps.ACLineStatus == 1 ? " — charging" : "");
             }
             bool wifi = false, any = false;
@@ -332,7 +338,7 @@ namespace OpenDock
                 mi.Items.Add(Cmd("Close", null, app.Quit));
                 mi.Items.Add(Cmd("Force Close…", null, () =>
                 {
-                    if (MessageBox.Show("Force close " + app.Name + "? Unsaved work in it will be lost.", "GlassDock", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) app.Kill();
+                    if (Sheet.Confirm(null, "Force close " + app.Name + "?", "Unsaved work in it will be lost.", "Force Close")) app.Kill();
                 }));
                 cm.Items.Add(mi);
             }
@@ -369,7 +375,7 @@ namespace OpenDock
 
         static bool Confirm(string what)
         {
-            return MessageBox.Show("Are you sure you want to " + what + " now?", "GlassDock", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
+            return Sheet.Confirm(null, "Are you sure you want to " + what + " now?", "Any apps that are open will be closed.", char.ToUpper(what[0]) + what.Substring(1));
         }
 
         // ---------- builders ----------
@@ -407,7 +413,8 @@ namespace OpenDock
             shell.SetBinding(Border.BorderBrushProperty, new System.Windows.Data.Binding("Foreground") { Source = this });
             var nub = new Rectangle { Width = 1.8, Height = 4.5, RadiusX = 1, RadiusY = 1, HorizontalAlignment = HorizontalAlignment.Right, Opacity = 0.55 };
             nub.SetBinding(Shape.FillProperty, new System.Windows.Data.Binding("Foreground") { Source = this });
-            battery.Children.Add(shell); battery.Children.Add(nub); battery.Children.Add(batteryFill); battery.Children.Add(bolt);
+            batteryText.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding("Foreground") { Source = this });
+            battery.Children.Add(shell); battery.Children.Add(nub); battery.Children.Add(batteryFill); battery.Children.Add(batteryText); battery.Children.Add(bolt);
             return battery;
         }
 

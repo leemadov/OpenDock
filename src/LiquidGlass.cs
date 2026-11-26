@@ -32,10 +32,17 @@ namespace OpenDock
         // a glint runs where the curve leaves the flat top, and the very edge glows (glass seen edge-on).
         // `glint` scales that glint: on a long bar it is a fine line; on a small tile its curved corners squeeze it into
         // two bright spots, so icons go without.
-        public static BitmapSource Lens(byte[] src, int sw, int sh, Rect r, double radius, double height, double amount, bool dispersion, double depth = 0, double saturation = 1.5, double bevel = 0, double glint = 1)
+        public static BitmapSource Lens(byte[] src, int sw, int sh, Rect r, double radius, double height, double amount, bool dispersion, double depth = 0, double saturation = 1.5, double bevel = 0, double glint = 1, double falloff = 0)
+        {
+            return RenderLens(src, sw, sh, r, radius, height, amount, dispersion, depth, saturation, bevel, glint, falloff, true);
+        }
+
+        internal static BitmapSource RenderLens(byte[] src, int sw, int sh, Rect r, double radius, double height, double amount, bool dispersion, double depth, double saturation, double bevel, double glint, double falloff, bool useNative)
         {
             int w = Math.Max(1, (int)Math.Round(r.Width)), h = Math.Max(1, (int)Math.Round(r.Height));
-            var dst = new byte[w * h * 4];
+            var dst = new byte[checked(w * h * 4)];
+            if (useNative && NativeLiquid.Lens(src, dst, sw, sh, w, h, r, radius, height, amount, dispersion, depth, saturation, bevel, glint, falloff))
+                return GlassBitmap(dst, w, h);
             double hx = r.Width / 2, hy = r.Height / 2, cx = r.X + hx, cy = r.Y + hy;
             radius = Math.Max(0, Math.Min(radius, Math.Min(hx, hy)));
             double gradRadius = Math.Min(radius * 1.5, Math.Min(hx, hy));
@@ -56,7 +63,10 @@ namespace OpenDock
                         // Real glass: the curved rim bends light from just *outside* the glass into view, so what's behind
                         // the edge wraps around it (Apple's look). The library's circular profile gives the sharp pull at
                         // the very rim; a gentler x^2 term carries the bend further in, as on Apple's thick glass.
-                        double d = (0.6 * (1 - Math.Sqrt(Math.Max(0, 1 - x * x))) + 0.4 * x * x) * amount;
+                        // `falloff` > 0: a smooth bend instead, strongest at the rim and easing off evenly toward the
+                        // centre (x^falloff) -- the iPhone's round keys, with no sudden ring inside the glass
+                        double d = falloff > 0 ? Math.Pow(x, falloff) * amount
+                            : (0.6 * (1 - Math.Sqrt(Math.Max(0, 1 - x * x))) + 0.4 * x * x) * amount;
                         double gx, gy;
                         GradRoundRect(ux, uy, hx, hy, gradRadius, out gx, out gy);
                         rimX = x; nx = gx; ny = gy;
@@ -93,7 +103,10 @@ namespace OpenDock
                         double add, mul;
                         Bevel(rimX, nx, ny, glint, out add, out mul);
                         add *= bevel; mul = 1 - (1 - mul) * bevel;
-                        b0 = b0 * mul + add; b1 = b1 * mul + add; b2 = b2 * mul + add;
+                        // screen-style: light added in proportion to the room left, so over a bright backdrop the rim
+                        // brightens a little instead of burning out to white
+                        b0 *= mul; b1 *= mul; b2 *= mul;
+                        b0 += add * (1 - Math.Min(255, b0) / 255); b1 += add * (1 - Math.Min(255, b1) / 255); b2 += add * (1 - Math.Min(255, b2) / 255);
                     }
                     dst[o] = Clamp(b0);
                     dst[o + 1] = Clamp(b1);
@@ -101,7 +114,12 @@ namespace OpenDock
                     dst[o + 3] = 255;
                 }
             });
-            var b = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, dst, w * 4);
+            return GlassBitmap(dst, w, h);
+        }
+
+        static BitmapSource GlassBitmap(byte[] pixels, int w, int h)
+        {
+            var b = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, pixels, w * 4);
             b.Freeze();
             return b;
         }
@@ -125,10 +143,10 @@ namespace OpenDock
             // the glint where the curve catches the light, and the second light's softer one
             double k = Math.Max(0, Nx * KeyHalf[0] + Ny * KeyHalf[1] + Nz * KeyHalf[2]);
             double f = Math.Max(0, Nx * FillHalf[0] + Ny * FillHalf[1] + Nz * FillHalf[2]);
-            double spec = (Math.Pow(k, 60) * 0.85 + Math.Pow(f, 40) * 0.35) * glint;
+            double spec = (Math.Pow(k, 60) * 0.7 + Math.Pow(f, 40) * 0.3) * glint;
             // the edge itself, seen edge-on through the glass, glows a little all round
             double fresnel = Math.Pow(s, 6) * 0.22;
-            add = (Math.Max(0, lit) * 0.55 + spec + fresnel) * 255;
+            add = (Math.Max(0, lit) * 0.45 + spec + fresnel) * 255;
             mul = 1 - Math.Max(0, -lit) * 0.45;                                  // the side turned from the light, in shade
         }
 
@@ -184,6 +202,143 @@ namespace OpenDock
 
         // How strong the lens is for a piece of glass `size` DIPs across its short side -- the library's own
         // choices scaled: 12/24 dp on a 48 dp button, 24/24 dp on a 64 dp bar.
+        // The iPhone recipe (tuned against Apple's passcode keys): the bend is strongest at the very rim and eases
+        // off evenly toward the middle (x^Falloff), pulling a little further than before, and the rim band is
+        // smeared slightly. Every Liquid Glass surface uses it, so they all bend the same way.
+        public const double Falloff = 2.5, Pull = 1.35, RimSmear = 1.5;
+
+        // The rim band of a lens picture smeared a little, as liquid glass does: a soft blur that's full at the edge
+        // and fades to nothing `band` pixels in, so the middle stays sharp. `radius` is the shape's corner radius in
+        // pixels (half the height for a capsule or a circle); `blur` is in pixels.
+        public static BitmapSource Smear(BitmapSource lens, double radius, double band, double blur)
+        {
+            return RenderSmear(lens, radius, band, blur, true);
+        }
+
+        internal static BitmapSource RenderSmear(BitmapSource lens, double radius, double band, double blur, bool useNative)
+        {
+            // Only the band at the rim is touched (the middle is left as it is), rows in parallel, each pixel there
+            // averaged over a small square around it -- a few milliseconds even for the Dock's long pane.
+            BitmapSource src = lens.Format == PixelFormats.Bgra32 ? lens : new FormatConvertedBitmap(lens, PixelFormats.Bgra32, null, 0);
+            int w = src.PixelWidth, h = src.PixelHeight, stride = w * 4, rad = Math.Max(1, (int)Math.Round(blur));
+            if (w < 4 || h < 4 || band < 1) return lens;
+            var a = new byte[stride * h]; src.CopyPixels(a, stride, 0);
+            var o = (byte[])a.Clone();
+            double hx = w / 2.0, hy = h / 2.0;
+            radius = Math.Max(0, Math.Min(radius, Math.Min(hx, hy)));
+            if (useNative && NativeLiquid.Smear(a, o, w, h, radius, band, rad))
+                return GlassBitmap(o, w, h);
+            int b0 = (int)Math.Ceiling(band) + 1;
+            System.Threading.Tasks.Parallel.For(0, h, y =>
+            {
+                // a row inside the band's reach from the top or bottom is done whole; any other row only near its ends
+                bool full = y < b0 || y >= h - b0 || y < radius + b0 || y >= h - radius - b0;
+                for (int x = 0; x < w; x++)
+                {
+                    if (!full && x >= b0 && x < w - b0) { x = w - b0 - 1; continue; }
+                    double inside = -SdRoundRect(x + 0.5 - hx, y + 0.5 - hy, hx, hy, radius);
+                    if (inside >= band) continue;
+                    double k = Math.Min(1, 1 - inside / band);
+                    if (k <= 0) continue;
+                    k = k * k * (3 - 2 * k);
+                    int s0 = 0, s1 = 0, s2 = 0, s3 = 0, n = 0;
+                    for (int dy = -rad; dy <= rad; dy++)
+                    {
+                        int yy = Math.Min(h - 1, Math.Max(0, y + dy));
+                        for (int dx = -rad; dx <= rad; dx++)
+                        {
+                            int j = yy * stride + Math.Min(w - 1, Math.Max(0, x + dx)) * 4;
+                            s0 += a[j]; s1 += a[j + 1]; s2 += a[j + 2]; s3 += a[j + 3]; n++;
+                        }
+                    }
+                    int i = y * stride + x * 4;
+                    o[i] = (byte)(a[i] + (s0 / n - a[i]) * k); o[i + 1] = (byte)(a[i + 1] + (s1 / n - a[i + 1]) * k);
+                    o[i + 2] = (byte)(a[i + 2] + (s2 / n - a[i + 2]) * k); o[i + 3] = (byte)(a[i + 3] + (s3 / n - a[i + 3]) * k);
+                }
+            });
+            return GlassBitmap(o, w, h);
+        }
+
+        // Liquid Glass for a card in a window of its own (Spotlight, sheets, Move & Resize, Dock stacks): the screen
+        // around the card right now (x, y, w, h: the card in physical pixels, its window already kept out of screen
+        // capture), bent with the shared recipe. Null when nothing usable could be captured.
+        public static BitmapSource Card(int x, int y, int w, int h, double radiusPx, double dpi)
+        {
+            if (w < 4 || h < 4 || Glass.Lifted) return null;
+            double lh, la; Strength(Math.Min(w, h) / dpi, out lh, out la); lh *= dpi; la *= dpi * Pull;
+            int m = (int)Math.Ceiling(la) + 2;   // the rim pulls the scene from just outside the card into view
+            byte[] px; int pw, ph;
+            if (!Grab(x - m, y - m, w + 2 * m, h + 2 * m, out px, out pw, out ph)) return null;
+            return Lensed(px, pw, ph, new Rect(m, m, w, h), radiusPx, lh, la, dpi);
+        }
+
+        // A screen rectangle as Bgr32 pixels; false if it couldn't be captured or came back black (a failed capture).
+        public static bool Grab(int x, int y, int w, int h, out byte[] px, out int pw, out int ph)
+        {
+            px = null; pw = ph = 0;
+            try
+            {
+                var shot = Icons.CaptureScreen(x, y, w, h);
+                if (shot == null) return false;
+                var conv = new FormatConvertedBitmap(shot, PixelFormats.Bgr32, null, 0);
+                pw = conv.PixelWidth; ph = conv.PixelHeight; px = new byte[pw * ph * 4]; conv.CopyPixels(px, pw * 4, 0);
+                return Glass.BlackShare(px) < 0.6;
+            }
+            catch { return false; }
+        }
+
+        // The shared recipe on a picture already taken: `r` the card within it, `lh` / `la` the bend's band and pull.
+        public static BitmapSource Lensed(byte[] px, int pw, int ph, Rect r, double radiusPx, double lh, double la, double dpi)
+        {
+            return Smear(Lens(px, pw, ph, r, radiusPx, lh, la, false, 0, 1.5, 0, 1, Falloff), radiusPx, lh, RimSmear * dpi);
+        }
+
+        // How bright a (BGR/BGRA) picture is, 0..1, from a sparse sample -- cheap enough to ask every frame.
+        public static double Brightness(byte[] px)
+        {
+            if (px == null || px.Length < 4) return 0.5;
+            double sum = 0; int n = 0;
+            for (int i = 0; i + 2 < px.Length; i += 4 * 37) { sum += 0.0722 * px[i] + 0.7152 * px[i + 1] + 0.2126 * px[i + 2]; n++; }
+            return n == 0 ? 0.5 : sum / n / 255;
+        }
+
+        public static double Brightness(BitmapSource img)
+        {
+            if (img == null) return 0.5;
+            try
+            {
+                var src = img.Format == PixelFormats.Bgra32 || img.Format == PixelFormats.Bgr32 ? img : new FormatConvertedBitmap(img, PixelFormats.Bgra32, null, 0);
+                var px = new byte[src.PixelWidth * src.PixelHeight * 4]; src.CopyPixels(px, src.PixelWidth * 4, 0);
+                return Brightness(px);
+            }
+            catch { return 0.5; }
+        }
+
+        // Readable ink on glass, whatever the theme: over a bright backdrop the text and marks inside `root` turn
+        // dark, over a dark one light (only the ones that use the theme's Fg / FgDim / MenuFg / MenuFgDim). The
+        // change fades over a quarter second, and it only flips well past the middle, so it never flickers.
+        public static void Ink(FrameworkElement root, double brightness)
+        {
+            if (root == null) return;
+            bool? darkInk = brightness > 0.64 ? true : brightness < 0.4 ? (bool?)false : null;
+            object was = root.Tag as string == "ink-dark" ? (object)true : root.Tag as string == "ink-light" ? (object)false : null;
+            bool want = darkInk ?? (was as bool? ?? !Theme.Dark);
+            root.Tag = want ? "ink-dark" : "ink-light";
+            Color fg = want ? Color.FromArgb(0xE6, 0, 0, 0) : Color.FromArgb(0xF2, 0xFF, 0xFF, 0xFF);
+            Color dim = want ? Color.FromArgb(0x8C, 0, 0, 0) : Color.FromArgb(0xA6, 0xFF, 0xFF, 0xFF);
+            foreach (var pair in new[] { Tuple.Create("Fg", fg), Tuple.Create("MenuFg", fg), Tuple.Create("FgDim", dim), Tuple.Create("MenuFgDim", dim) })
+            {
+                var b = root.Resources[pair.Item1] as SolidColorBrush;
+                if (b == null || b.IsFrozen)
+                {
+                    var start = b != null ? b.Color : (Application.Current.TryFindResource(pair.Item1) as SolidColorBrush ?? new SolidColorBrush(pair.Item2)).Color;
+                    b = new SolidColorBrush(start);
+                    root.Resources[pair.Item1] = b;
+                }
+                if (b.Color != pair.Item2) b.BeginAnimation(SolidColorBrush.ColorProperty, new ColorAnimation(pair.Item2, TimeSpan.FromMilliseconds(250)));
+            }
+        }
+
         public static void Strength(double size, out double height, out double amount)
         {
             height = Math.Min(30, size * 0.3);
@@ -460,7 +615,8 @@ namespace OpenDock
         {
             double lh, la;
             Liquid.Strength(Math.Min(r.Width, r.Height), out lh, out la);
-            var lens = Liquid.Lens(px, pw, ph, new Rect(r.X * k, r.Y * k, r.Width * k, r.Height * k), radius * k, lh * LensDepth * k, la * LensPull * k, r.Width * r.Height < 140 * 140, 0, Vibrancy);   // dispersion on the small, round pieces
+            var lens = Liquid.Lens(px, pw, ph, new Rect(r.X * k, r.Y * k, r.Width * k, r.Height * k), radius * k, lh * LensDepth * k, la * LensPull * Liquid.Pull * k, false, 0, Vibrancy, 0, 1, Liquid.Falloff);
+            lens = Liquid.Smear(lens, radius * k, lh * LensDepth * k, Liquid.RimSmear * k);
             return Glass.Slice(lens, new Rect(0, 0, 1, 1), tint);
         }
 

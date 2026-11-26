@@ -75,6 +75,7 @@ namespace OpenDock
         [STAThread]
         static int Main(string[] args)
         {
+            if (args.Contains("--glass-native")) return NativeGlassChecks.Run();
             if(args.Contains("--hang-fixture")) { System.Threading.Thread.Sleep(30000); return 0; }
             if(args.Contains("--output-fixture")) { Console.Write(new string('x',65536)); return 0; }
             if(args.Length>0&&args[0]=="--echo-fixture") { Console.Write(string.Join("|",args.Skip(1))); return 0; }

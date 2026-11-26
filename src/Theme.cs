@@ -133,9 +133,19 @@ namespace OpenDock
     <Setter Property='Template'>
       <Setter.Value>
         <ControlTemplate TargetType='ContextMenu'>
-          <Border Margin='12,6,12,18' Background='{DynamicResource MenuBg}' BorderBrush='{DynamicResource MenuBorder}' BorderThickness='1' CornerRadius='10' Padding='5' MinWidth='210' Effect='{StaticResource MenuShadow}'>
+          <Border x:Name='Bd' Margin='12,6,12,18' Background='{DynamicResource MenuBg}' BorderBrush='{DynamicResource MenuBorder}' BorderThickness='1' CornerRadius='10' Padding='5' MinWidth='210' Effect='{StaticResource MenuShadow}' RenderTransformOrigin='0.5,0'>
+            <Border.RenderTransform><ScaleTransform/></Border.RenderTransform>
             <StackPanel IsItemsHost='True' KeyboardNavigation.DirectionalNavigation='Cycle'/>
           </Border>
+          <ControlTemplate.Triggers>
+            <EventTrigger RoutedEvent='ContextMenu.Opened'>
+              <BeginStoryboard><Storyboard>
+                <DoubleAnimation Storyboard.TargetName='Bd' Storyboard.TargetProperty='Opacity' From='0' To='1' Duration='0:0:0.13'/>
+                <DoubleAnimation Storyboard.TargetName='Bd' Storyboard.TargetProperty='RenderTransform.ScaleX' From='0.94' To='1' Duration='0:0:0.24'><DoubleAnimation.EasingFunction><BackEase EasingMode='EaseOut' Amplitude='0.3'/></DoubleAnimation.EasingFunction></DoubleAnimation>
+                <DoubleAnimation Storyboard.TargetName='Bd' Storyboard.TargetProperty='RenderTransform.ScaleY' From='0.94' To='1' Duration='0:0:0.24'><DoubleAnimation.EasingFunction><BackEase EasingMode='EaseOut' Amplitude='0.3'/></DoubleAnimation.EasingFunction></DoubleAnimation>
+              </Storyboard></BeginStoryboard>
+            </EventTrigger>
+          </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
     </Setter>
@@ -222,9 +232,19 @@ namespace OpenDock
     <Setter Property='Template'>
       <Setter.Value>
         <ControlTemplate TargetType='ToolTip'>
-          <Border Background='{DynamicResource Bubble}' BorderBrush='{DynamicResource MenuBorder}' BorderThickness='1' CornerRadius='6' Padding='8,3' Margin='4'>
+          <Border x:Name='Bd' Background='{DynamicResource Bubble}' BorderBrush='{DynamicResource MenuBorder}' BorderThickness='1' CornerRadius='6' Padding='8,3' Margin='4' RenderTransformOrigin='0.5,1'>
+            <Border.RenderTransform><ScaleTransform/></Border.RenderTransform>
             <ContentPresenter TextBlock.Foreground='{DynamicResource BubbleFg}' TextBlock.FontFamily='{DynamicResource UiFont}' TextBlock.FontSize='12'/>
           </Border>
+          <ControlTemplate.Triggers>
+            <EventTrigger RoutedEvent='ToolTip.Opened'>
+              <BeginStoryboard><Storyboard>
+                <DoubleAnimation Storyboard.TargetName='Bd' Storyboard.TargetProperty='Opacity' From='0' To='1' Duration='0:0:0.12'/>
+                <DoubleAnimation Storyboard.TargetName='Bd' Storyboard.TargetProperty='RenderTransform.ScaleX' From='0.9' To='1' Duration='0:0:0.2'><DoubleAnimation.EasingFunction><CubicEase EasingMode='EaseOut'/></DoubleAnimation.EasingFunction></DoubleAnimation>
+                <DoubleAnimation Storyboard.TargetName='Bd' Storyboard.TargetProperty='RenderTransform.ScaleY' From='0.9' To='1' Duration='0:0:0.2'><DoubleAnimation.EasingFunction><CubicEase EasingMode='EaseOut'/></DoubleAnimation.EasingFunction></DoubleAnimation>
+              </Storyboard></BeginStoryboard>
+            </EventTrigger>
+          </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
     </Setter>

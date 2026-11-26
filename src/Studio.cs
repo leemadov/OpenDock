@@ -20,15 +20,15 @@ namespace OpenDock
                 {
                     var scene=Workspace.Capture(name.Text,Windows.Enumerate());
                     var prior=Workspace.Data.Scenes.FirstOrDefault(s=>string.Equals(s.Name,scene.Name,StringComparison.OrdinalIgnoreCase));
-                    if(prior!=null&&MessageBox.Show(this,"Replace the saved scene “"+scene.Name+"”?","Desktop Scenes",MessageBoxButton.YesNo)!=MessageBoxResult.Yes) return;
+                    if(prior!=null&&!Sheet.Confirm(this,"Replace the saved scene “"+scene.Name+"”?",null,"Replace")) return;
                     Workspace.Data.Scenes.RemoveAll(s=>string.Equals(s.Name,scene.Name,StringComparison.OrdinalIgnoreCase)); Workspace.Data.Scenes.Add(scene); Workspace.Save(); Show("Workspace",false);
                 }
-                catch(Exception ex) { MessageBox.Show(this,ex.Message,"Desktop Scenes"); }
+                catch(Exception ex) { Sheet.Tell(this,"Desktop Scenes",ex.Message); }
             }));
             foreach(var value in Workspace.Data.Scenes.ToList())
             {
                 var scene=value; var row=new WrapPanel(); row.Children.Add(Text(scene.Name+" · "+scene.Windows.Count+" windows",13,"Fg"));
-                row.Children.Add(Pill("Restore",async()=> { await Workspace.Restore(scene); if(IsLoaded) MessageBox.Show(this,Workspace.Status,"Desktop Scenes"); }));
+                row.Children.Add(Pill("Restore",async()=> { await Workspace.Restore(scene); if(IsLoaded) Sheet.Tell(this,"Desktop Scenes",Workspace.Status); }));
                 row.Children.Add(Pill("Remove",()=> { Workspace.Data.Scenes.Remove(scene); Workspace.Save(); Show("Workspace",false); })); Row(scenes,row);
             }
             Note(body,"Scenes reopen available apps and reposition matching windows. Minimized apps are not captured; apps may require you to reopen additional windows. App documents, browser sessions and unsaved content are controlled by each app.");
@@ -90,7 +90,7 @@ namespace OpenDock
             Row(group,Pill("Choose Icon…",()=>
             {
                 var pick=new Microsoft.Win32.OpenFileDialog { Filter="Images|*.png;*.jpg;*.jpeg;*.bmp;*.ico" };
-                if(pick.ShowDialog(this)==true) try { CustomIcons.Set(((KeyValuePair<string,string>)apps.SelectedItem).Value,pick.FileName); } catch(Exception ex) { MessageBox.Show(this,ex.Message,"Dock Icon"); }
+                if(pick.ShowDialog(this)==true) try { CustomIcons.Set(((KeyValuePair<string,string>)apps.SelectedItem).Value,pick.FileName); } catch(Exception ex) { Sheet.Tell(this,"Dock Icon",ex.Message); }
             }));
             Row(group,Pill("Reset Icon",()=>CustomIcons.Reset(((KeyValuePair<string,string>)apps.SelectedItem).Value)));
             Note(body,"Preview changes stay in this panel until you choose Apply Preview. Themes save dock layout, size, spacing, material mode and icon-tile style; custom artwork is managed separately.");

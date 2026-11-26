@@ -48,6 +48,11 @@ namespace OpenDock
                 int round = 2; Native.DwmSetWindowAttribute(h, 33, ref round, 4);
                 int dark = Theme.Dark ? 1 : 0; Native.DwmSetWindowAttribute(h, 20, ref dark, 4);
             };
+            // macOS-sized corners on small windows (Windows 11 gives every window 8 px)
+            SizeChanged += delegate { Round(); };
+            StateChanged += delegate { Round(); };
+            Settings.Changed += Round;
+            Closed += delegate { Settings.Changed -= Round; };
             StateChanged += delegate { ChromeBody.Margin = WindowState == WindowState.Maximized ? new Thickness(7) : new Thickness(0); App.QueueRefresh(); };
             Activated += delegate { Paint(true); };
             Deactivated += delegate { Paint(false); };
@@ -62,6 +67,41 @@ namespace OpenDock
             };
             Closing += (s, e) => { if (!e.Cancel) CloseEffect(false); };
             Closed += delegate { CloseEffect(true); };
+        }
+
+        // A window is "small" when it covers under 60% of the screen's work area; maximized or big ones keep Windows'
+        // own corners. The window is clipped to a rounded region of the chosen radius (Settings > Desktop & Dock).
+        string roundKey = "";
+
+        static void DwmOutline(IntPtr h, bool custom)
+        {
+            int round = custom ? 1 /* DWMWCP_DONOTROUND */ : 2 /* DWMWCP_ROUND */; Native.DwmSetWindowAttribute(h, 33, ref round, 4);
+            int border = custom ? unchecked((int)0xFFFFFFFE) /* DWMWA_COLOR_NONE */ : unchecked((int)0xFFFFFFFF) /* DWMWA_COLOR_DEFAULT */; Native.DwmSetWindowAttribute(h, 34, ref border, 4);
+        }
+        public void Round()
+        {
+            try
+            {
+                var h = new WindowInteropHelper(this).Handle;
+                if (h == IntPtr.Zero) return;
+                int radius = Math.Max(8, Math.Min(40, Settings.WindowCorner));
+                var work = DisplayLayout.ActiveWorkArea;
+                bool small = WindowState == WindowState.Normal && ActualWidth * ActualHeight < 0.6 * work.Width * work.Height;
+                if (radius <= 8 || !small) { if (roundKey != "") { roundKey = ""; Native.SetWindowRgn(h, IntPtr.Zero, true); DwmOutline(h, false); } return; }
+                Native.RECT wr, fr;
+                if (!Native.GetWindowRect(h, out wr)) return;
+                if (Native.DwmGetWindowAttribute(h, 9, out fr, 16) != 0) fr = wr;
+                double k = App.Dpi;
+                int d = (int)Math.Round(2 * radius * k);
+                // only when something changed: setting a region sends the window a resize message of its own
+                string key = (wr.Right - wr.Left) + "x" + (wr.Bottom - wr.Top) + "/" + (fr.Left - wr.Left) + "," + (fr.Top - wr.Top) + "/" + d;
+                if (key == roundKey) return;
+                roundKey = key;
+                DwmOutline(h, true);   // Windows' own 8 px rounding and outline would show as a fringe outside the new curve
+                var rgn = Native.CreateRoundRectRgn(fr.Left - wr.Left, fr.Top - wr.Top, fr.Right - wr.Left + 1, fr.Bottom - wr.Top + 1, d, d);
+                if (Native.SetWindowRgn(h, rgn, true) == 0) { }
+            }
+            catch (Exception ex) { App.Log(ex); }
         }
 
         bool zooming, minimized;
@@ -79,6 +119,8 @@ namespace OpenDock
         // effect; restoring from the Dock plays the Genie backwards.
         IntPtr WindowHook(IntPtr h, int msg, IntPtr w, IntPtr l, ref bool handled)
         {
+            // WPF's window chrome resets the window's region on every move / resize; the corner goes back right after it
+            if (msg == 0x0047 /* WM_WINDOWPOSCHANGED */ || msg == 0x0083 /* WM_NCCALCSIZE */) Dispatcher.BeginInvoke(new Action(Round), System.Windows.Threading.DispatcherPriority.Render);
             if (msg == 0x0112 /* WM_SYSCOMMAND */ && Settings.MinimizeAnimation)
             {
                 int sc = (int)w.ToInt64() & 0xFFF0;
@@ -366,11 +408,12 @@ namespace OpenDock
             Layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(224) });
             Layout.ColumnDefinitions.Add(new ColumnDefinition());
 
-            // sidebar: macOS 26's floating glass pane, inset from the window's edge, with the traffic lights inside it
-            var sideHolder = new Grid { Margin = new Thickness(8, 8, 4, 8) };
-            var sideShadow = new Border { CornerRadius = new CornerRadius(16), Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 16, ShadowDepth = 2, Direction = 270, Opacity = 0.13 } };
+            // sidebar: macOS 27's edge-to-edge glass column -- flush with the window's top, left and bottom edges (the
+            // window's own rounded corners round it), a hairline where the content begins, the traffic lights inside it
+            var sideHolder = new Grid();
+            var sideShadow = new Border { Visibility = Visibility.Collapsed };   // (macOS 26's floating pane cast a shadow; an edge-to-edge one doesn't)
             sideShadow.SetResourceReference(Border.BackgroundProperty, "SidePane");
-            var sideBg = new Border { CornerRadius = new CornerRadius(16), BorderThickness = new Thickness(1) };
+            var sideBg = new Border { BorderThickness = new Thickness(0, 0, 1, 0) };
             sideBg.SetResourceReference(Border.BackgroundProperty, "SidePane");
             sideBg.SetResourceReference(Border.BorderBrushProperty, "SidePaneEdge");
             var sideGrid = new Grid();
@@ -411,7 +454,8 @@ namespace OpenDock
             title.Margin = new Thickness(12, 0, 0, 0);
             title.FontSize = 16; title.VerticalAlignment = VerticalAlignment.Center;
             title.TextTrimming = TextTrimming.CharacterEllipsis;
-            var searchBox = new Border { Width = 200, Height = 36, CornerRadius = new CornerRadius(18), Padding = new Thickness(12, 0, 10, 0), BorderThickness = new Thickness(1), Margin = new Thickness(8, 0, 0, 0) };
+            // search: a round button (macOS 26) that opens into a field when clicked or on Ctrl+F, and closes when empty
+            searchBox = new Border { Width = 36, Height = 36, CornerRadius = new CornerRadius(18), Padding = new Thickness(11, 0, 10, 0), BorderThickness = new Thickness(1), Margin = new Thickness(8, 0, 0, 0), Cursor = Cursors.Hand };
             searchBox.SetResourceReference(Border.BackgroundProperty, "Capsule");
             searchBox.SetResourceReference(Border.BorderBrushProperty, "CapsuleEdge");
             DockPanel.SetDock(searchBox, Dock.Right);
@@ -426,6 +470,11 @@ namespace OpenDock
             Grid.SetColumn(ph, 1); Grid.SetColumn(filter, 1);
             sg.Children.Add(mag); sg.Children.Add(ph); sg.Children.Add(filter);
             searchBox.Child = sg;
+            searchPh = ph;
+            filter.Visibility = Visibility.Collapsed; ph.Visibility = Visibility.Collapsed;
+            searchBox.MouseLeftButtonUp += delegate { OpenSearch(); };
+            filter.LostKeyboardFocus += delegate { if (filter.Text.Length == 0) CloseSearch(); };
+            filter.KeyDown += (s3, e3) => { if (e3.Key == Key.Escape) { filter.Text = ""; CloseSearch(); files.Focus(); e3.Handled = true; } };
             WindowChrome.SetIsHitTestVisibleInChrome(searchBox, true);
             toolbar.Children.Add(searchBox);
             // tags and more
@@ -434,14 +483,24 @@ namespace OpenDock
             Button more = null;
             more = Tool("", () => MoreMenu(more));
             more.ToolTip = "More";
-            var actions = Capsule(tagButton, more); actions.Margin = new Thickness(8, 0, 0, 0);
+            var shareButton = Tool("\uE72D", () => { var sel = Selected(); if (sel.Count == 0 && !Virtual(path)) sel = new List<string> { path }; ShareSheet.Share(new WindowInteropHelper(host ?? this).Handle, sel); });
+            shareButton.ToolTip = "Share";
+            var actions = Capsule(shareButton, tagButton, more); actions.Margin = new Thickness(8, 0, 0, 0);
             DockPanel.SetDock(actions, Dock.Right); toolbar.Children.Add(actions);
             // view switcher: icons / list
             viewButton = Tool("", () => SetView(false, true));
             viewButton.ToolTip = "Icons (Ctrl+1)";
             listButton = Tool("", () => SetView(true, true));
             listButton.ToolTip = "List (Ctrl+2)";
-            var views = Capsule(viewButton, listButton); views.Margin = new Thickness(8, 0, 0, 0);
+            galleryButton = Tool("\uE91B", () => SetGallery(true));
+            galleryButton.ToolTip = "Gallery (Ctrl+4)";
+            var views = Capsule(viewButton, listButton, galleryButton); views.Margin = new Thickness(8, 0, 0, 0);
+            // sort: a capsule with a chevron, as macOS 26's group-by button
+            Button sortButton = null;
+            sortButton = Tool("\uE8CB", () => SortMenu(sortButton));
+            sortButton.ToolTip = "Sort By";
+            var sorts = Capsule(sortButton); sorts.Margin = new Thickness(8, 0, 0, 0);
+            DockPanel.SetDock(sorts, Dock.Right); toolbar.Children.Add(sorts);
             DockPanel.SetDock(views, Dock.Right); toolbar.Children.Add(views);
             toolbar.Children.Add(title);
             main.Children.Add(toolbar);
@@ -465,7 +524,12 @@ namespace OpenDock
             files.ItemContainerStyle = (Style)Application.Current.Resources["Bare"];
             files.SelectionMode = SelectionMode.Extended;
             files.Background = Brushes.Transparent; files.BorderThickness = new Thickness(0); files.Padding = new Thickness(10, 8, 10, 8);
-            SetView(Settings.FinderListView, false);
+            // Gallery: a big preview of the selected item over the strip of files
+            galleryPreview = new Image { Stretch = Stretch.Uniform, Margin = new Thickness(24, 14, 24, 218), Visibility = Visibility.Collapsed, IsHitTestVisible = false };
+            RenderOptions.SetBitmapScalingMode(galleryPreview, BitmapScalingMode.HighQuality);
+            Grid.SetRow(galleryPreview, 2);
+            main.Children.Add(galleryPreview);
+            if (Settings.FinderGallery) SetGallery(false); else SetView(Settings.FinderListView, false);
             files.AllowDrop = true;
             side.AllowDrop = true;
             side.DragOver += (s, e) =>
@@ -495,7 +559,7 @@ namespace OpenDock
             files.MouseRightButtonUp += OnContext;
             files.Drop += OnDrop;
             files.DragOver += (s, e) => { var target=Under(e.OriginalSource); e.Effects = Virtual(path) ? DragDropEffects.None : TransferEffect(e.Data.GetData(DataFormats.FileDrop) as string[],target!=null&&target.IsDir?target.Path:path,e.KeyStates,e.AllowedEffects); e.Handled = true; };
-            files.SelectionChanged += delegate { UpdateStatus(); var q = files.SelectedItem as Entry; if (q != null && q.Path != null) QuickLook.Follow(q.Path); };
+            files.SelectionChanged += delegate { UpdateStatus(); var q = files.SelectedItem as Entry; if (q != null && q.Path != null) QuickLook.Follow(q.Path); if (galleryView) ShowGalleryPreview(); };
             Grid.SetRow(files, 2);
             main.Children.Add(files);
             // the path bar along the bottom: where this folder is, each step clickable
@@ -513,7 +577,9 @@ namespace OpenDock
             {
                 if (e.Key == Key.L && Keyboard.Modifiers == ModifierKeys.Control) { GoToFolder(); e.Handled = true; }
                 else if (address.IsKeyboardFocusWithin) return;
-                else if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control) { filter.Focus(); e.Handled = true; }
+                else if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control) { OpenSearch(); e.Handled = true; }
+                else if (e.Key == Key.OemPeriod && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift)) { ToggleHidden(); e.Handled = true; }   // macOS: Cmd+Shift+.
+                else if (e.Key == Key.C && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Alt)) { var sel = Selected(); Clipboard.SetText(sel.Count > 0 ? string.Join(Environment.NewLine, sel) : path); e.Handled = true; }   // macOS: Cmd+Option+C
                 else if (e.SystemKey == Key.Left || (e.Key == Key.Back && !filter.IsKeyboardFocused)) { Back(); e.Handled = true; }
                 else if (e.SystemKey == Key.Right) { Forward(); e.Handled = true; }
                 else if (e.SystemKey == Key.Up) { Up(); e.Handled = true; }
@@ -521,6 +587,7 @@ namespace OpenDock
                 else if (e.Key == Key.F5) Load();
                 else if (e.Key == Key.D1 && Keyboard.Modifiers == ModifierKeys.Control) { SetView(false, true); e.Handled = true; }
                 else if (e.Key == Key.D2 && Keyboard.Modifiers == ModifierKeys.Control) { SetView(true, true); e.Handled = true; }
+                else if (e.Key == Key.D4 && Keyboard.Modifiers == ModifierKeys.Control) { SetGallery(true); e.Handled = true; }
             };
             reloadSoon = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
             reloadSoon.Tick += delegate { reloadSoon.Stop(); Load(); };
@@ -538,6 +605,9 @@ namespace OpenDock
         {
             var selection = files.SelectedItems.Cast<Entry>().ToList();
             listView = list;
+            if (galleryView) { galleryView = false; galleryPreview.Visibility = Visibility.Collapsed; files.VerticalAlignment = VerticalAlignment.Stretch; files.Height = double.NaN; ScrollViewer.SetVerticalScrollBarVisibility(files, ScrollBarVisibility.Auto); }
+            if (galleryButton != null) galleryButton.Background = Brushes.Transparent;
+            if (save) Settings.FinderGallery = false;
             if (list)
             {
                 var view = new GridView { ColumnHeaderContainerStyle = (Style)Application.Current.Resources["FinderColumn"] };
@@ -579,6 +649,91 @@ namespace OpenDock
             if (save) { Settings.FinderListView = list; Settings.Save(); }
         }
 
+        Border searchBox; TextBlock searchPh;
+        Button galleryButton; Image galleryPreview; bool galleryView;
+
+        // macOS's Gallery view: the selected file large, the folder's files in a strip along the bottom.
+        void SetGallery(bool save)
+        {
+            var selection = files.SelectedItems.Cast<Entry>().ToList();
+            SetView(false, false);
+            galleryView = true;
+            files.ItemsPanel = new ItemsPanelTemplate(new FrameworkElementFactory(typeof(VirtualizingStackPanel)) { });
+            var panel = new FrameworkElementFactory(typeof(VirtualizingStackPanel));
+            panel.SetValue(VirtualizingStackPanel.OrientationProperty, Orientation.Horizontal);
+            files.ItemsPanel = new ItemsPanelTemplate(panel);
+            ScrollViewer.SetHorizontalScrollBarVisibility(files, ScrollBarVisibility.Auto);
+            ScrollViewer.SetVerticalScrollBarVisibility(files, ScrollBarVisibility.Disabled);
+            files.VerticalAlignment = VerticalAlignment.Bottom; files.Height = 206;
+            galleryPreview.Visibility = Visibility.Visible;
+            viewButton.Background = Brushes.Transparent; listButton.Background = Brushes.Transparent;
+            galleryButton.SetResourceReference(Control.BackgroundProperty, "Hover");
+            files.SelectedItems.Clear();
+            foreach (var entry in selection) files.SelectedItems.Add(entry);
+            if (files.SelectedItem == null && files.Items.Count > 0) files.SelectedIndex = 0;
+            if (files.SelectedItem != null) files.ScrollIntoView(files.SelectedItem);
+            ShowGalleryPreview();
+            if (save) { Settings.FinderGallery = true; Settings.Save(); }
+        }
+
+        int previewFor;
+        void ShowGalleryPreview()
+        {
+            var en = files.SelectedItem as Entry;
+            int mine = ++previewFor;
+            if (en == null) { galleryPreview.Source = null; return; }
+            galleryPreview.Source = en.Icon;   // the small picture straight away, the large one when it's ready
+            string ext = en.Path == null ? "" : System.IO.Path.GetExtension(en.Path);
+            bool picture = en.Path != null && !en.IsDir && thumbs.Contains(ext);
+            galleryPreview.MaxWidth = galleryPreview.MaxHeight = picture ? double.PositiveInfinity : 256;   // an icon stays crisp at its own size
+            if (en.Path == null || en.IsDir) return;
+            if (thumbs.Contains(ext)) Icons.Get(en.Path, false, i => { if (mine == previewFor && i != null) galleryPreview.Source = i; }, 768, false);
+        }
+
+        void OpenSearch()
+        {
+            if (searchBox == null) return;
+            filter.Visibility = Visibility.Visible; searchPh.Visibility = filter.Text.Length == 0 ? Visibility.Visible : Visibility.Hidden;
+            searchBox.BeginAnimation(WidthProperty, new System.Windows.Media.Animation.DoubleAnimation(200, TimeSpan.FromMilliseconds(220)) { EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut } });
+            filter.Focus();
+        }
+
+        void CloseSearch()
+        {
+            if (searchBox == null || filter.Text.Length > 0) return;
+            filter.Visibility = Visibility.Collapsed; searchPh.Visibility = Visibility.Collapsed;
+            searchBox.BeginAnimation(WidthProperty, new System.Windows.Media.Animation.DoubleAnimation(36, TimeSpan.FromMilliseconds(200)) { EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut } });
+        }
+
+        static readonly string[] SortNames = { "Name", "Kind", "Date Modified", "Size" };
+
+        void SortMenu(FrameworkElement anchor)
+        {
+            var cm = new ContextMenu { PlacementTarget = anchor, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+            for (int i = 0; i < SortNames.Length; i++)
+            {
+                int which = i;
+                var mi = new MenuItem { Header = SortNames[i], IsCheckable = true, IsChecked = Settings.FinderSort == i };
+                mi.Click += delegate { Settings.FinderSort = which; Settings.Save(); var list = all.ToList(); Sort(list, which); all = list; ApplyFilter(); };
+                cm.Items.Add(mi);
+            }
+            cm.IsOpen = true;
+        }
+
+        // folders first, then by name (as Explorer counts: 2 before 10), kind, newest, or biggest
+        static void Sort(List<Entry> list, int by)
+        {
+            list.Sort((a, b) =>
+            {
+                if (a.IsDir != b.IsDir) return a.IsDir ? -1 : 1;
+                int c = 0;
+                if (by == 1) c = string.Compare(a.Kind, b.Kind, StringComparison.OrdinalIgnoreCase);
+                else if (by == 2) c = b.When.CompareTo(a.When);
+                else if (by == 3) c = b.Bytes.CompareTo(a.Bytes);
+                return c != 0 ? c : StrCmpLogicalW(a.Name, b.Name);
+            });
+        }
+
         Button Tool(string glyph, Action a)
         {
             var b = new Button { Content = new TextBlock { Text = glyph, FontFamily = Theme.Glyphs, FontSize = 14 }, Style = (Style)Application.Current.Resources["Flat"], Width = 32, Height = 28, Margin = new Thickness(0, 0, 2, 0) };
@@ -593,17 +748,19 @@ namespace OpenDock
             Func<Environment.SpecialFolder, string> sf = Environment.GetFolderPath;
             var list = new List<SideEntry>
             {
+                new SideEntry { Name = "Recents", Glyph = "\uE823", Path = RecentsLocation },   // like macOS 26: Recents on top
                 new SideEntry { Name = "Favorites", IsHeader = true },
                 new SideEntry { Name = "Applications", Glyph = "", Path = AppsLocation },
                 new SideEntry { Name = "Desktop", Glyph = "", Path = sf(Environment.SpecialFolder.DesktopDirectory) },
                 new SideEntry { Name = "Documents", Glyph = "", Path = sf(Environment.SpecialFolder.MyDocuments) },
                 new SideEntry { Name = "Downloads", Glyph = "", Path = Launcher.Downloads },
                 new SideEntry { Name = "Pictures", Glyph = "", Path = sf(Environment.SpecialFolder.MyPictures) },
-                new SideEntry { Name = "Music", Glyph = "", Path = sf(Environment.SpecialFolder.MyMusic) },
-                new SideEntry { Name = "Movies", Glyph = "", Path = sf(Environment.SpecialFolder.MyVideos) },
                 new SideEntry { Name = Environment.UserName, Glyph = "", Path = home },
                 new SideEntry { Name = "Locations", IsHeader = true },
             };
+            // OneDrive (macOS's iCloud Drive), when it's set up
+            string oneDrive = Environment.GetEnvironmentVariable("OneDrive");
+            if (!string.IsNullOrEmpty(oneDrive) && Directory.Exists(oneDrive)) list.Add(new SideEntry { Name = "OneDrive", Glyph = "\uE753", Path = oneDrive });
             foreach (var d in DriveInfo.GetDrives().Where(d => d.IsReady))
                 list.Add(new SideEntry { Name = DriveName(d), Glyph = d.DriveType == DriveType.Removable ? "" : "", Path = d.RootDirectory.FullName });
             list.Add(new SideEntry { Name = "Trash", Glyph = "", Path = "trash" });
@@ -676,7 +833,10 @@ namespace OpenDock
             back.IsEnabled = history.Count > 0; forward.IsEnabled = future.Count > 0;
             var sideMatch = ((List<SideEntry>)side.ItemsSource).FirstOrDefault(s => s.Path != null && string.Equals(s.Path.TrimEnd('\\'), path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
             side.SelectedItem = sideMatch;
-            Title = title.Text = Virtual(path) ? LocationName(path) : sideMatch != null ? sideMatch.Name : (new DirectoryInfo(path).Name);
+            string here = Virtual(path) ? LocationName(path) : sideMatch != null ? sideMatch.Name : (new DirectoryInfo(path).Name);
+            string where = LocationKind(path);
+            Title = here;
+            title.Text = where == null ? here : here + " — " + where;   // as on a Mac: "Documents — Local"
             UpdateCrumbs();
             if(host!=null) host.RefreshTabs(); else if(tabs.Count>0) RefreshTabs();
             Watch();
@@ -686,7 +846,9 @@ namespace OpenDock
                 return;
             }
             if (TagOf(path) >= 0) { Fill(TaggedEntries(TagOf(path)), id); return; }
+            if (path == RecentsLocation) { Task.Run(() => RecentEntries()).ContinueWith(t => { if (!t.IsFaulted) Fill(t.Result, id); }, TaskScheduler.FromCurrentSynchronizationContext()); return; }
             string dir = path;
+            bool showHidden = Settings.ShowHiddenFiles; int sort = Settings.FinderSort;
             Task.Run(() =>
             {
                 var list = new List<Entry>();
@@ -694,21 +856,25 @@ namespace OpenDock
                 {
                     foreach (var fi in new DirectoryInfo(dir).EnumerateFileSystemInfos())
                     {
-                        if ((fi.Attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0 || fi.Name.StartsWith(".")) continue;
+                        // hidden files and dot-files only when asked (Ctrl+Shift+.); Windows' own protected files never
+                        bool hiddenFile = (fi.Attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0 || fi.Name.StartsWith(".");
+                        bool protectedFile = (fi.Attributes & FileAttributes.Hidden) != 0 && (fi.Attributes & FileAttributes.System) != 0;
+                        if (protectedFile || (hiddenFile && !showHidden)) continue;
                         bool isDir = (fi.Attributes & FileAttributes.Directory) != 0;
                         var entry = new Entry { Name = fi.Name, Path = fi.FullName, IsDir = isDir,
                             Kind = isDir ? "Folder" : System.IO.Path.GetExtension(fi.Name).TrimStart('.').ToUpperInvariant() + " file" };
-                        try { entry.Modified = fi.LastWriteTime.ToString("g"); if (!isDir) entry.SizeText = Size(((FileInfo)fi).Length); } catch { }
+                        try { entry.When = fi.LastWriteTime; entry.Modified = fi.LastWriteTime.ToString("g"); if (!isDir) { entry.Bytes = ((FileInfo)fi).Length; entry.SizeText = Size(entry.Bytes); } } catch { }
                         list.Add(entry);
                     }
                 }
                 catch (Exception ex) { App.Log(ex.Message); }
-                list.Sort((a, b) => a.IsDir != b.IsDir ? (a.IsDir ? -1 : 1) : StrCmpLogicalW(a.Name, b.Name));
+                Sort(list, sort);
                 return list;
             }).ContinueWith(t => { if(t.IsFaulted) App.Log(t.Exception); else if(!t.IsCanceled) Fill(t.Result, id); }, TaskScheduler.FromCurrentSynchronizationContext());
         }
 
-        static readonly HashSet<string> thumbs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".tif", ".tiff", ".ico", ".mp4", ".mov", ".mkv", ".avi", ".wmv", ".pdf", ".psd", ".svg" };
+        static readonly HashSet<string> thumbs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".tif", ".tiff", ".ico", ".mp4", ".mov", ".mkv", ".avi", ".wmv", ".pdf", ".psd", ".svg",
+            ".docx", ".doc", ".pptx", ".ppt", ".xlsx", ".xls", ".odt", ".rtf", ".3mf", ".stl", ".blend", ".epub", ".xps" };   // their own preview, as macOS shows
         static readonly HashSet<string> ownIcon = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".exe", ".lnk", ".url", ".msc", ".appref-ms", ".cpl", ".scr" };
 
         void Fill(List<Entry> list, int id)
@@ -717,6 +883,8 @@ namespace OpenDock
             if (path != AppsLocation) foreach (var en in list) en.Tag = FolderLook.TagBrush(en.Path);   // the colour tag's dot by the name
             all = list;
             ApplyFilter();
+            // Gallery shows something straight away: the first item, as on a Mac
+            if (galleryView && files.SelectedItem == null && files.Items.Count > 0) Dispatcher.BeginInvoke(new Action(() => { if (galleryView && files.SelectedItem == null && files.Items.Count > 0) files.SelectedIndex = 0; }), System.Windows.Threading.DispatcherPriority.Background);
             foreach (var en in list)
             {
                 var e = en;
@@ -844,7 +1012,7 @@ namespace OpenDock
                         else { if (dir) VB.FileSystem.MoveDirectory(src, dest, VB.UIOption.AllDialogs); else VB.FileSystem.MoveFile(src, dest, VB.UIOption.AllDialogs); }
                     }
                     catch (OperationCanceledException) { break; }   // Cancel stops the whole batch, not just this item
-                    catch (Exception ex) { MessageBox.Show(ex.Message, "Finder"); }
+                    catch (Exception ex) { Sheet.Tell(host ?? this, "Finder", ex.Message); }
                 }
         }
 
@@ -926,9 +1094,12 @@ namespace OpenDock
                 {
                     add("Get Info", () => SHObjectProperties(new WindowInteropHelper(host??this).Handle, 2, en.Path, null), true);
                     add("Show in Explorer", () => Process.Start("explorer.exe", "/select,\"" + en.Path + "\""), true);
+                    add("Share…", () => ShareSheet.Share(new WindowInteropHelper(host ?? this).Handle, Selected()), en.Open == null);
                     add("Copy", CopySelection, en.Open == null);
                     if (en.Open == null) add("Rename…", RenameSelection, files.SelectedItems.Count == 1);
-                    add("Copy Path", () => Clipboard.SetText(en.Path), true);
+                    add("Copy Path", () => Clipboard.SetText(string.Join(Environment.NewLine, Selected().DefaultIfEmpty(en.Path))), true);
+                    if (en.Open == null) add("Open in Terminal", () => OpenTerminal(en.IsDir ? en.Path : System.IO.Path.GetDirectoryName(en.Path)), true);
+                    if (en.Open == null && VsCode() != null) add("Open in VS Code", () => OpenInCode(en.Path), true);
                     if (en.Open == null) { cm.Items.Add(new Separator()); add("Move to Trash", () => Launcher.Recycle(Selected()), true); }
                     if (en.Open == null) { cm.Items.Add(new Separator()); TagMenu(cm); }
                 }
@@ -944,7 +1115,10 @@ namespace OpenDock
                 add("New Folder", NewFolder, true);
                 add("Paste", Paste, Clipboard.ContainsFileDropList());
                 cm.Items.Add(new Separator());
-                add("Open in Explorer", () => Process.Start("explorer.exe", "\"" + path + "\""), true);
+                add("Copy Path", () => Clipboard.SetText(path), true);
+                add("Open in Terminal", () => OpenTerminal(path), true);
+                if (VsCode() != null) add("Open in VS Code", () => OpenInCode(path), true);
+                add("Open in Explorer", () => Process.Start("explorer.exe", "/e,\"" + path + "\""), true);
                 add("Get Info", () => SHObjectProperties(new WindowInteropHelper(host??this).Handle, 2, path, null), true);
             }
             if (cm.Items.Count > 0) cm.IsOpen = true;
@@ -981,30 +1155,13 @@ namespace OpenDock
         {
             var en = files.SelectedItem as Entry;
             if (files.SelectedItems.Count != 1 || en == null || en.Open != null || en.Path == null || path == AppsLocation) return;
-            var dialog = new MacWindow(false) { Title = "Rename", Owner = host??this, Width = 420, Height = 180,
-                ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner };
-            var body = new StackPanel { Margin = new Thickness(20, 12, 20, 16) };
-            body.Children.Add(Text("Rename “" + en.Name + "”", 14, "Fg", FontWeights.SemiBold));
-            var input = new TextBox { Text = en.Name, Margin = new Thickness(0, 12, 0, 14), Padding = new Thickness(6), FontSize = 14 };
-            input.SetResourceReference(Control.BackgroundProperty, "Field"); input.SetResourceReference(Control.ForegroundProperty, "Fg");
-            body.Children.Add(input);
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-            var cancel = new Button { Content = "Cancel", IsCancel = true, MinWidth = 80, Margin = new Thickness(0, 0, 8, 0) };
-            var rename = new Button { Content = "Rename", IsDefault = true, MinWidth = 80 };
-            buttons.Children.Add(cancel); buttons.Children.Add(rename); body.Children.Add(buttons);
-            dialog.Content = body; WindowChrome.SetIsHitTestVisibleInChrome(body, true);
-            rename.Click += delegate
+            int stem = en.IsDir ? en.Name.Length : System.IO.Path.GetFileNameWithoutExtension(en.Name).Length;
+            Sheet.Prompt(host ?? this, "Rename “" + en.Name + "”", en.Name, "Rename", text =>
             {
-                try
-                {
-                    selectAfterLoad = RenamePath(en.Path, input.Text);
-                    reloadSoon.Stop(); Load();
-                    dialog.DialogResult = true;
-                }
-                catch (Exception ex) { MessageBox.Show(dialog, ex.Message, "Rename", MessageBoxButton.OK, MessageBoxImage.Error); input.Focus(); }
-            };
-            dialog.Loaded += delegate { input.Focus(); input.Select(0, en.IsDir ? input.Text.Length : System.IO.Path.GetFileNameWithoutExtension(input.Text).Length); };
-            dialog.ShowDialog();
+                selectAfterLoad = RenamePath(en.Path, text);
+                reloadSoon.Stop(); Load();
+                return null;
+            }, stem);
         }
 
         void NewFolder()
@@ -1012,7 +1169,7 @@ namespace OpenDock
             string name = "untitled folder";
             for (int i = 2; Directory.Exists(System.IO.Path.Combine(path, name))||File.Exists(System.IO.Path.Combine(path,name)); i++) name = "untitled folder " + i;
             try { Directory.CreateDirectory(System.IO.Path.Combine(path, name)); selectAfterLoad = System.IO.Path.Combine(path, name); }
-            catch (Exception ex) { MessageBox.Show(ex.Message, "Finder"); }
+            catch (Exception ex) { Sheet.Tell(host ?? this, "Finder", ex.Message); }
         }
     }
 
@@ -1029,6 +1186,7 @@ namespace OpenDock
         readonly List<StackPanel> sections = new List<StackPanel>();
         readonly ScrollViewer paneHost = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         readonly TextBlock title = Text("", 15, "Fg", FontWeights.Bold);
+        readonly TextBlock subtitle = Text("", 11.5, "FgDim");   // macOS 27: a line under the title, e.g. "Battery Level: 53%"
         readonly List<string> history = new List<string>();
         readonly Button back, forward;
         int at = -1;
@@ -1047,7 +1205,7 @@ namespace OpenDock
                 if(!apply.IsEnabled) return;
                 apply.Stop();
                 try { Settings.Apply(); }
-                catch(Exception ex) { e.Cancel=true; apply.Start(); MessageBox.Show(this,ex.Message,"Couldn't save settings"); }
+                catch(Exception ex) { e.Cancel=true; apply.Start(); Sheet.Tell(this,"Couldn't save settings",ex.Message); }
             };
             Closed+=delegate { apply.Stop(); };
 
@@ -1063,17 +1221,17 @@ namespace OpenDock
                 new[] { C("Keyboard", "\uE765", "#8E8E93", KeyboardPane), C("Mouse", "\uE962", "#8E8E93", MousePane), C("Printers & Scanners", "\uE749", "#8E8E93", Printers) },
             };
             // Panes reached from General, like macOS.
-            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane }, { "Workspace", WorkspacePane }, { "Updates", Updates } };
+            sub = new Dictionary<string, Action<StackPanel>> { { "About", AboutPane }, { "Storage", Storage }, { "Login Items", LoginItems }, { "Date & Time", DateTimePane }, { "Workspace", WorkspacePane }, { "Updates", Updates }, { "Mac Setup", MacSetupPane } };
 
             Layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(250) });
             Layout.ColumnDefinitions.Add(new ColumnDefinition());
 
             // ----- sidebar -----
-            // macOS 26: the sidebar is a floating glass pane, inset from the window's edge (as in the Finder)
-            var sideHolder = new Grid { Margin = new Thickness(8, 8, 4, 8) };
-            var sideShadow = new Border { CornerRadius = new CornerRadius(16), Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 16, ShadowDepth = 2, Direction = 270, Opacity = 0.13 } };
+            // macOS 27: the sidebar runs edge to edge, flush with the window (as in the Finder)
+            var sideHolder = new Grid();
+            var sideShadow = new Border { Visibility = Visibility.Collapsed };   // (macOS 26's floating pane cast a shadow; an edge-to-edge one doesn't)
             sideShadow.SetResourceReference(Border.BackgroundProperty, "SidePane");
-            var side = new Border { CornerRadius = new CornerRadius(16), BorderThickness = new Thickness(1) };
+            var side = new Border { BorderThickness = new Thickness(0, 0, 1, 0) };
             side.SetResourceReference(Border.BackgroundProperty, "SidePane");
             side.SetResourceReference(Border.BorderBrushProperty, "SidePaneEdge");
             var sideGrid = new Grid();
@@ -1151,7 +1309,12 @@ namespace OpenDock
                 Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 10, ShadowDepth = 1, Direction = 270, Opacity = 0.10 } };
             arrowPill.SetResourceReference(Border.BackgroundProperty, "SidePane");
             arrowPill.SetResourceReference(Border.BorderBrushProperty, "SidePaneEdge");
-            head.Children.Add(arrowPill); head.Children.Add(title);
+            // the title, with macOS 27's subtitle line under it where the pane has something to say at a glance
+            var titles = new StackPanel { Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            title.Margin = new Thickness(0);
+            subtitle.Visibility = Visibility.Collapsed; subtitle.Margin = new Thickness(0, -1, 0, 0);
+            titles.Children.Add(title); titles.Children.Add(subtitle);
+            head.Children.Add(arrowPill); head.Children.Add(titles);
             main.Children.Add(head);
             Grid.SetRow(paneHost, 1);
             main.Children.Add(paneHost);
@@ -1204,7 +1367,7 @@ namespace OpenDock
                     Icons.BoxBlur(px, w, h, Math.Max(1, (int)Math.Round(3 * k)), 3);   // frosted enough to read "Search" over the rows passing under it
                     double lh, la;
                     Liquid.Strength(box.ActualHeight, out lh, out la);
-                    var lens = Liquid.Lens(px, w, h, new Rect(m * k, m * k, box.ActualWidth * k, box.ActualHeight * k), box.ActualHeight / 2 * k, lh * k, la * k, false);
+                    var lens = Liquid.Smear(Liquid.Lens(px, w, h, new Rect(m * k, m * k, box.ActualWidth * k, box.ActualHeight * k), box.ActualHeight / 2 * k, lh * k, la * Liquid.Pull * k, false, 0, 1.5, 0, 1, Liquid.Falloff), box.ActualHeight / 2 * k, lh * k, Liquid.RimSmear * k);
                     box.Background = Glass.Slice(lens, new Rect(0, 0, 1, 1), Theme.B(Theme.Dark ? "#24FFFFFF" : "#73FFFFFF"));
                 }
                 catch (Exception ex) { App.Log(ex); }
@@ -1284,6 +1447,34 @@ namespace OpenDock
             return b;
         }
 
+        // The line under a pane's title (macOS 27), or "" for none.
+        static string Subtitle(string pane)
+        {
+            try
+            {
+                if (pane == "Battery")
+                {
+                    Native.SYSTEM_POWER_STATUS ps;
+                    if (!Native.GetSystemPowerStatus(out ps)) return "";
+                    if (ps.BatteryFlag == 128 || ps.BatteryFlag == 255 || ps.BatteryLifePercent > 100) return "Power Adapter";
+                    return "Battery Level: " + ps.BatteryLifePercent + "%" + (ps.ACLineStatus == 1 ? " · Charging" : "");
+                }
+                if (pane == "Wi-Fi" || pane == "Network")
+                {
+                    bool wifi = false, wired = false;
+                    foreach (var n in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                    {
+                        if (n.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+                        if (n.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Wireless80211) wifi = true;
+                        else if (n.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Ethernet || n.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.GigabitEthernet) wired = true;
+                    }
+                    return wifi && wired ? "Connected · Wi-Fi and Ethernet" : wifi ? "Connected · Wi-Fi" : wired ? "Connected · Ethernet" : "Not connected";
+                }
+            }
+            catch { }
+            return "";
+        }
+
         // Opens a pane; record = add it to the back/forward history.
         public void Show(string name, bool record)
         {
@@ -1308,6 +1499,8 @@ namespace OpenDock
             }
             if (refreshSearchGlass != null) refreshSearchGlass();   // the chosen row may be under the glass
             title.Text = current;
+            subtitle.Text = Subtitle(current);
+            subtitle.Visibility = subtitle.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
             Title = current;
             App.QueueRefresh();
             back.IsEnabled = at > 0; back.Opacity = at > 0 ? 1 : 0.35;
@@ -1343,6 +1536,7 @@ namespace OpenDock
 
             body.Children.Add(new Border { Height = 16 });
             var nav = Group(body);
+            NavLink(nav, "Mac Setup", "\uE771", "#0A84FF", "Mac Setup");
             NavLink(nav, "Desktop Scenes & Dock Studio", "\uE713", "#0A84FF", "Workspace");
             NavLink(nav, "Software Update", "\uE777", "#0A84FF", "Updates");
             NavLink(nav, "About", "\uE977", "#8E8E93", "About");
@@ -1399,7 +1593,11 @@ namespace OpenDock
             lg.Children.Add(lgName);
             var lgRight = new StackPanel();
             var lgSlider = new Slider { Minimum = 0, Maximum = 100, Value = Settings.GlassTint };
-            lgSlider.ValueChanged += delegate { Settings.GlassTint = (int)Math.Round(lgSlider.Value); apply.Stop(); apply.Start(); };
+            // macOS 27: a live preview over your wallpaper -- a toolbar's glass buttons, clearer or more tinted as you slide
+            var glassPreview = GlassPreview();
+            lgRight.Children.Add(glassPreview.Item1);
+            glassPreview.Item2(Settings.GlassTint);
+            lgSlider.ValueChanged += delegate { Settings.GlassTint = (int)Math.Round(lgSlider.Value); glassPreview.Item2(Settings.GlassTint); apply.Stop(); apply.Start(); };
             var ends = new DockPanel();
             var tinted = Text("Tinted", 11, "FgDim"); DockPanel.SetDock(tinted, Dock.Right);
             ends.Children.Add(tinted); ends.Children.Add(Text("Clear", 11, "FgDim"));
@@ -1407,6 +1605,12 @@ namespace OpenDock
             Grid.SetColumn(lgRight, 1);
             lg.Children.Add(lgRight);
             Row(look, lg);
+
+            body.Children.Add(Heading("Windows"));
+            var corners = Group(body);
+            // small GlassDock windows (Finder, Settings...) get a macOS-sized corner; 8 is Windows 11's own
+            AddSlider(corners, "Window corner radius (small windows)", 8, 36, Settings.WindowCorner, v => Settings.WindowCorner = (int)Math.Round(v));
+            Note(body, "Small GlassDock windows use this corner radius, like macOS. 8 is Windows 11's own. Large and maximized windows keep Windows' corners.");
 
             body.Children.Add(Heading("Icons"));
             var icons = Group(body);
@@ -1443,7 +1647,11 @@ namespace OpenDock
                 swatches.Opacity = Settings.IconStyle == 1 ? 1 : 0.45;
             };
             paint();
-            AddChoice(icons, "Dock icon style", style, () => { Settings.IconStyle = style.SelectedIndex; paint(); });
+            Tuple<FrameworkElement, Action> styleTiles = null;
+            AddChoice(icons, "Dock icon style", style, () => { Settings.IconStyle = style.SelectedIndex; paint(); if (styleTiles != null) styleTiles.Item2(); });
+            // macOS 27's "Icon & widget style": the choices as pictures you click
+            styleTiles = StyleTiles(style);
+            Row(icons, styleTiles.Item1);
             var tintRow = new DockPanel();
             DockPanel.SetDock(swatches, Dock.Right);
             tintRow.Children.Add(swatches); tintRow.Children.Add(Text("Icon color", 13, "Fg"));
@@ -1482,6 +1690,10 @@ namespace OpenDock
             AddSwitch(dock, "Show Dock on every display", Settings.DockOnAllDisplays, v => Settings.DockOnAllDisplays = v);
             AddChoice(dock, "Menu bar / single Dock display", display, () => Settings.DisplayDevice = display.SelectedIndex == 0 ? "" : screens[display.SelectedIndex - 1].Device);
             AddSwitch(dock, "Live glass (hides windows from screen capture)", Settings.LiveGlass, v => Settings.LiveGlass = v);
+            // GlassDock shows in screenshots, Remote Desktop and the Snipping Tool by itself; this is for other remote-control and sharing apps
+            AddSwitch(dock, "Always show GlassDock in screen sharing and remote control", Settings.ShowInCaptures, v => Settings.ShowInCaptures = v);
+            // Finder as the PC's file manager: folders, drives and Win+E open in Finder (your account only; off undoes it exactly)
+            AddSwitch(dock, "Open folders in Finder instead of File Explorer (and Win+E)", FinderDefault.IsOn, v => { try { FinderDefault.Set(v); } catch (Exception ex) { App.Log(ex); } }, false);
             AddSlider(dock, "Size", 36, 96, Settings.IconSize, v => Settings.IconSize = (int)v);
             AddSlider(dock, "Spacing between apps", 0, 16, Settings.DockSpacing, v => Settings.DockSpacing = (int)Math.Round(v));
             AddSwitch(dock, "Magnification", Settings.Magnify, v => Settings.Magnify = v);
@@ -1643,6 +1855,99 @@ namespace OpenDock
             DockPanel.SetDock(v, Dock.Right);
             d.Children.Add(v); d.Children.Add(Text(label, 13, "Fg"));
             Row(p, d);
+        }
+
+        // The Liquid Glass slider's preview: your wallpaper with a toolbar's glass buttons on it. Returns the card and a
+        // way to show a slider value (0 = clear, 100 = tinted).
+        static Tuple<FrameworkElement, Action<int>> GlassPreview()
+        {
+            var card = new Border { Height = 118, CornerRadius = new CornerRadius(14), Margin = new Thickness(0, 0, 0, 8), ClipToBounds = true };
+            try
+            {
+                string wall = Sys.WallpaperPath();
+                if (!string.IsNullOrEmpty(wall) && File.Exists(wall))
+                {
+                    var bi = new BitmapImage(); bi.BeginInit(); bi.UriSource = new Uri(wall); bi.DecodePixelWidth = 640; bi.CacheOption = BitmapCacheOption.OnLoad; bi.EndInit(); bi.Freeze();
+                    card.Background = new ImageBrush(bi) { Stretch = Stretch.UniformToFill };
+                }
+            }
+            catch { }
+            if (card.Background == null) card.Background = new LinearGradientBrush(Color.FromRgb(0x7A, 0x9C, 0xD8), Color.FromRgb(0xE8, 0xB4, 0x9A), 30);
+            var bar = new DockPanel { VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(12, 12, 12, 0), LastChildFill = false };
+            var glass = new List<Border>();
+            Func<FrameworkElement, double, Border> pill = (child, w) =>
+            {
+                var b = new Border { Height = 30, MinWidth = w, CornerRadius = new CornerRadius(15), BorderThickness = new Thickness(1), Child = child, Margin = new Thickness(0, 0, 8, 0),
+                    Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 10, ShadowDepth = 1, Direction = 270, Opacity = 0.18 } };
+                glass.Add(b); return b;
+            };
+            Func<string, TextBlock> glyph = g => new TextBlock { Text = g, FontFamily = Theme.Glyphs, FontSize = 12, Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            var nav = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(10, 0, 10, 0) };
+            nav.Children.Add(glyph("\uE72B")); nav.Children.Add(new Border { Width = 14 }); nav.Children.Add(glyph("\uE72A"));
+            bar.Children.Add(pill(nav, 0));
+            bar.Children.Add(pill(glyph("\uE712"), 30));
+            var search = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(10, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center };
+            search.Children.Add(glyph("\uE721")); search.Children.Add(new TextBlock { Text = "Search", FontSize = 11.5, Foreground = Brushes.White, Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+            var sp = pill(search, 0); sp.Margin = new Thickness(0); DockPanel.SetDock(sp, Dock.Right);
+            bar.Children.Add(sp);
+            card.Child = bar;
+            Action<int> show = v =>
+            {
+                // clear: a whisper of white and a bright rim; tinted: a frosted, fuller fill
+                byte fill = (byte)(18 + v * 1.6), rim = (byte)(150 - v * 0.6);
+                byte c = Theme.Dark ? (byte)40 : (byte)250;
+                foreach (var b in glass)
+                {
+                    b.Background = new SolidColorBrush(Color.FromArgb(fill, c, c, (byte)(c + 2 > 255 ? 255 : c + 2)));
+                    b.BorderBrush = new LinearGradientBrush(Color.FromArgb(rim, 255, 255, 255), Color.FromArgb((byte)(rim / 3), 255, 255, 255), 90);
+                    foreach (var t in FindText(b)) t.Foreground = v > 55 && !Theme.Dark ? new SolidColorBrush(Color.FromRgb(0x1D, 0x1D, 0x1F)) : Brushes.White;
+                }
+            };
+            return Tuple.Create((FrameworkElement)card, show);
+        }
+
+        static IEnumerable<TextBlock> FindText(DependencyObject d)
+        {
+            var t = d as TextBlock; if (t != null) yield return t;
+            var b = d as Border; if (b != null && b.Child != null) foreach (var x in FindText(b.Child)) yield return x;
+            var p = d as Panel; if (p != null) foreach (UIElement c in p.Children) foreach (var x in FindText(c)) yield return x;
+        }
+
+        // The icon styles as little pictures of an icon (GlassDock's own drawing): Default (full colour), Tinted (one
+        // colour), Clear (frosted glass) and Liquid Glass (glass with colour). Clicking one picks it in `choice`.
+        // Returns the row and a way to redraw the selection ring.
+        static Tuple<FrameworkElement, Action> StyleTiles(ComboBox choice)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 4, 0, 4) };
+            string[] names = { "Default", "Tinted", "Clear", "Liquid Glass" };
+            var rings = new List<Border>();
+            for (int i = 0; i < 4; i++)
+            {
+                int which = i;
+                var tile = new Border { Width = 44, Height = 44, CornerRadius = new CornerRadius(11), BorderThickness = new Thickness(1) };
+                var mark = new TextBlock { Text = "\uE734", FontFamily = Theme.Glyphs, FontSize = 20, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                switch (i)
+                {
+                    case 0: tile.Background = new LinearGradientBrush(Color.FromRgb(0xFF, 0x9F, 0x0A), Color.FromRgb(0xFF, 0x37, 0x5F), 90); tile.BorderBrush = Brushes.Transparent; mark.Foreground = Brushes.White; break;
+                    case 1: tile.Background = new SolidColorBrush(Color.FromRgb(0x2C, 0x2C, 0x2E)); tile.BorderBrush = Brushes.Transparent; mark.SetResourceReference(TextBlock.ForegroundProperty, "Accent"); break;
+                    case 2: tile.Background = new LinearGradientBrush(Color.FromArgb(150, 255, 255, 255), Color.FromArgb(70, 255, 255, 255), 90); tile.BorderBrush = new SolidColorBrush(Color.FromArgb(200, 255, 255, 255)); mark.Foreground = Brushes.White; break;
+                    default: tile.Background = new LinearGradientBrush(Color.FromArgb(120, 255, 255, 255), Color.FromArgb(50, 255, 255, 255), 90); tile.BorderBrush = new SolidColorBrush(Color.FromArgb(200, 255, 255, 255)); mark.Foreground = new LinearGradientBrush(Color.FromRgb(0xFF, 0x9F, 0x0A), Color.FromRgb(0xFF, 0x37, 0x5F), 90); break;
+                }
+                tile.Child = mark;
+                // each tile sits on a little patch of sky, so the clear ones read as glass
+                var stage = new Border { Width = 52, Height = 52, CornerRadius = new CornerRadius(14), Padding = new Thickness(4), Child = tile,
+                    Background = new LinearGradientBrush(Color.FromRgb(0x6F, 0x8F, 0xC8), Color.FromRgb(0xA9, 0x8F, 0xC6), 45) };
+                var ring = new Border { CornerRadius = new CornerRadius(16), BorderThickness = new Thickness(2.5), Padding = new Thickness(2), Child = stage };
+                rings.Add(ring);
+                var label = Text(names[i], 11, "FgDim"); label.HorizontalAlignment = HorizontalAlignment.Center; label.Margin = new Thickness(0, 3, 0, 0);
+                var cell = new StackPanel { Margin = new Thickness(6, 0, 0, 0), Cursor = Cursors.Hand };
+                cell.Children.Add(ring); cell.Children.Add(label);
+                cell.MouseLeftButtonUp += delegate { choice.SelectedIndex = which; };
+                row.Children.Add(cell);
+            }
+            Action ringOn = () => { for (int i = 0; i < rings.Count; i++) { if (i == choice.SelectedIndex) rings[i].SetResourceReference(Border.BorderBrushProperty, "Accent"); else rings[i].BorderBrush = Brushes.Transparent; } };
+            ringOn();
+            return Tuple.Create((FrameworkElement)row, ringOn);
         }
 
         void AddChoice(Panel p, string label, ComboBox choice, Action set)

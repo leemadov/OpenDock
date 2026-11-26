@@ -66,7 +66,7 @@ namespace OpenDock
                 else if(Clipboard.ContainsText()) Shelf.Add("text",Clipboard.GetText());
                 Open();
             }
-            catch(Exception ex) { MessageBox.Show(ex.Message,"Shelf"); }
+            catch(Exception ex) { Sheet.Tell(null,"Shelf",ex.Message); }
         }
         ShelfWindow()
         {
@@ -75,7 +75,7 @@ namespace OpenDock
             var title=new TextBlock { Text="Shelf",Margin=new Thickness(110,0,0,0),VerticalAlignment=VerticalAlignment.Center,FontSize=16 }; title.SetResourceReference(ForegroundProperty,"Fg"); head.Children.Add(title);
             DockPanel.SetDock(head,Dock.Top); root.Children.Add(head);
             var buttons=new WrapPanel { Margin=new Thickness(12,4,12,4) };
-            Func<string,Action,Button> add=(name,action)=> { var b=new Button { Content=name,Margin=new Thickness(3),Padding=new Thickness(10,5,10,5) }; b.SetResourceReference(FrameworkElement.StyleProperty,"Flat"); b.SetResourceReference(Control.ForegroundProperty,"Fg"); b.Click+=delegate { try { action(); } catch(Exception ex) { MessageBox.Show(ex.Message,"Shelf"); } }; buttons.Children.Add(b); return b; };
+            Func<string,Action,Button> add=(name,action)=> { var b=new Button { Content=name,Margin=new Thickness(3),Padding=new Thickness(10,5,10,5) }; b.SetResourceReference(FrameworkElement.StyleProperty,"Flat"); b.SetResourceReference(Control.ForegroundProperty,"Fg"); b.Click+=delegate { try { action(); } catch(Exception ex) { Sheet.Tell(null,"Shelf",ex.Message); } }; buttons.Children.Add(b); return b; };
             add("Add Clipboard",AddClipboard);
             var copy=add("Copy Selected",()=> { var payload=Shelf.Payload(list.SelectedItems.Cast<ShelfEntry>().ToArray()); if(payload.GetFormats().Length>0) Clipboard.SetDataObject(payload,true); });
             var openSelected=add("Open",()=> { foreach(var e in list.SelectedItems.Cast<ShelfEntry>()) { if(e.Kind=="file") Launcher.Open(e.Value); else { Uri uri; if(Uri.TryCreate(e.Value,UriKind.Absolute,out uri)&&(uri.Scheme=="https"||uri.Scheme=="http")) Launcher.Shell(uri.AbsoluteUri); } } });
@@ -85,7 +85,7 @@ namespace OpenDock
             DockPanel.SetDock(buttons,Dock.Top); root.Children.Add(buttons);
             var tip=new TextBlock { Text="Drop files or text here. Drag selected items into another app. Removing an item keeps its original file.",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(16,4,16,8) }; tip.SetResourceReference(ForegroundProperty,"FgDim"); DockPanel.SetDock(tip,Dock.Bottom); root.Children.Add(tip);
             list.SetResourceReference(BackgroundProperty,"Field"); list.SetResourceReference(ForegroundProperty,"Fg"); root.Children.Add(list); Layout.Children.Add(root);
-            AllowDrop=true; Drop+=(s,e)=> { try { if(e.Data.GetDataPresent(DataFormats.FileDrop)) foreach(string path in (string[])e.Data.GetData(DataFormats.FileDrop)) Shelf.Add("file",path); else if(e.Data.GetDataPresent(DataFormats.UnicodeText)) Shelf.Add("text",(string)e.Data.GetData(DataFormats.UnicodeText)); } catch(Exception ex) { MessageBox.Show(this,ex.Message,"Shelf"); } e.Handled=true; };
+            AllowDrop=true; Drop+=(s,e)=> { try { if(e.Data.GetDataPresent(DataFormats.FileDrop)) foreach(string path in (string[])e.Data.GetData(DataFormats.FileDrop)) Shelf.Add("file",path); else if(e.Data.GetDataPresent(DataFormats.UnicodeText)) Shelf.Add("text",(string)e.Data.GetData(DataFormats.UnicodeText)); } catch(Exception ex) { Sheet.Tell(this,"Shelf",ex.Message); } e.Handled=true; };
             Point? press=null;
             list.PreviewMouseLeftButtonDown+=(s,e)=>press=e.GetPosition(list);
             list.PreviewMouseMove+=(s,e)=> { if(press==null||e.LeftButton!=MouseButtonState.Pressed||(e.GetPosition(list)-press.Value).Length<8) return; press=null; var selected=list.SelectedItems.Cast<ShelfEntry>().ToArray(); if(selected.Length>0) DragDrop.DoDragDrop(list,Shelf.Payload(selected),DragDropEffects.Copy); };

@@ -194,6 +194,7 @@ namespace OpenDock
             card.MouseLeftButtonDown += (s, e) => Drag(e);
             card.MouseRightButtonUp += (s, e) => { e.Handled = true; Menu(); };
             LocationChanged += delegate { Paint(); };
+            Loaded += delegate { Motion.Appear(card, new Point(0.5, 0.5), 0.92); };
             Closed += delegate { if (noteSave != null && noteSave.IsEnabled) { noteSave.Stop(); SaveNote(); } };
         }
 
@@ -277,15 +278,53 @@ namespace OpenDock
         // ---------- look ----------
 
         // Frosted from the wallpaper right behind it (no screen capture needed: it sits on the wallpaper).
+        // Liquid Glass over the wallpaper itself (widgets sit on the desktop): the sharp wallpaper under the widget,
+        // bent at the rim with the shared recipe, under the tint. Null without a wallpaper picture.
+        bool brightBehind;
+
+        static double WallpaperBrightness(Rect at)
+        {
+            if (Wallpaper.Flat == null || Wallpaper.FlatW < 2) return 0.5;
+            double k = Wallpaper.FlatW / Math.Max(1, SystemParameters.PrimaryScreenWidth), sum = 0; int n = 0;
+            for (int j = 0; j < 8; j++)
+                for (int i = 0; i < 8; i++)
+                {
+                    int x = (int)((at.X + at.Width * (i + 0.5) / 8) * k), y = (int)((at.Y + at.Height * (j + 0.5) / 8) * k);
+                    if (x < 0 || y < 0 || x >= Wallpaper.FlatW || y >= Wallpaper.FlatH) continue;
+                    int o = (y * Wallpaper.FlatW + x) * 4;
+                    sum += (0.0722 * Wallpaper.Flat[o] + 0.7152 * Wallpaper.Flat[o + 1] + 0.2126 * Wallpaper.Flat[o + 2]) / 255; n++;
+                }
+            return n == 0 ? 0.5 : sum / n;
+        }
+
+        static Brush WallpaperGlass(Rect at, Brush tint)
+        {
+            try
+            {
+                if (Wallpaper.Flat == null || Wallpaper.FlatW < 2) return null;
+                double k = Wallpaper.FlatW / Math.Max(1, SystemParameters.PrimaryScreenWidth);   // wallpaper pixels per DIP
+                var r = new Rect(at.X * k, at.Y * k, at.Width * k, at.Height * k);
+                if (r.Right <= 0 || r.Bottom <= 0 || r.Left >= Wallpaper.FlatW || r.Top >= Wallpaper.FlatH) return null;
+                double lh, la; Liquid.Strength(Math.Min(at.Width, at.Height), out lh, out la);
+                var lens = Liquid.Lensed(Wallpaper.Flat, Wallpaper.FlatW, Wallpaper.FlatH, r, 22 * k, lh * k, la * k * Liquid.Pull, k);
+                return Glass.Slice(lens, new Rect(0, 0, 1, 1), tint);
+            }
+            catch (Exception ex) { App.Log(ex); return null; }
+        }
+
         public void Paint()
         {
             bool dark = Theme.Dark;
             var at = new Rect(Left + Pad, Top + Pad, Math.Max(1, Width - 2 * Pad), Math.Max(1, Height - 2 * Pad));
             // One color everywhere: the glass takes the icon colour, like Tinted widgets on macOS.
             var a = IconLook.Accent;
-            card.Background = Glass.WallpaperPane(IconLook.OneColor
+            var tint = IconLook.OneColor
                 ? Theme.Tint(string.Format("#{0:X2}{1:X2}{2:X2}{3:X2}", dark ? 0xA6 : 0x99, (int)(a.R * (dark ? 0.55 : 0.92)), (int)(a.G * (dark ? 0.55 : 0.92)), (int)(a.B * (dark ? 0.55 : 0.92))))
-                : Theme.Tint(dark ? "#8C1C1C1E" : "#8CF5F5F7"), at);
+                : Theme.Tint(dark ? "#801C1C1E" : "#73F5F5F7");
+            card.Background = WallpaperGlass(at, tint) ?? Glass.WallpaperPane(tint, at);
+            // a bright patch of wallpaper behind a light-text widget: its text turns dark (and back), so it reads
+            bool bright = WallpaperBrightness(at) > (brightBehind ? 0.58 : 0.68);
+            if (bright != brightBehind) { brightBehind = bright; Build(); }
             sheen.Background = new LinearGradientBrush(new GradientStopCollection { new GradientStop(Color.FromArgb(dark ? (byte)0x26 : (byte)0x66, 255, 255, 255), 0),
                 new GradientStop(Color.FromArgb(0x08, 255, 255, 255), 0.45), new GradientStop(Color.FromArgb(0, 255, 255, 255), 1) }, new Point(0, 0), new Point(0, 1));
             card.BorderBrush = new LinearGradientBrush(new GradientStopCollection {
@@ -295,8 +334,9 @@ namespace OpenDock
 
         public void Build()
         {
-            fg = Theme.Dark || IconLook.OneColor ? Brushes.White : Theme.B("#E6000000");
-            dim = Theme.Dark || IconLook.OneColor ? Theme.B("#B3FFFFFF") : Theme.B("#8C000000");
+            bool lightInk = (Theme.Dark || IconLook.OneColor) && !brightBehind;   // white text, unless the wallpaper behind is bright
+            fg = lightInk ? Brushes.White : Theme.B("#E6000000");
+            dim = lightInk ? Theme.B("#B3FFFFFF") : Theme.B("#8C000000");
             body.Children.Clear();
             hourHand = minuteHand = secondHand = null;
             FrameworkElement c;

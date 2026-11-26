@@ -52,6 +52,8 @@ namespace OpenDock
             Set(20, Settings.ScreenshotKeys, Ctrl | Shift, 0x35, Screenshots.Toolbar);
             // the windows you've been jumping between, laid out with the wallpaper showing round them
             Set(21, Settings.RecentArrangeKey, Ctrl | Alt, 0x52 /* R */, RecentArrange.Arrange);
+            // Lock Screen: Ctrl+Cmd+Q on a Mac. (Win+L belongs to Windows: it always opens Windows' own lock screen.)
+            Set(22, Settings.LockKey, Ctrl | Alt, 0x51 /* Q */, LockScreen.Lock);
         }
     }
 

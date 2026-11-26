@@ -27,6 +27,8 @@ namespace OpenDock
         public string Modified { get; set; }
         public string Path;
         public bool IsDir;
+        public DateTime When;   // Finder sorting: date modified
+        public long Bytes;      // and size
         public Action Open;
         ImageSource icon;
         public ImageSource Icon { get { return icon; } set { icon = value; if (PropertyChanged != null) PropertyChanged(this, new PropertyChangedEventArgs("Icon")); } }
@@ -83,7 +85,7 @@ namespace OpenDock
             var stack = new StackPanel();
             stack.Children.Add(row); stack.Children.Add(divider); stack.Children.Add(list);
             var tintLayer = new Border { CornerRadius = new CornerRadius(16), BorderThickness = new Thickness(1), Child = stack };
-            tintLayer.SetResourceReference(Border.BackgroundProperty, "Glass");
+            tintLayer.SetResourceReference(Border.BackgroundProperty, "MenuGlass");   // light enough for the bent glass to show
             tintLayer.SetResourceReference(Border.BorderBrushProperty, "MenuBorder");
             panel = new Border
             {
@@ -92,22 +94,51 @@ namespace OpenDock
                 RenderTransform = zoom, RenderTransformOrigin = new Point(0.5, 0.3)
             };
             Content = panel;
+            panel.SizeChanged += delegate { Bend(); };
             Deactivated += delegate { Close2(false); };
             SourceInitialized += delegate { Native.MakeToolWindow(new WindowInteropHelper(this).Handle, false); };
         }
 
+        byte[] glassPx; int glassW, glassH, glassMargin; double glassBand, glassPull, bentHeight;
+
+        // The panel's glass for its current height.
+        void Bend()
+        {
+            if (glassPx == null || panel == null) return;
+            double h = Math.Max(40, panel.ActualHeight > 0 ? panel.ActualHeight : 64), d = App.Dpi;
+            if (Math.Abs(h - bentHeight) < 1) return;
+            bentHeight = h;
+            try
+            {
+                var r = new Rect(glassMargin, glassMargin, PanelW * d, Math.Min(h * d, glassH - 2 * glassMargin));
+                backdrop.ImageSource = Liquid.Lensed(glassPx, glassW, glassH, r, 16 * d, glassBand, glassPull, d);
+                backdrop.Viewport = new Rect(0, 0, PanelW, h);
+            }
+            catch (Exception ex) { App.Log(ex); }
+        }
+
         public void Open()
         {
+            bentHeight = 0;
             Workspace.CommandWindow=Native.GetForegroundWindow();
             closing = false;
             var bounds = DisplayLayout.ActiveBounds;
             var at = DisplayLayout.Clamp(new Point(bounds.Left + (bounds.Width - Width) / 2, bounds.Top + bounds.Height * 0.2 - Pad), new Size(Width, MaxH + Pad * 2), bounds);
             Left = at.X; Top = at.Y;
-            // Frosted glass: blur what's behind the panel right now.
+            // Liquid Glass: what's behind the panel right now (taken once, around its biggest size), bent at the rim;
+            // bent again whenever the panel grows or shrinks with the results, so the rim stays at its edge
             int px = (int)Math.Round((Left + Pad) * App.Dpi), py = (int)Math.Round((Top + Pad) * App.Dpi);
-            var shot = Icons.CaptureScreen(px, py, (int)Math.Round(PanelW * App.Dpi), (int)Math.Round(MaxH * App.Dpi));
-            backdrop.ImageSource = Icons.Blur(shot, (int)(PanelW / 3), (int)(MaxH / 3), 8);
-            backdrop.Viewport = new Rect(0, 0, PanelW, MaxH);
+            double d0 = App.Dpi, lh0, la0;
+            Liquid.Strength(64, out lh0, out la0);   // the search bar's height sets the bend
+            glassBand = lh0 * d0; glassPull = la0 * d0 * Liquid.Pull; glassMargin = (int)Math.Ceiling(glassPull) + 2;
+            if (!Liquid.Grab(px - glassMargin, py - glassMargin, (int)Math.Round(PanelW * d0) + 2 * glassMargin, (int)Math.Round(MaxH * d0) + 2 * glassMargin, out glassPx, out glassW, out glassH))
+            {
+                glassPx = null;
+                var shot = Icons.CaptureScreen(px, py, (int)Math.Round(PanelW * App.Dpi), (int)Math.Round(MaxH * App.Dpi));
+                backdrop.ImageSource = Icons.Blur(shot, (int)(PanelW / 3), (int)(MaxH / 3), 8);
+                backdrop.Viewport = new Rect(0, 0, PanelW, MaxH);
+            }
+            else { Bend(); Liquid.Ink(panel, Liquid.Brightness(glassPx)); }
             box.Text = "";
             Apps.Refresh();
             panel.Opacity = 0;

@@ -21,12 +21,20 @@ namespace OpenDock
         public static int DockPosition = 0;      // 0 = bottom, 1 = left, 2 = right
         public static bool DockOnAllDisplays = true;
         public static string DisplayDevice = ""; // empty = follow primary, otherwise Windows' display device name
+        public static bool FinderDefault = false;    // Finder opens folders and drives, and Win+E, instead of File Explorer
+        public static bool ShowHiddenFiles = false;  // Finder shows hidden files and dot-files (Ctrl+Shift+.)
+        public static int FinderSort = 0;            // Finder's sort: 0 name, 1 kind, 2 date modified, 3 size
+        public static bool ShowInCaptures = false;  // GlassDock always shows in screenshots and screen sharing (else only while one is taken)
         public static bool LiveGlass = true;     // original live blur; excluded from screen capture to avoid feedback
         public static bool FinderListView = false;
+        public static int WindowCorner = 20;          // corner radius (px) of GlassDock's own small windows; 8 = Windows 11's own
+        public static bool FinderGallery = false;     // Finder's Gallery view (a big preview over a strip)
         public static int IconRevision = 0;
         public static bool IncludePreviewUpdates = true;
         public static bool UpdateBanner = true;    // a notification when GlassDock finds a newer release on GitHub
         public static string UpdateNotified = "";  // the release it last told you about (each is announced once)
+        public static bool SetupDone = false;      // Mac Setup has been applied
+        public static bool SetupOffered = false;   // the one-time "Make Windows feel like a Mac" notification was shown
         public static int IconSize = 60;          // dock slot size (DIP)
         public static int MagnifySize = 100;
         public static bool Magnify = true;
@@ -55,7 +63,9 @@ namespace OpenDock
         public static bool StageManager = false;   // Stage Manager: the app you're using in the middle, recent apps in a strip
         public static bool TrafficLights = true;   // Mac traffic lights over every app window's own buttons
         public static bool ScreenshotKeys = true;  // Ctrl+Shift+3 / 4 / 5: Mac-style screenshots to the Desktop
-        public static bool CustomLockScreen = true;  // OpenDock's Mac-style lock screen, unlocked with Windows Hello
+        public static string LockPasscode = "";    // the lock screen's passcode, hashed (see Passcode); empty = none
+        public static bool CustomLockScreen = true;
+        public static bool LockKey = true;          // Ctrl+Alt+Q opens GlassDock's lock screen (macOS: Ctrl+Cmd+Q)  // OpenDock's Mac-style lock screen, unlocked with Windows Hello
         public static bool AppSwitcher = true;     // Alt+Tab shows OpenDock's app switcher instead of Windows'
         public static int CornerTopLeft = 0, CornerTopRight = 0, CornerBottomLeft = 0, CornerBottomRight = 0;   // Hot Corners (HotCorners.Actions)
         public static bool Banners = true;         // app notifications also appear as OpenDock banners at the top right
@@ -233,15 +243,15 @@ namespace OpenDock
             {
                 thickness = px;
                 var d = Data();
-                if (!registered) { registered = Native.SHAppBarMessage(Native.ABM_NEW, ref d) != IntPtr.Zero; }
+                if (!registered) { registered = Native.AppBar(Native.ABM_NEW, ref d) != IntPtr.Zero; }
                 if (!registered) { App.Log("Appbar registration failed"); return; }
                 d.rc = bounds();
-                Native.SHAppBarMessage(Native.ABM_QUERYPOS, ref d);
+                Native.AppBar(Native.ABM_QUERYPOS, ref d);
                 if (edge == Native.ABE_TOP) d.rc.Bottom = d.rc.Top + px;
                 else if (edge == Native.ABE_BOTTOM) d.rc.Top = d.rc.Bottom - px;
                 else if (edge == Native.ABE_LEFT) d.rc.Right = d.rc.Left + px;
                 else d.rc.Left = d.rc.Right - px;
-                Native.SHAppBarMessage(Native.ABM_SETPOS, ref d);
+                Native.AppBar(Native.ABM_SETPOS, ref d);
                 if (Placed != null) Placed(d.rc);
             }
             finally { placing = false; }
@@ -254,7 +264,7 @@ namespace OpenDock
             if (!registered) return;
             registered = false;
             var d = Data();
-            Native.SHAppBarMessage(Native.ABM_REMOVE, ref d);
+            Native.AppBar(Native.ABM_REMOVE, ref d);
         }
 
         public void Reregister() { if (registered) { registered = false; Reserve(thickness); } }
@@ -264,7 +274,7 @@ namespace OpenDock
             if (m == 0x0047 /* WM_WINDOWPOSCHANGED */ && registered && !placing)
             {
                 var data = Data();
-                Native.SHAppBarMessage(Native.ABM_WINDOWPOSCHANGED, ref data);
+                Native.AppBar(Native.ABM_WINDOWPOSCHANGED, ref data);
             }
             if (m == msg)
             {
@@ -290,7 +300,7 @@ namespace OpenDock
         static void SetState(int state)
         {
             var d = new Native.APPBARDATA { cbSize = Marshal.SizeOf(typeof(Native.APPBARDATA)), hWnd = Native.FindWindow("Shell_TrayWnd", null), lParam = (IntPtr)state };
-            Native.SHAppBarMessage(Native.ABM_SETSTATE, ref d);
+            Native.AppBar(Native.ABM_SETSTATE, ref d);
         }
 
         // Auto-hide releases the taskbar's reserved space; hiding the window removes the leftover sliver.
@@ -301,7 +311,7 @@ namespace OpenDock
             if (Settings.TaskbarStateToRestore < 0)
             {
                 var d = new Native.APPBARDATA { cbSize = Marshal.SizeOf(typeof(Native.APPBARDATA)), hWnd = tb };
-                Settings.TaskbarStateToRestore = (int)Native.SHAppBarMessage(Native.ABM_GETSTATE, ref d);
+                Settings.TaskbarStateToRestore = (int)Native.AppBar(Native.ABM_GETSTATE, ref d);
                 Settings.Save();
             }
             SetState(1 /* ABS_AUTOHIDE */);
@@ -394,10 +404,17 @@ namespace OpenDock
                     // "GlassDock.exe --snapshot-dock" asks the running copy to save a picture of its Dock as drawn
                     // (screenshots can't see it: Live glass keeps it out of screen capture).
                     if (host != IntPtr.Zero && args.Contains("--snapshot-dock")) Native.PostMessage(host, Native.RegisterWindowMessage("OpenDockSnapshot"), IntPtr.Zero, IntPtr.Zero);
+                    // "GlassDock.exe --open <folder>" (Finder as the default file manager) opens it in the running copy's Finder
+                    var openReq = FinderDefault.Requested(args);
+                    if (openReq != null) FinderDefault.Forward(host, openReq);   // (no running copy that answers: Explorer opens it)
                     // "GlassDock.exe --lock-screen" shows OpenDock's lock screen (for a keyboard shortcut of your own)
                     if (host != IntPtr.Zero && args.Contains("--lock-screen")) Native.PostMessage(host, Native.RegisterWindowMessage("OpenDockLock"), IntPtr.Zero, IntPtr.Zero);
+                    // "GlassDock.exe --mac-accent" / "--mac-restore" apply or undo just the Mac-blue accent from Mac Setup.
+                    if (host != IntPtr.Zero && args.Contains("--mac-accent")) Native.PostMessage(host, Native.RegisterWindowMessage("OpenDockMacAccent"), IntPtr.Zero, IntPtr.Zero);
+                    if (host != IntPtr.Zero && args.Contains("--mac-restore")) Native.PostMessage(host, Native.RegisterWindowMessage("OpenDockMacRestore"), IntPtr.Zero, IntPtr.Zero);
                     return;
                 }
+                pendingOpen = FinderDefault.Requested(args);   // started by opening a folder: show it once GlassDock is up
                 var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
                 var started = DateTime.Now;
                 app.DispatcherUnhandledException += (s, e) =>
@@ -420,6 +437,7 @@ namespace OpenDock
                 Settings.Migrate();
                 Settings.Load(); Workspace.Load();
                 Theme.Init(app);
+                GlassKnobs.Init();   // switches and sliders: Liquid Glass knobs while touched
                 Glass.Init();
                 Outside.Init();
                 Icons.Start();
@@ -452,6 +470,7 @@ namespace OpenDock
             }
         }
 
+        static string pendingOpen;
         static int pinged, answered;
 
         // If the UI thread stops answering (stuck waiting on another app, a driver hiccup...), start a fresh copy
@@ -529,6 +548,8 @@ namespace OpenDock
         static void Start()
         {
             LockScreen.RecoverAfterCrash();
+            // watched from the start: a startup stuck on another program (a hung taskbar) gets a fresh copy too
+            StartWatchdog(Dispatcher.CurrentDispatcher);
             Safe("Color profile", ColorProfiles.Apply);
             if (Settings.LaunchAtLogin) System.Threading.Tasks.Task.Run(() => Settings.LaunchAtLogin = true);   // (also moves an OpenDock-era start to GlassDock)   // upgrade older "Run"-only installs; keeps the path current
             // Hidden top-level window: receives hotkeys and the TaskbarCreated broadcast (Explorer restarts).
@@ -537,6 +558,8 @@ namespace OpenDock
             uint shellHook = Native.RegisterWindowMessage("SHELLHOOK");
             uint snapshot = Native.RegisterWindowMessage("OpenDockSnapshot");
             uint lockMsg = Native.RegisterWindowMessage("OpenDockLock");
+            uint macAccent = Native.RegisterWindowMessage("OpenDockMacAccent");
+            uint macRestore = Native.RegisterWindowMessage("OpenDockMacRestore");
             msgWindow.AddHook((IntPtr h, int m, IntPtr w, IntPtr l, ref bool handled) =>
             {
                 if (m == Native.WM_HOTKEY && (int)w == 1 && !LockScreen.Active) ToggleSpotlight();
@@ -544,6 +567,9 @@ namespace OpenDock
                 if (m == shellHook && (int)w.ToInt64() == 0x8006 /* HSHELL_FLASH */ && WindowFlashed != null) WindowFlashed(l);
                 if (m == Native.WM_CLOSE) { handled = true; Quit(); }
                 if (m == lockMsg) { handled = true; Dispatcher.CurrentDispatcher.BeginInvoke(new Action(LockScreen.Lock)); }
+                if (m == macAccent) { handled = true; Dispatcher.CurrentDispatcher.BeginInvoke(new Action(() => { try { MacSetup.Apply(MacSetup.Steps().Where(x => x.Key == "accent"), null); } catch (Exception ex) { Log(ex); } })); }
+                if (m == macRestore) { handled = true; Dispatcher.CurrentDispatcher.BeginInvoke(new Action(() => { try { MacSetup.Restore(); } catch (Exception ex) { Log(ex); } })); }
+                if (m == 0x004A /* WM_COPYDATA */) { var folder = FinderDefault.Received(l); if (folder != null) { handled = true; Dispatcher.CurrentDispatcher.BeginInvoke(new Action(() => FinderDefault.Open(folder))); return (IntPtr)1; } }
                 if (m == snapshot) { handled = true; Dispatcher.CurrentDispatcher.BeginInvoke(new Action(SnapshotDocks), DispatcherPriority.Background); }
                 if (m == taskbarCreated) Dispatcher.CurrentDispatcher.BeginInvoke(new Action(() =>
                 {
@@ -573,15 +599,16 @@ namespace OpenDock
                 uint pid; Native.GetWindowThreadProcessId(h, out pid);
                 if (pid != (uint)System.Diagnostics.Process.GetCurrentProcess().Id && Native.GetAncestor(h, 2) == h) LastForeground = h;
                 if (ForegroundChanged != null) ForegroundChanged(h);
+                OthersChanged(h);
                 QueueRefresh();
             }, 0);  // include our own windows so the menu bar can show "Finder"
-            Native.WinEventProc onWindow = (hk, ev, h, obj, child, t, time) => { if (obj == 0 && child == 0) QueueRefresh(); };
+            Native.WinEventProc onWindow = (hk, ev, h, obj, child, t, time) => { if (obj == 0 && child == 0) { QueueRefresh(); OthersChanged(h); } };
             Hook(0x8001, 0x8003, onWindow);  // destroy / show / hide
             Hook(0x8017, 0x8018, onWindow);  // cloaked / uncloaked (Store apps)
             Hook(0x800C, 0x800C, onWindow);  // title change
             // Location/size changes (e.g. a browser going full screen) arrive many times a second while anything
             // moves, so they only restart the refresh countdown: one refresh after the moving stops.
-            Native.WinEventProc onMove = (hk, ev, h, obj, child, t, time) => { if (obj == 0 && child == 0 && refresh != null) { refresh.Stop(); refresh.Start(); } };
+            Native.WinEventProc onMove = (hk, ev, h, obj, child, t, time) => { if (obj == 0 && child == 0 && refresh != null) { refresh.Stop(); refresh.Start(); OthersChanged(h); } };
             Hook(0x800B, 0x800B, onMove);
 
             refresh = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
@@ -601,14 +628,17 @@ namespace OpenDock
             Safe("Drag to tile", DragTile.Start);
             Safe("Stage Manager", StageManager.Start);
             Safe("Traffic lights", TrafficLights.Start);
+            Safe("Capture guard", CaptureGuard.Start);
+            Safe("Finder as default", FinderDefault.Start);
+            if (pendingOpen != null) { var folder = pendingOpen; pendingOpen = null; Dispatcher.CurrentDispatcher.BeginInvoke(new Action(() => FinderDefault.Open(folder)), DispatcherPriority.ApplicationIdle); }
             Safe("Recent windows", RecentArrange.Start);
             Safe("Update notifications", Updater.Watch);
+            Safe("Mac Setup offer", MacSetup.Offer);
             var warm = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             warm.Tick += delegate { warm.Stop(); WindowFx.Warm(); };
             warm.Start();
             Safe("Widgets", Widgets.Start);
             LastForeground = Native.GetForegroundWindow();
-            StartWatchdog(Dispatcher.CurrentDispatcher);   // only once GlassDock is really up
         }
 
         // Keep a window per connected monitor. Closing a removed dock also releases its appbar and timers.
@@ -666,6 +696,19 @@ namespace OpenDock
         public static Native.WinEventProc Guard(Native.WinEventProc cb)
         {
             return (hk, ev, h, obj, child, t, time) => { try { cb(hk, ev, h, obj, child, t, time); } catch (Exception ex) { Log(ex); } };
+        }
+
+        // Something on screen changed (a window moved, opened, closed, came forward): glass behind it wakes up.
+        public static event Action ScreenChanged;
+        static readonly uint ownPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
+
+        // Only other programs' windows count: GlassDock's own (the traffic lights keeping up with their windows,
+        // the Dock magnifying) would otherwise keep waking the glass forever.
+        static void OthersChanged(IntPtr h)
+        {
+            if (ScreenChanged == null) return;
+            uint pid; Native.GetWindowThreadProcessId(h, out pid);
+            if (pid != ownPid) ScreenChanged();
         }
 
         public static void QueueRefresh() { if (refresh != null && !refresh.IsEnabled) refresh.Start(); }
@@ -747,6 +790,15 @@ namespace OpenDock
                 }
                 catch (Exception ex) { Log(ex); }
             }
+        }
+
+        // A fresh GlassDock in place of this one (its windows' drawing surfaces were lost).
+        public static void Restart()
+        {
+            if (cleaned) return;
+            Cleanup();
+            System.Diagnostics.Process.Start(Assembly.GetExecutingAssembly().Location, "--restart");
+            Environment.Exit(0);
         }
 
         static void Cleanup()

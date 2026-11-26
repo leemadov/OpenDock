@@ -187,6 +187,9 @@ namespace OpenDock
             Apps.Changed += OnAppsLoaded;
             Wallpaper.Changed += OnWallpaper;
             glassTimer.Tick += delegate { RefreshGlass(); };
+            health.Tick += delegate { CheckGlass(); };
+            health.Start();
+            App.ScreenChanged += Wake;
             wall.Source = Wallpaper.Blurred;
             Settings.Changed += OnSettings;
             Theme.Changed += ReloadIcons;
@@ -197,7 +200,7 @@ namespace OpenDock
                 closed = true;
                 if (Bar != null) Bar.Remove();
                 CompositionTarget.Rendering -= Frame; looping = false;
-                glassTimer.Stop(); trashTimer.Stop(); if (grace != null) grace.Stop();
+                glassTimer.Stop(); trashTimer.Stop(); health.Stop(); App.ScreenChanged -= Wake; if (grace != null) grace.Stop();
                 App.WindowsChanged -= Sync; App.WindowFlashed -= OnFlash; App.ForegroundChanged -= OnForeground;
                 Apps.Changed -= OnAppsLoaded; Wallpaper.Changed -= OnWallpaper; Settings.Changed -= OnSettings; Theme.Changed -= ReloadIcons;
                 if (openMenu != null) openMenu.IsOpen = false;
@@ -298,8 +301,46 @@ namespace OpenDock
         // at up to 60 frames a second without costing the UI thread (the Dock's own animation) anything but the
         // bend itself.
         // 10 ms, not 16: Windows timers tick every 15.6 ms, so 16 would wait two ticks (~32 fps); 10 fires every tick (~64)
-        const int GlassFrameMs = 10, GlassIdleMs = 200;
+        const int GlassFrameMs = 10, GlassChangeMs = 150, GlassIdleMs = 500;
+        // Low power: 60 frames a second only for a moment after something happens on screen (a window moving,
+        // opening, closing, coming forward -- App.ScreenChanged); otherwise a look twice a second, and nothing is
+        // redrawn while the picture is the same.
+        DateTime burstUntil = DateTime.MinValue;
+        public void Wake()
+        {
+            if (closed || !live) return;
+            burstUntil = DateTime.UtcNow.AddMilliseconds(1200);
+            if (glassTimer.Interval.TotalMilliseconds > GlassFrameMs) glassTimer.Interval = TimeSpan.FromMilliseconds(GlassFrameMs);
+        }
         bool capturing;
+        DateTime lastCapture = DateTime.MinValue;
+        int repairs; DateTime firstRepair = DateTime.MinValue;
+        readonly DispatcherTimer health = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetWindowDisplayAffinity(IntPtr h, out uint a);
+
+        // The Dock checks its own glass every few seconds: still kept out of screen capture (if Windows dropped
+        // that, the glass photographs itself and the background goes strange), a picture to bend, and not a black
+        // one. Anything wrong is repaired on the spot; if it keeps going wrong, GlassDock starts fresh.
+        void CheckGlass()
+        {
+            try
+            {
+                if (closed || !live || !IsVisible || hide > 0.99 || Glass.Lifted) return;
+                var h = new WindowInteropHelper(this).Handle;
+                uint aff;
+                bool excluded = !GetWindowDisplayAffinity(h, out aff) || aff == 0x11;
+                bool black = capPx != null && Glass.BlackShare(capPx) > 0.5 && Liquid.Brightness(Wallpaper.Flat) > 0.08;
+                bool missing = position == 0 && (capPx == null || lensImg.Source == null) && (DateTime.UtcNow - lastCapture).TotalSeconds > 8;
+                if (excluded && !black && !missing) return;
+                App.Log(new Exception("Dock glass repaired:" + (excluded ? "" : " capture exclusion lost") + (black ? " black backdrop" : "") + (missing ? " no backdrop" : "")));
+                if ((DateTime.UtcNow - firstRepair).TotalMinutes > 2) { firstRepair = DateTime.UtcNow; repairs = 0; }
+                if (++repairs > 3) { App.Restart(); return; }
+                live = Glass.Exclude(h);
+                glassSum = 0; capPx = black ? null : capPx;
+                Wake();
+            }
+            catch (Exception ex) { App.Log(ex); }
+        }
 
         void RefreshGlass()
         {
@@ -321,14 +362,18 @@ namespace OpenDock
                 capturing = false;
                 if (closed || t.IsFaulted) return;
                 var shot = t.Result.Item1;
-                // Nothing changed: check less often (down to 5 times a second); a change brings back 60 a second.
-                if (shot == null) { glassTimer.Interval = TimeSpan.FromMilliseconds(Math.Min(GlassIdleMs, glassTimer.Interval.TotalMilliseconds * 1.5)); return; }
+                // Nothing changed: check a little less often (down to 25 times a second); a change brings back 60 a second.
+                if (shot == null) { glassTimer.Interval = TimeSpan.FromMilliseconds(DateTime.UtcNow < burstUntil ? GlassFrameMs : Math.Min(GlassIdleMs, glassTimer.Interval.TotalMilliseconds * 1.5)); return; }
                 glassSum = t.Result.Item2;
-                glassTimer.Interval = TimeSpan.FromMilliseconds(GlassFrameMs);
+                // a window moving behind the Dock: every frame; something changing by itself back there (a video,
+                // scrolling text): about 7 times a second is plenty and costs a fraction
+                glassTimer.Interval = TimeSpan.FromMilliseconds(DateTime.UtcNow < burstUntil ? GlassFrameMs : GlassChangeMs);
                 wall.Source = shot;
                 wallX = area.Left; wallY = area.Top; wall.Width = area.Width; wall.Height = area.Height;
                 capW = shot.PixelWidth; capH = shot.PixelHeight; capPx = t.Result.Item3;
                 capRect = area; lensDirty = true; capVersion++;
+                lastCapture = DateTime.UtcNow;
+                Liquid.Ink(this, Liquid.Brightness(capPx));   // dots and labels stay readable over a bright backdrop
                 Canvas.SetLeft(wall, wallX); Canvas.SetTop(wall, wallY);
                 StartLoop();   // re-clip and re-bend at the new picture
             }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
@@ -345,7 +390,7 @@ namespace OpenDock
                 double lh, la;
                 Liquid.Strength(pane.Height, out lh, out la);
                 // the Dock reads as a thick slab of glass: its rounded sides lit (see Liquid.Bevel)
-                lensImg.Source = Liquid.Lens(capPx, capW, capH, r, radius * sy, lh * sy, la * sy, false, 0, 1.5, 1);
+                lensImg.Source = Liquid.Smear(Liquid.Lens(capPx, capW, capH, r, radius * sy, lh * sy, la * Liquid.Pull * sy, false, 0, 1.5, 1, 1, Liquid.Falloff), radius * sy, lh * sy, Liquid.RimSmear * sy);
                 lensAt = pane; lensDirty = false;
             }
             Canvas.SetLeft(lensImg, pane.X); Canvas.SetTop(lensImg, pane.Y);
@@ -374,7 +419,7 @@ namespace OpenDock
                 Liquid.Strength(r.Width, out lh, out la);
                 // each icon's glass tile is a small thick slab like the Dock (Liquid.Bevel); the logo sits on it, untouched.
                 // A gentle bend, no rainbow and no glint, which on a tile this small turns into two bright spots.
-                it.Lens.Source = Liquid.Lens(capPx, capW, capH, cr, r.Width * 0.26 * sx, lh * sx, la * 0.35 * sx, false, 0, 1.5, 1, 0);
+                it.Lens.Source = Liquid.Smear(Liquid.Lens(capPx, capW, capH, cr, r.Width * 0.26 * sx, lh * sx, la * 0.35 * Liquid.Pull * sx, false, 0, 1.5, 1, 0, Liquid.Falloff), r.Width * 0.26 * sx, lh * sx, Liquid.RimSmear * sx);
                 it.LensAt = r; it.LensVersion = capVersion;
             }
             if (iconClip == null || Math.Abs(iconClipSize - tile) > 0.01) { iconClip = IconLook.Squircle(tile); iconClip.Freeze(); iconClipSize = tile; }
@@ -1376,7 +1421,7 @@ namespace OpenDock
             body.Children.Add(grid);
             body.Children.Add(open);
             var tint = new Border { CornerRadius = new CornerRadius(14), Padding = new Thickness(12), BorderThickness = new Thickness(1), Child = body };
-            tint.SetResourceReference(Border.BackgroundProperty, "Glass");
+            tint.SetResourceReference(Border.BackgroundProperty, "MenuGlass");   // light enough for the bent glass to show
             tint.SetResourceReference(Border.BorderBrushProperty, "MenuBorder");
             panel = new Border
             {
@@ -1397,8 +1442,10 @@ namespace OpenDock
             Left = at.X; Top = at.Y;
             // frosted glass: blur what's behind the panel (the window is still fully transparent here)
             double w = panel.ActualWidth, h = panel.ActualHeight, dpi = App.Dpi;
-            var shot = Icons.CaptureScreen((int)((Left + panel.Margin.Left) * dpi), (int)((Top + panel.Margin.Top) * dpi), (int)(w * dpi), (int)(h * dpi));
-            panel.Background = new ImageBrush(Icons.Blur(shot, (int)(w / 3), (int)(h / 3), 8));
+            // Liquid Glass: what's behind the panel (the window is still fully transparent here), bent at the rim
+            var glass = Liquid.Card((int)((Left + panel.Margin.Left) * dpi), (int)((Top + panel.Margin.Top) * dpi), (int)(w * dpi), (int)(h * dpi), 14 * dpi, dpi);
+            if (glass != null) { panel.Background = new ImageBrush(glass); Liquid.Ink(panel, Liquid.Brightness(glass)); }
+            else { var shot = Icons.CaptureScreen((int)((Left + panel.Margin.Left) * dpi), (int)((Top + panel.Margin.Top) * dpi), (int)(w * dpi), (int)(h * dpi)); panel.Background = new ImageBrush(Icons.Blur(shot, (int)(w / 3), (int)(h / 3), 8)); }
             Activate();
             var ease = new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.3 };
             var d = TimeSpan.FromMilliseconds(260);

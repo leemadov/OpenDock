@@ -536,7 +536,7 @@ namespace OpenDock
                 else if (args != null) Process.Start(new ProcessStartInfo(target, args) { UseShellExecute = true });
                 else Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
             }
-            catch (Exception ex) { MessageBox.Show(ex.Message, "GlassDock"); }
+            catch (Exception ex) { Sheet.Tell(null, "GlassDock", ex.Message); }
         }
 
         public static void Shell(string uri) { try { Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true }); } catch { } }
@@ -601,7 +601,7 @@ namespace OpenDock
                     if (err != 0 && err != 0x4C7 /* cancelled */) App.Log("Move to Trash failed: 0x" + err.ToString("X"));
                 }
             }
-            catch (Exception ex) { MessageBox.Show(ex.Message, "GlassDock"); }
+            catch (Exception ex) { Sheet.Tell(null, "GlassDock", ex.Message); }
         }
 
         public static readonly string Downloads = Native.KnownFolder(new Guid("374DE290-123F-4565-9164-39C4925E467B")) ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);

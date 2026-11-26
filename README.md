@@ -68,6 +68,8 @@ bin\GlassDock.exe
 
 **x64 and ARM64.** `GlassDock.exe` is one "any CPU" build. On Windows on ARM with .NET Framework 4.8.1 (included in Windows 11 22H2 and later) it runs natively as an ARM64 program. With only 4.8 installed, Windows runs it through x64 emulation instead. **Settings › General › About › Architecture** shows which one you're getting.
 
+To build the optional C++ Liquid Glass renderer, install Visual Studio C++ Build Tools and a Windows SDK, then run `build.bat native x64` or `build.bat native arm64` from an x64 build host. The ARM64 target also requires the ARM64 C++ tools. Keep `GlassDock.LiquidGlass.dll` next to the executable and match the DLL to the app's process architecture. GlassDock falls back to its C# renderer when the DLL is unavailable. Run `build.bat check --glass-native` for a byte-for-byte comparison of the two renderers.
+
 - Quit from the menu bar logo menu with **Quit GlassDock**, or run `GlassDock.exe --quit`.
 - Settings live in `%APPDATA%\GlassDock\settings.txt` and errors are written to `error.log` in the same folder.
 

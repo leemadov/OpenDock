@@ -20,8 +20,9 @@ using global::Windows.Security.Credentials.UI;
 
 namespace OpenDock
 {
-    // A macOS-style lock screen: the wallpaper, a big clock and the date, you at the bottom; unlocking goes through
-    // Windows Hello (PIN, face or fingerprint, checked by Windows itself -- OpenDock never sees any of it).
+    // A macOS-style lock screen: the wallpaper, a big clock and the date, you at the bottom. It unlocks with a
+    // GlassDock passcode, tapped on Liquid Glass keys that bend the wallpaper behind them (as on an iPhone) or typed,
+    // or with Windows Hello (PIN, face or fingerprint, checked by Windows itself -- GlassDock never sees any of it).
     //
     // Windows keeps its own lock screen on a separate secure desktop that apps can't draw on, so this one is a
     // privacy screen over your desktop: it covers every display, stays on top and swallows the Windows key, Alt+Tab
@@ -33,15 +34,17 @@ namespace OpenDock
         static IntPtr hook;
         static HookProc hookProc;   // kept alive: Windows calls it
         public static bool Active { get { return windows.Count > 0; } }
+        public static bool HelloReady;   // Windows Hello is set up (checked each time the screen locks)
 
         public static void Lock()
         {
             if (Active) return;
             if (!Settings.CustomLockScreen) { Native.LockWorkStation(); return; }
-            // only with Windows Hello to unlock it; otherwise Windows' own lock screen
+            // only with a way to unlock it -- a GlassDock passcode or Windows Hello; otherwise Windows' own lock screen
             Hello.Available(ok =>
             {
-                if (!ok) { Native.LockWorkStation(); return; }
+                HelloReady = ok;
+                if (!ok && !Passcode.IsSet) { Native.LockWorkStation(); return; }
                 try { Show(); }
                 catch (Exception ex) { App.Log(ex); Close(); Native.LockWorkStation(); }
             });
@@ -228,8 +231,9 @@ namespace OpenDock
             }
             // the wallpaper, a touch dimmer at the top and bottom so the white text reads on any picture
             var wall = new Image { Source = wallpaper ?? Wallpaper(), Stretch = Stretch.UniformToFill };
-            content.Children.Add(wall);
-            content.Children.Add(new Border { Background = new LinearGradientBrush(new GradientStopCollection {
+            backdrop.Children.Add(wall);
+            content.Children.Add(backdrop);
+            backdrop.Children.Add(new Border { Background = new LinearGradientBrush(new GradientStopCollection {
                 new GradientStop(Color.FromArgb(70, 0, 0, 0), 0), new GradientStop(Color.FromArgb(0, 0, 0, 0), 0.42),
                 new GradientStop(Color.FromArgb(0, 0, 0, 0), 0.66), new GradientStop(Color.FromArgb(90, 0, 0, 0), 1) }, new Point(0, 0), new Point(0, 1)) });
 
@@ -244,6 +248,7 @@ namespace OpenDock
             date.Effect = soft; clock.Effect = new DropShadowEffect { BlurRadius = 30, ShadowDepth = 0, Opacity = 0.25, Color = Colors.Black };
             top.Children.Add(date); top.Children.Add(clock);
             content.Children.Add(top);
+            topPanel = top;
             SizeChanged += delegate { Layout(top); };
             content.SizeChanged += delegate { Layout(top); };
 
@@ -254,14 +259,16 @@ namespace OpenDock
                 who.Children.Add(Avatar(who_, 72, name == null));
                 var nm = new TextBlock { Text = who_, FontSize = 17, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 12, 0, 10), Effect = soft };
                 who.Children.Add(nm);
-                unlockPill = Pill("\uE8D7", "Unlock with Windows Hello");
-                unlockPill.MouseLeftButtonUp += (s, e) => { e.Handled = true; Unlock(); };
+                bool code = screen != null && Passcode.IsSet;
+                unlockPill = code ? Pill("\uE75F", "Enter Passcode") : Pill("\uE8D7", "Unlock with Windows Hello");
+                unlockPill.MouseLeftButtonUp += (s, e) => { e.Handled = true; if (code) ShowKeypad(); else Unlock(); };
                 who.Children.Add(unlockPill);
                 hint.Text = "Use Windows Lock"; hint.FontSize = 12.5; hint.HorizontalAlignment = HorizontalAlignment.Center; hint.Margin = new Thickness(0, 12, 0, 0);
                 hint.Foreground = new SolidColorBrush(Color.FromArgb(170, 255, 255, 255)); hint.Cursor = Cursors.Hand; hint.Effect = soft;
                 hint.MouseLeftButtonUp += (s, e) => { e.Handled = true; LockScreen.UseWindowsLock(); };
                 who.Children.Add(hint);
                 content.Children.Add(who);
+                if (code) { keypad = BuildKeypad(); content.Children.Add(keypad); }
             }
             TextElement.SetForeground(content, Brushes.White);   // (also when shown as a preview, outside this window)
             Content = content;
@@ -288,9 +295,22 @@ namespace OpenDock
             SourceInitialized += delegate { hwnd = new WindowInteropHelper(this).Handle; Native.MakeToolWindow(hwnd, false); tick.Start(); guard.Start(); };
             Activated += delegate { if (!wasActive) { wasActive = true; grace = DateTime.UtcNow.AddSeconds(1); } };
             Closing += (s, e) => { if (!leaving) e.Cancel = true; };   // Alt+F4 and friends don't close it
-            // any key or click asks for Windows Hello, as a Mac shows Touch ID
-            PreviewKeyDown += (s, e) => { if (Main && !verifying) Unlock(); };
-            MouseLeftButtonUp += delegate { if (Main && !verifying) Unlock(); };
+            // any key or click brings up the passcode keypad (digits typed go straight in), or asks for Windows Hello
+            // when there's no passcode, as a Mac shows Touch ID
+            PreviewKeyDown += (s, e) =>
+            {
+                if (!Main || verifying || leaving) return;
+                if (keypad == null) { Unlock(); return; }
+                int d = e.Key >= Key.D0 && e.Key <= Key.D9 ? e.Key - Key.D0 : e.Key >= Key.NumPad0 && e.Key <= Key.NumPad9 ? e.Key - Key.NumPad0 : -1;
+                e.Handled = true;
+                if (d >= 0) { ShowKeypad(); Type((char)('0' + d), true); }
+                else if (e.Key == Key.Back) Backspace();
+                else if (e.Key == Key.Escape) HideKeypad();
+                else ShowKeypad();
+            };
+            MouseLeftButtonUp += delegate { if (!Main || verifying || leaving) return; if (keypad == null) Unlock(); else ShowKeypad(); };
+            idle.Tick += delegate { idle.Stop(); if (typed.Length == 0) HideKeypad(); };
+            SizeChanged += delegate { lensed = false; if (keypadShown) MakeLenses(); };
             Opacity = 0;
             Loaded += delegate { BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(260))); };
         }
@@ -306,6 +326,7 @@ namespace OpenDock
             who.Margin = new Thickness(0, 0, 0, h * 0.07);
             double k = Math.Max(1, h / 1000.0);   // the account, name and button grow with the screen
             who.LayoutTransform = new ScaleTransform(k, k);
+            if (keypad != null) { keypad.LayoutTransform = new ScaleTransform(k, k); lensed = false; if (keypadShown) MakeLenses(); }
         }
 
         void Show(DateTime now)
@@ -329,10 +350,227 @@ namespace OpenDock
             });
         }
 
+        // ---------- the passcode keypad ----------
+        // iPhone-style: "Enter Passcode", a dot per digit, and round Liquid Glass keys. Each key is a lens over a
+        // picture of the wallpaper behind it (GlassDock's own Liquid Glass lens), so the scene bends around its rim
+        // exactly as it does through Apple's glass.
+
+        readonly Grid backdrop = new Grid();   // the wallpaper and its shading: what the keys bend
+        StackPanel topPanel;
+        Grid keypad;
+        StackPanel dotRow;
+        TextBlock keypadNote, leftLink, rightLink;
+        readonly List<Ellipse> dotMarks = new List<Ellipse>();
+        readonly List<Tuple<FrameworkElement, Image>> keyLenses = new List<Tuple<FrameworkElement, Image>>();
+        readonly Dictionary<char, Action<bool>> keyFlash = new Dictionary<char, Action<bool>>();
+        readonly DispatcherTimer idle = new DispatcherTimer { Interval = TimeSpan.FromSeconds(25) };
+        string typed = "";
+        int wrongTries;
+        bool keypadShown, lensed, checking;
+        const double KeyD = 84, KeyGapX = 26, KeyGapY = 21;
+        // the keys' glass (fractions of the key's width): the band at the rim that bends, how far it pulls the scene
+        // from outside the key, how fast the bend eases toward the centre, and the rim's light
+        const double KeyBend = 0.175, KeyPull = 0.60, KeyFalloff = 2.5, KeySaturation = 1.0, KeyBevel = 0.45, KeyGlint = 0.1;
+        const double KeyBlur = 1.5;   // DIPs of smear in the rim band, none in the middle
+        const byte KeyFrost = 30;
+        const int MaxTries = 5;
+
+        Grid BuildKeypad()
+        {
+            var soft = new DropShadowEffect { BlurRadius = 18, ShadowDepth = 0, Opacity = 0.3, Color = Colors.Black };
+            var g = new Grid { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Opacity = 0, IsHitTestVisible = false };
+            var col = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
+            col.Children.Add(new TextBlock { Text = "Enter Passcode", FontSize = 22, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, Effect = soft });
+            keypadNote = new TextBlock { Text = "Your passcode unlocks GlassDock", FontSize = 14, HorizontalAlignment = HorizontalAlignment.Center, TextAlignment = TextAlignment.Center,
+                Margin = new Thickness(0, 6, 0, 0), Foreground = new SolidColorBrush(Color.FromArgb(225, 255, 255, 255)), Effect = soft };
+            col.Children.Add(keypadNote);
+            dotRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 24, 0, 34), RenderTransform = new TranslateTransform() };
+            for (int i = 0; i < Math.Max(Passcode.MinLength, Passcode.Length); i++)
+            {
+                var e = new Ellipse { Width = 13, Height = 13, Stroke = Brushes.White, StrokeThickness = 1.4, Margin = new Thickness(10, 0, 10, 0), Effect = soft };
+                dotMarks.Add(e); dotRow.Children.Add(e);
+            }
+            col.Children.Add(dotRow);
+            var keys = new Grid();
+            for (int c = 0; c < 3; c++) keys.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(KeyD + KeyGapX) });
+            for (int r = 0; r < 4; r++) keys.RowDefinitions.Add(new RowDefinition { Height = new GridLength(KeyD + KeyGapY) });
+            string[] digits = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "" };
+            string[] letters = { "", "ABC", "DEF", "GHI", "JKL", "MNO", "PQRS", "TUV", "WXYZ", "", "", "" };
+            for (int i = 0; i < digits.Length; i++)
+            {
+                if (digits[i] == "") continue;
+                var key = KeyButton(digits[i][0], letters[i]);
+                Grid.SetRow(key, i / 3); Grid.SetColumn(key, i % 3);
+                keys.Children.Add(key);
+            }
+            col.Children.Add(keys);
+            // under the keys: Windows Hello (when it's set up) on the left, Cancel / Delete on the right
+            var bottom = new Grid { Margin = new Thickness(0, 6, 0, 0) };
+            leftLink = Link(LockScreen.HelloReady ? "Windows Hello" : "Use Windows Lock", HorizontalAlignment.Left);
+            leftLink.MouseLeftButtonUp += (s, e) => { e.Handled = true; if (LockScreen.HelloReady) Unlock(); else LockScreen.UseWindowsLock(); };
+            rightLink = Link("Cancel", HorizontalAlignment.Right);
+            rightLink.MouseLeftButtonUp += (s, e) => { e.Handled = true; if (typed.Length > 0) Backspace(); else HideKeypad(); };
+            bottom.Children.Add(leftLink); bottom.Children.Add(rightLink);
+            col.Children.Add(bottom);
+            g.Children.Add(col);
+            return g;
+        }
+
+        static TextBlock Link(string text, HorizontalAlignment side)
+        {
+            return new TextBlock { Text = text, FontSize = 17, FontWeight = FontWeights.Medium, HorizontalAlignment = side, Cursor = Cursors.Hand, Padding = new Thickness(KeyGapX / 2, 8, KeyGapX / 2, 8),
+                Effect = new DropShadowEffect { BlurRadius = 14, ShadowDepth = 0, Opacity = 0.3, Color = Colors.Black } };
+        }
+
+        FrameworkElement KeyButton(char digit, string letters)
+        {
+            var press = new ScaleTransform(1, 1);
+            var k = new Grid { Width = KeyD, Height = KeyD, Cursor = Cursors.Hand, Background = Brushes.Transparent, RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = press };
+            // the glass: the wallpaper bent through the key (filled in by MakeLenses), a faint frost, and a lit rim
+            var lens = new Image { Stretch = Stretch.Fill, Clip = new EllipseGeometry(new Point(KeyD / 2, KeyD / 2), KeyD / 2, KeyD / 2) };
+            k.Children.Add(lens);
+            keyLenses.Add(Tuple.Create((FrameworkElement)k, lens));
+            var frost = new Ellipse { Fill = new SolidColorBrush(Color.FromArgb(KeyFrost, 255, 255, 255)) };
+            k.Children.Add(frost);
+            // the rim band glows a little -- light gathered just inside the edge of the glass, where the border is lit
+            // (top-left and bottom-right), nearly clear at the sides
+            k.Children.Add(new Ellipse { IsHitTestVisible = false, Fill = new RadialGradientBrush(new GradientStopCollection {
+                    new GradientStop(Color.FromArgb(0, 255, 255, 255), 0.65), new GradientStop(Color.FromArgb(35, 255, 255, 255), 1) }),
+                OpacityMask = new LinearGradientBrush(new GradientStopCollection {
+                    new GradientStop(Color.FromArgb(255, 0, 0, 0), 0), new GradientStop(Color.FromArgb(89, 0, 0, 0), 0.5), new GradientStop(Color.FromArgb(230, 0, 0, 0), 1) }, new Point(0.15, 0), new Point(0.85, 1)) });
+            // the border: one crisp line, bright along the top-left and bottom-right arcs, gone at the sides
+            k.Children.Add(new Ellipse { StrokeThickness = 1.4, Stroke = new LinearGradientBrush(new GradientStopCollection {
+                new GradientStop(Color.FromArgb(255, 255, 255, 255), 0), new GradientStop(Color.FromArgb(0, 255, 255, 255), 0.35),
+                new GradientStop(Color.FromArgb(0, 255, 255, 255), 0.65), new GradientStop(Color.FromArgb(230, 255, 255, 255), 1) }, new Point(0.15, 0), new Point(0.85, 1)) });
+            var label = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, letters == "" ? 0 : 3, 0, 0),
+                Effect = new DropShadowEffect { BlurRadius = 6, ShadowDepth = 0, Opacity = 0.18, Color = Colors.Black } };
+            label.Children.Add(new TextBlock { Text = digit.ToString(), FontFamily = new FontFamily("Segoe UI Variable Display, Segoe UI"), FontSize = 44, FontWeight = FontWeights.Black,
+                HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, -8, 0, -6) });
+            if (letters != "") label.Children.Add(new TextBlock { Text = letters, FontSize = 11, FontWeight = FontWeights.Black,
+                Effect = new DropShadowEffect { BlurRadius = 4, ShadowDepth = 0, Opacity = 0.3, Color = Colors.Black }, HorizontalAlignment = HorizontalAlignment.Center,
+                Foreground = new SolidColorBrush(Color.FromArgb(235, 255, 255, 255)) });
+            k.Children.Add(label);
+            Action<bool> flash = down =>
+            {
+                frost.Fill = new SolidColorBrush(Color.FromArgb(down ? (byte)105 : KeyFrost, 255, 255, 255));
+                var a = new DoubleAnimation(down ? 0.94 : 1, TimeSpan.FromMilliseconds(down ? 70 : 220)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+                press.BeginAnimation(ScaleTransform.ScaleXProperty, a); press.BeginAnimation(ScaleTransform.ScaleYProperty, a);
+            };
+            keyFlash[digit] = flash;
+            bool down_ = false;
+            k.MouseLeftButtonDown += (s, e) => { e.Handled = true; down_ = true; flash(true); };
+            k.MouseLeftButtonUp += (s, e) => { e.Handled = true; if (!down_) return; down_ = false; flash(false); Type(digit); };
+            k.MouseLeave += delegate { if (down_) { down_ = false; flash(false); } };
+            return k;
+        }
+
+        void ShowKeypad()
+        {
+            if (keypad == null || leaving) return;
+            idle.Stop(); idle.Start();
+            if (keypadShown) return;
+            keypadShown = true;
+            keypad.IsHitTestVisible = true;
+            if (!lensed) MakeLenses();
+            var t = TimeSpan.FromMilliseconds(240);
+            keypad.BeginAnimation(OpacityProperty, new DoubleAnimation(1, t));
+            if (topPanel != null) topPanel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, t));
+            who.IsHitTestVisible = false;
+            who.BeginAnimation(OpacityProperty, new DoubleAnimation(0, t));
+        }
+
+        void HideKeypad()
+        {
+            if (keypad == null || !keypadShown || checking) return;
+            keypadShown = false; idle.Stop();
+            typed = ""; ShowDots();
+            keypad.IsHitTestVisible = false;
+            var t = TimeSpan.FromMilliseconds(240);
+            keypad.BeginAnimation(OpacityProperty, new DoubleAnimation(0, t));
+            if (topPanel != null) topPanel.BeginAnimation(OpacityProperty, new DoubleAnimation(1, t));
+            who.IsHitTestVisible = true;
+            who.BeginAnimation(OpacityProperty, new DoubleAnimation(1, t));
+        }
+
+        void Type(char digit, bool fromKeys = false)
+        {
+            if (checking || typed.Length >= Passcode.Length) return;
+            idle.Stop(); idle.Start();
+            Action<bool> flash;
+            if (fromKeys && keyFlash.TryGetValue(digit, out flash)) { flash(true); Later(90, () => flash(false)); }   // a typed digit lights its key
+            typed += digit;
+            ShowDots();
+            if (typed.Length == Passcode.Length) { checking = true; Later(140, Submit); }
+        }
+
+        void Backspace()
+        {
+            if (checking || typed.Length == 0) { if (typed.Length == 0) HideKeypad(); return; }
+            typed = typed.Substring(0, typed.Length - 1);
+            ShowDots();
+        }
+
+        void ShowDots()
+        {
+            for (int i = 0; i < dotMarks.Count; i++) dotMarks[i].Fill = i < typed.Length ? Brushes.White : null;
+            if (rightLink != null) rightLink.Text = typed.Length > 0 ? "Delete" : "Cancel";
+        }
+
+        void Submit()
+        {
+            string code = typed;
+            bool ok = Passcode.Check(code);
+            typed = "";
+            if (ok) { checking = false; LockScreen.Close(); return; }
+            wrongTries++;
+            // wrong: the dots shake, as on an iPhone, and empty
+            var shake = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromMilliseconds(420) };
+            double[] xs = { -16, 14, -11, 8, -5, 3, 0 };
+            for (int i = 0; i < xs.Length; i++) shake.KeyFrames.Add(new EasingDoubleKeyFrame(xs[i], KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(60 * (i + 1)))));
+            shake.Completed += delegate { checking = false; ShowDots(); };
+            ((TranslateTransform)dotRow.RenderTransform).BeginAnimation(TranslateTransform.XProperty, shake);
+            int left = MaxTries - wrongTries;
+            if (left <= 0) { keypadNote.Text = "Too many tries. Windows' lock takes over."; Later(900, LockScreen.UseWindowsLock); return; }
+            keypadNote.Text = left == 1 ? "Wrong passcode. One more try before Windows' lock takes over." : "Wrong passcode. Try again.";
+        }
+
+        void Later(int ms, Action a)
+        {
+            var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(ms) };
+            t.Tick += delegate { t.Stop(); if (!leaving) a(); };
+            t.Start();
+        }
+
+        // Each key's glass: the wallpaper behind it, as shown (shading and all), bent by GlassDock's Liquid Glass lens
+        // -- a round lens whose thick rim pulls the scene from just outside the key into view, as Apple's does.
+        void MakeLenses()
+        {
+            try
+            {
+                UpdateLayout();
+                var src = PresentationSource.FromVisual(this);
+                if (src == null || backdrop.ActualWidth < 1) return;
+                double sx = src.CompositionTarget.TransformToDevice.M11, sy = src.CompositionTarget.TransformToDevice.M22;
+                int pw = (int)Math.Round(backdrop.ActualWidth * sx), ph = (int)Math.Round(backdrop.ActualHeight * sy);
+                var rtb = new RenderTargetBitmap(pw, ph, 96 * sx, 96 * sy, PixelFormats.Pbgra32);
+                rtb.Render(backdrop);
+                var conv = new FormatConvertedBitmap(rtb, PixelFormats.Bgr32, null, 0);
+                var px = new byte[pw * ph * 4]; conv.CopyPixels(px, pw * 4, 0);
+                foreach (var kl in keyLenses)
+                {
+                    var b = kl.Item1.TransformToVisual(backdrop).TransformBounds(new Rect(0, 0, kl.Item1.ActualWidth, kl.Item1.ActualHeight));
+                    var r = new Rect(b.X * sx, b.Y * sy, b.Width * sx, b.Height * sy);
+                    kl.Item2.Source = Liquid.Smear(Liquid.Lens(px, pw, ph, r, r.Width / 2, r.Width * KeyBend, r.Width * KeyPull, false, 0, KeySaturation, KeyBevel, KeyGlint, KeyFalloff), r.Width / 2, r.Width * KeyBend, KeyBlur * sx);   // a thin, flat lens: the scene bends in a band at the rim and passes almost straight through the middle, as on the iPhone
+                }
+                lensed = true;
+            }
+            catch (Exception ex) { App.Log(ex); }
+        }
+
         // Unlocking: the screen lifts away, as on a Mac.
         public void Leave()
         {
-            leaving = true; tick.Stop(); guard.Stop();
+            leaving = true; tick.Stop(); guard.Stop(); idle.Stop();
             var move = new TranslateTransform(); content.RenderTransform = move;
             var time = TimeSpan.FromMilliseconds(320);
             move.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(-ActualHeight * 0.06, time) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn } });

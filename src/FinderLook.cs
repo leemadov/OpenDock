@@ -17,6 +17,48 @@ namespace OpenDock
     partial class FinderWindow
     {
         const string TagPrefix = "::tag:";
+        const string RecentsLocation = "::recents";
+
+        // The files you opened lately, newest first (Windows keeps a shortcut to each in your Recent folder).
+        static List<Entry> RecentEntries()
+        {
+            var list = new List<Entry>();
+            try
+            {
+                string dir = Environment.GetFolderPath(Environment.SpecialFolder.Recent);
+                dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var lnk in new DirectoryInfo(dir).EnumerateFiles("*.lnk").OrderByDescending(f => f.LastWriteTime).Take(200))
+                {
+                    string target = null;
+                    try { target = (string)shell.CreateShortcut(lnk.FullName).TargetPath; } catch { }
+                    if (string.IsNullOrEmpty(target) || !File.Exists(target) || !seen.Add(target)) continue;
+                    var fi = new FileInfo(target);
+                    list.Add(new Entry { Name = fi.Name, Path = fi.FullName, Kind = fi.Extension.TrimStart('.').ToUpperInvariant() + " file",
+                        Modified = lnk.LastWriteTime.ToString("g"), SizeText = Size(fi.Length), When = lnk.LastWriteTime, Bytes = fi.Length });
+                    if (list.Count >= 60) break;
+                }
+            }
+            catch (Exception ex) { App.Log(ex); }
+            return list;
+        }
+
+        // Where a folder is, for the title ("Documents — Local"): this PC, OneDrive, a removable drive, the network.
+        static string LocationKind(string p)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(p) || Virtual(p)) return null;
+                if (p.StartsWith(@"\\")) return "Network";
+                string od = Environment.GetEnvironmentVariable("OneDrive");
+                if (!string.IsNullOrEmpty(od) && p.StartsWith(od, StringComparison.OrdinalIgnoreCase)) return "OneDrive";
+                var d = new DriveInfo(System.IO.Path.GetPathRoot(p));
+                if (d.DriveType == DriveType.Removable) return "Removable";
+                if (d.DriveType == DriveType.Network) return "Network";
+                return "Local";
+            }
+            catch { return null; }
+        }
 
         static bool Virtual(string p) { return p != null && p.StartsWith("::"); }
         static int TagOf(string p) { int c; return p != null && p.StartsWith(TagPrefix) && int.TryParse(p.Substring(TagPrefix.Length), out c) && c >= 0 && c < FolderLook.Names.Length ? c : -1; }
@@ -25,6 +67,7 @@ namespace OpenDock
         {
             if (p == null) return "";
             if (p == AppsLocation) return "Applications";
+            if (p == RecentsLocation) return "Recents";
             int tag = TagOf(p);
             if (tag >= 0) return FolderLook.Names[tag];
             return p;
@@ -68,8 +111,48 @@ namespace OpenDock
             add("Split View", () => (host ?? this).ToggleSplit(), true);
             cm.Items.Add(new Separator());
             add("Go to Folder…", GoToFolder, true);
-            add("Open in Explorer", () => System.Diagnostics.Process.Start("explorer.exe", "\"" + path + "\""), !Virtual(path));
+            add("Copy Path", () => Clipboard.SetText(path), !Virtual(path));
+            add("Open in Terminal", () => OpenTerminal(path), !Virtual(path));
+            if (VsCode() != null) add("Open in VS Code", () => OpenInCode(path), !Virtual(path));
+            add("Open in Explorer", () => System.Diagnostics.Process.Start("explorer.exe", "/e,\"" + path + "\""), !Virtual(path));
+            cm.Items.Add(new Separator());
+            var hidden = new MenuItem { Header = "Show Hidden Files", IsCheckable = true, IsChecked = Settings.ShowHiddenFiles, InputGestureText = "Ctrl+Shift+." };
+            hidden.Click += delegate { ToggleHidden(); };
+            cm.Items.Add(hidden);
             cm.IsOpen = true;
+        }
+
+        // ---------- for developers (and anyone who likes a terminal) ----------
+
+        void ToggleHidden() { Settings.ShowHiddenFiles = !Settings.ShowHiddenFiles; Settings.Save(); Load(); }
+
+        // Windows Terminal at the folder if it's installed, otherwise PowerShell
+        static void OpenTerminal(string folder)
+        {
+            try
+            {
+                if (!Directory.Exists(folder)) folder = System.IO.Path.GetDirectoryName(folder);
+                var wt = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Microsoft\WindowsApps\wt.exe");
+                if (File.Exists(wt)) System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(wt, "-d \"" + folder.TrimEnd('\\') + "\\.\"") { UseShellExecute = false });
+                else System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("powershell.exe", "-NoExit") { WorkingDirectory = folder, UseShellExecute = true });
+            }
+            catch (Exception ex) { App.Log(ex); }
+        }
+
+        static string codePath;
+        static string VsCode()
+        {
+            if (codePath != null) return codePath.Length == 0 ? null : codePath;
+            string[] tries = {
+                System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Programs\Microsoft VS Code\Code.exe"),
+                System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"Microsoft VS Code\Code.exe") };
+            codePath = tries.FirstOrDefault(File.Exists) ?? "";
+            return codePath.Length == 0 ? null : codePath;
+        }
+
+        static void OpenInCode(string target)
+        {
+            try { var c = VsCode(); if (c != null) System.Diagnostics.Process.Start(c, "\"" + target + "\""); } catch (Exception ex) { App.Log(ex); }
         }
 
         // Colour tags for the selection (or, with nothing selected, this folder), as a row of dots like macOS.
@@ -148,9 +231,38 @@ namespace OpenDock
                 row.Children.Add(label);
                 var b = new Button { Content = row, Style = (Style)Application.Current.Resources["Flat"], Padding = new Thickness(5, 2, 5, 2), IsEnabled = !last || true };
                 b.Click += delegate { if (!string.Equals(step, path, StringComparison.OrdinalIgnoreCase)) Go(step); };
+                // right-click any step: copy its path
+                if (!Virtual(step))
+                {
+                    var cm = new ContextMenu();
+                    var mi = new MenuItem { Header = "Copy Path" };
+                    mi.Click += delegate { CopyPathTo(step, null); };
+                    cm.Items.Add(mi);
+                    b.ContextMenu = cm;
+                }
                 crumbs.Children.Add(b);
                 if (!last) { var chev = Text("", 8, "FgDim"); chev.FontFamily = Theme.Glyphs; chev.VerticalAlignment = VerticalAlignment.Center; chev.Margin = new Thickness(1, 1, 1, 0); crumbs.Children.Add(chev); }
             }
+            // a copy button at the end of the path bar: the whole path of this folder, one click
+            if (!Virtual(path))
+            {
+                var copy = new Button { Style = (Style)Application.Current.Resources["Flat"], Padding = new Thickness(6, 2, 6, 2), Margin = new Thickness(6, 0, 0, 0), ToolTip = "Copy Path (Ctrl+Alt+C)" };
+                var glyph = Text("", 12, "FgDim"); glyph.FontFamily = Theme.Glyphs; glyph.VerticalAlignment = VerticalAlignment.Center;
+                copy.Content = glyph;
+                copy.Click += delegate { CopyPathTo(path, glyph); };
+                crumbs.Children.Add(copy);
+            }
+        }
+
+        // Copies a path; the copy button shows a tick for a moment.
+        static void CopyPathTo(string p, TextBlock glyph)
+        {
+            try { Clipboard.SetText(p); } catch (Exception ex) { App.Log(ex); return; }
+            if (glyph == null) return;
+            glyph.Text = "";
+            var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1.2) };
+            t.Tick += delegate { t.Stop(); glyph.Text = ""; };
+            t.Start();
         }
 
         // The Tags view: everything carrying a colour tag.

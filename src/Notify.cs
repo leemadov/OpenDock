@@ -353,7 +353,7 @@ namespace OpenDock
                 double k = d / scale;
                 double lh, la;
                 Liquid.Strength(at.Height, out lh, out la);
-                card.Background = Glass.Slice(Liquid.Lens(px, pw, ph, new Rect(Margin2 * k, Margin2 * k, at.Width * k, at.Height * k), 20 * k, lh * k, la * k, false), new Rect(0, 0, 1, 1), Theme.Tint(bright ? "#40FFFFFF" : "#26FFFFFF"));
+                card.Background = Glass.Slice(Liquid.Smear(Liquid.Lens(px, pw, ph, new Rect(Margin2 * k, Margin2 * k, at.Width * k, at.Height * k), 20 * k, lh * k, la * Liquid.Pull * k, false, 0, 1.5, 0, 1, Liquid.Falloff), 20 * k, lh * k, Liquid.RimSmear * k), new Rect(0, 0, 1, 1), Theme.Tint(bright ? "#40FFFFFF" : "#26FFFFFF"));
             }
             else card.Background = Glass.WallpaperPane(Theme.Tint(bright ? "#B8F6F6F8" : "#B82A2A2D"), at);
             var fg = bright ? Theme.B("#E6000000") : Brushes.White;

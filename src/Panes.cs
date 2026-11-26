@@ -508,7 +508,41 @@ namespace OpenDock
         {
             var look = Group(body);
             AddSwitch(look, "Use GlassDock's lock screen", Settings.CustomLockScreen, v => Settings.CustomLockScreen = v);
-            Note(body, "GlassDock's lock screen shows your wallpaper with a big clock, and you unlock it with Windows Hello (PIN, face or fingerprint). Windows checks it's you; GlassDock never sees it. It covers your desktop but isn't Windows' own secure lock, so if anything gets in front of it (Task Manager from Ctrl+Alt+Del, say), or GlassDock stops while it's up, Windows' own lock screen takes over. Win+L always uses Windows' lock screen. Without Windows Hello set up, Lock Screen uses Windows' own.");
+            AddSwitch(look, "Lock with Ctrl+Alt+Q (Win+L always uses Windows' lock screen)", Settings.LockKey, v => { Settings.LockKey = v; Hotkeys.Sync(); });
+            // the passcode: tapped on the lock screen's glass keypad, or typed
+            var code = new DockPanel();
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal };
+            DockPanel.SetDock(buttons, Dock.Right);
+            var state = Text("", 13, "FgDim"); state.Margin = new Thickness(0, 0, 12, 0); state.VerticalAlignment = VerticalAlignment.Center;
+            Button change = null, remove = null;
+            Action refresh = () =>
+            {
+                state.Text = Passcode.IsSet ? Passcode.Length + " digits" : "Not set";
+                change.Content = Text(Passcode.IsSet ? "Change…" : "Set Passcode…", 13, "Fg");
+                remove.Visibility = Passcode.IsSet ? Visibility.Visible : Visibility.Collapsed;
+            };
+            change = Pill("", () =>
+            {
+                string first = Sheet.Secret(this, Passcode.IsSet ? "Choose a new passcode" : "Choose a passcode",
+                    "4 to 6 digits. You'll tap it on the lock screen's keypad, or just type it.", "Next",
+                    c => Passcode.Valid(c) ? null : "Use 4 to 6 digits.");
+                if (first == null) return;
+                string again = Sheet.Secret(this, "Enter it again", null, "Set Passcode", c => c == first ? null : "That didn't match. Try again.");
+                if (again == null) return;
+                try { Passcode.Set(first); } catch (Exception ex) { App.Log(ex); Sheet.Tell(this, "Couldn't set the passcode", ex.Message); }
+                refresh();
+            });
+            remove = Pill("Remove", () =>
+            {
+                if (!Sheet.Confirm(this, "Remove the passcode?", LockScreen.HelloReady ? "The lock screen will unlock with Windows Hello only." : "Without a passcode or Windows Hello, Lock Screen uses Windows' own lock screen.", "Remove")) return;
+                Passcode.Clear(); refresh();
+            });
+            buttons.Children.Add(state); buttons.Children.Add(remove); buttons.Children.Add(change);
+            code.Children.Add(buttons); code.Children.Add(Text("Passcode", 13, "Fg"));
+            Row(look, code);
+            refresh();
+            Hello.Available(ok => LockScreen.HelloReady = ok);
+            Note(body, "GlassDock's lock screen shows your wallpaper with a big clock. Unlock it with your passcode on its Liquid Glass keypad (tap or type), or with Windows Hello (PIN, face or fingerprint) when it's set up; Windows checks Hello itself, and GlassDock keeps only a scrambled copy of the passcode. It covers your desktop but isn't Windows' own secure lock: if anything gets in front of it (Task Manager from Ctrl+Alt+Del, say), after 5 wrong passcodes, or if GlassDock stops while it's up, Windows' own lock screen takes over. Win+L always uses Windows' lock screen. With neither a passcode nor Windows Hello, Lock Screen uses Windows' own.");
             Load(body, () => new[] { Sys.Timeout("SUB_VIDEO", "VIDEOIDLE"), Sys.Timeout("SUB_SLEEP", "STANDBYIDLE") }, (t, slot) =>
             {
                 var g = Group(slot);

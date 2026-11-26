@@ -19,10 +19,18 @@ namespace OpenDock
         // same as last time (sum), so callers can skip redrawing.
         public static BitmapSource Behind(int x, int y, int w, int h, int blur, ref long sum, int scale = 4)
         {
-            if (w <= 0 || h <= 0) return null;
+            if (w <= 0 || h <= 0 || Lifted) return null;
             int sw = Math.Max(1, w / scale), sh = Math.Max(1, h / scale);
             var px = Icons.CaptureScaled(x, y, w, h, sw, sh);
             if (px == null) return null;
+            // After a heavy task the screen can come back black, or half black, for a moment: keep the last picture
+            // rather than bend a black one into the glass (a backdrop that's really dark stays dark: it has to be
+            // dark twice in a row, and the first dark one is what's compared against)
+            long key = x * 7919L + y * 31L + w;
+            double black = BlackShare(px), before;
+            bool wasBlack = lastBlack.TryGetValue(key, out before) && before > 0.5;
+            lastBlack[key] = black;
+            if (black > 0.5 && !wasBlack && sum != 0) return null;
             FillDesktop(px, x, y, w, h, sw, sh);
             MirrorOffscreen(px, x, y, w, h, sw, sh);
             long s = x * 7919L + y * 31L + w;
@@ -33,6 +41,16 @@ namespace OpenDock
             var b = BitmapSource.Create(sw, sh, 96, 96, PixelFormats.Bgr32, null, px, sw * 4);
             b.Freeze();
             return b;
+        }
+
+        static readonly System.Collections.Generic.Dictionary<long, double> lastBlack = new System.Collections.Generic.Dictionary<long, double>();
+
+        // The share of (BGRA) pixels that are pure black -- what a failed capture gives.
+        public static double BlackShare(byte[] px)
+        {
+            int n = 0, b = 0;
+            for (int i = 0; i + 2 < px.Length; i += 16) { n++; if (px[i] <= 3 && px[i + 1] <= 3 && px[i + 2] <= 3) b++; }
+            return n == 0 ? 0 : b / (double)n;
         }
 
         static System.Collections.Generic.List<Sys.Display> screens;
@@ -106,10 +124,28 @@ namespace OpenDock
             }
         }
 
+        // Every glass window kept out of screen capture, so they can all be shown in it at once (CaptureGuard).
+        static readonly System.Collections.Generic.HashSet<IntPtr> excluded = new System.Collections.Generic.HashSet<IntPtr>();
+
+        // Someone else is capturing the screen (a screenshot, Remote Desktop, screen sharing): the glass windows show
+        // in it, and their own backdrop pictures pause meanwhile -- they'd photograph themselves -- keeping the last one.
+        public static bool Lifted { get; private set; }
+
         public static bool Exclude(IntPtr hwnd)
         {
-            bool ok = Native.SetWindowDisplayAffinity(hwnd, Settings.LiveGlass ? ExcludeFromCapture : 0);
-            return Settings.LiveGlass && ok;
+            if (hwnd == IntPtr.Zero) return false;
+            if (Settings.LiveGlass) excluded.Add(hwnd);
+            bool on = Settings.LiveGlass && !Lifted;
+            bool ok = Native.SetWindowDisplayAffinity(hwnd, on ? ExcludeFromCapture : 0);
+            return on && ok;
+        }
+
+        public static void Lift(bool on)
+        {
+            if (Lifted == on) return;
+            Lifted = on;
+            excluded.RemoveWhere(h => !Native.IsWindow(h));
+            foreach (var h in excluded) Native.SetWindowDisplayAffinity(h, on || !Settings.LiveGlass ? 0 : ExcludeFromCapture);
         }
 
         // The part of the (primary screen's) blurred wallpaper behind `area` (screen DIPs), under the tint.
