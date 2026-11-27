@@ -27,6 +27,7 @@ namespace OpenDock
         public static bool ShowInCaptures = false;  // GlassDock always shows in screenshots and screen sharing (else only while one is taken)
         public static bool LiveGlass = true;     // original live blur; excluded from screen capture to avoid feedback
         public static bool FinderListView = false;
+        public static bool FolderIconsInWindows = false;   // a folder's colour and symbol from Finder also show in Windows (desktop, Explorer)
         public static bool RoundOtherWindows = true;   // the corner radius applies to other apps' windows too
         public static int WindowCorner = 20;          // corner radius (px) of GlassDock's own small windows; 8 = Windows 11's own
         public static bool FinderGallery = false;     // Finder's Gallery view (a big preview over a strip)

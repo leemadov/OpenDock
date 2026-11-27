@@ -255,6 +255,10 @@ namespace OpenDock
             double lo = 0, hi = 1;
             if (levels.Count > 20) { levels.Sort(); lo = levels[levels.Count / 20]; hi = levels[levels.Count * 19 / 20]; }
             if (hi - lo < 0.15) { double mid = (hi + lo) / 2; lo = mid - 0.3; hi = mid + 0.3; }
+            // how much of the tile the symbol fills: a big flat white symbol glares, so Clear softens it the more it fills
+            int filled = 0; for (int p = 0; p < N * N; p++) if (mask[p] > 0.5) filled++;
+            double cover = filled / (double)(N * N);
+            double soften = 1 - 0.42 * Math.Max(0, Math.Min(1, (cover - 0.16) / 0.34));
             // ---- 3. the symbol recoloured for the style
             double tr = tint.R / 255.0, tg = tint.G / 255.0, tb = tint.B / 255.0;
             var glyph = new byte[N * N * 4];
@@ -279,7 +283,7 @@ namespace OpenDock
                 else if (style == 1) { double t = 0.42 * (1 - l); cr = tr * (1 - t); cg = tg * (1 - t); cb = tb * (1 - t); }
                 // Clear: bright white symbols, light and dark alike. (Grey or dark symbols vanish over dark
                 // wallpapers; on light glass the white stands out because the glass itself is lightly smoked, below.)
-                else { double t = 0.16 * (1 - l); cr = 1 - t; cg = 1 - t * 0.9; cb = 1 - t * 0.7; alpha = m * (dark ? 0.96 : 0.98); }
+                else { double t = 0.16 * (1 - l) + 0.07; cr = 1 - t; cg = 1 - t * 0.9; cb = 1 - t * 0.7; alpha = m * (dark ? 0.94 : 0.96) * soften; }
                 int i = p * 4;
                 glyph[i] = (byte)(cb * 255 * alpha + 0.5); glyph[i + 1] = (byte)(cg * 255 * alpha + 0.5); glyph[i + 2] = (byte)(cr * 255 * alpha + 0.5); glyph[i + 3] = (byte)(255 * alpha + 0.5);
             }
@@ -296,12 +300,12 @@ namespace OpenDock
                 ? (dark ? (Brush)new LinearGradientBrush(towardBlack(0.36), towardBlack(0.13), 90) : new LinearGradientBrush(towardWhite(0.10), towardWhite(0.30), 90))
                 // Clear: thin glass, so the backdrop (bent by the Dock's lens under each icon) shows through
                 // light: a light smoke, the one look tested readable over light and dark wallpapers alike
-                : (dark ? new LinearGradientBrush(rgba("#2A2A32", 0.30), rgba("#0A0A0E", 0.42), 90) : new LinearGradientBrush(rgba("#1C1C24", 0.16), rgba("#1C1C24", 0.30), 90));
+                : (dark ? new LinearGradientBrush(rgba("#2A2A32", 0.36), rgba("#0A0A0E", 0.50), 90) : new LinearGradientBrush(rgba("#1C1C24", 0.21), rgba("#1C1C24", 0.36), 90));
             var layers = new Grid { Width = T, Height = T, Clip = shape };
             layers.Children.Add(new Path { Data = shape, Fill = baseFill });
             // the sheen: light pooling in the top half of the glass
             layers.Children.Add(new Path { Data = shape, Fill = new LinearGradientBrush(new GradientStopCollection {
-                new GradientStop(Color.FromArgb((byte)(style >= 2 ? (dark ? 46 : 80) : (dark ? 30 : 60)), 255, 255, 255), 0), new GradientStop(Color.FromArgb(0, 255, 255, 255), 0.55) }, new Point(0, 0), new Point(0, 1)) });
+                new GradientStop(Color.FromArgb((byte)(style >= 2 ? (dark ? 32 : 56) : (dark ? 30 : 60)), 255, 255, 255), 0), new GradientStop(Color.FromArgb(0, 255, 255, 255), 0.55) }, new Point(0, 0), new Point(0, 1)) });
             // the symbol, raised a little off the glass
             var sym = new Image { Source = glyphImg, Width = T, Height = T, Stretch = Stretch.Fill };
             RenderOptions.SetBitmapScalingMode(sym, BitmapScalingMode.HighQuality);

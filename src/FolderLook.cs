@@ -90,12 +90,14 @@ namespace OpenDock
         {
             Look l; if (!All.TryGetValue(Norm(path), out l)) All[Norm(path)] = l = new Look();
             l.Color = color; Save();
+            FolderIcons.Follow(path);
         }
 
         public static void SetSymbol(string path, string symbol)
         {
             Look l; if (!All.TryGetValue(Norm(path), out l)) All[Norm(path)] = l = new Look();
             l.Symbol = string.IsNullOrEmpty(symbol) ? null : symbol; Save();
+            FolderIcons.Follow(path);
         }
 
         // Everything tagged with a colour that still exists.
@@ -154,7 +156,7 @@ namespace OpenDock
         static Color Lift(Color c, double k) { return Color.FromRgb((byte)(c.R + (255 - c.R) * k), (byte)(c.G + (255 - c.G) * k), (byte)(c.B + (255 - c.B) * k)); }
 
         // A 128 px folder: the back with its tab, then the front panel a little lower, lit from above.
-        public static BitmapSource Draw(Color c, string symbol, bool dark)
+        public static BitmapSource Draw(Color c, string symbol, bool dark, int px = 128)
         {
             const double S = 128;
             var root = new Grid { Width = S, Height = S };
@@ -193,7 +195,10 @@ namespace OpenDock
                 };
                 root.Children.Add(glyph);
             }
-            var img = Icons.Render(root, (int)S, (int)S);
+            // drawn on a 128 grid; a bigger icon (for Windows' own folder icons) is the same drawing scaled up crisply
+            FrameworkElement shown = root;
+            if (px != (int)S) shown = new Viewbox { Width = px, Height = px, Child = root };
+            var img = Icons.Render(shown, px, px);
             img.Freeze();
             return img;
         }

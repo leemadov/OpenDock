@@ -53,9 +53,13 @@ namespace OpenDock
                 for (int i = 0; i < w; i++)
                 {
                     double px = r.X + i + 0.5, py = r.Y + j + 0.5, ux = px - cx, uy = py - cy;
-                    double sd = SdRoundRect(ux, uy, hx, hy, radius);
                     double sx = px, sy = py, dx = 0, dy = 0, rimX = 0, nx = 0, ny = 0;
-                    bool bent = -sd < height;
+                    // The flat middle of the pane (most of a wide one): straight inside the rounded rectangle's cross, at
+                    // least `height` from its edges -- not bent, so the distance maths is skipped (same result)
+                    double ax = Math.Abs(ux), ay = Math.Abs(uy);
+                    bool flat = ax <= hx - height && ay <= hy - height && (ax <= hx - radius || ay <= hy - radius);
+                    double sd = flat ? -height - 1 : SdRoundRect(ux, uy, hx, hy, radius);
+                    bool bent = !flat && -sd < height;
                     if (bent)
                     {
                         sd = Math.Min(sd, 0);
@@ -65,7 +69,7 @@ namespace OpenDock
                         // the very rim; a gentler x^2 term carries the bend further in, as on Apple's thick glass.
                         // `falloff` > 0: a smooth bend instead, strongest at the rim and easing off evenly toward the
                         // centre (x^falloff) -- the iPhone's round keys, with no sudden ring inside the glass
-                        double d = falloff > 0 ? Math.Pow(x, falloff) * amount
+                        double d = falloff > 0 ? (falloff == 2.5 ? x * x * Math.Sqrt(x) : falloff == 2 ? x * x : Math.Pow(x, falloff)) * amount
                             : (0.6 * (1 - Math.Sqrt(Math.Max(0, 1 - x * x))) + 0.4 * x * x) * amount;
                         double gx, gy;
                         GradRoundRect(ux, uy, hx, hy, gradRadius, out gx, out gy);
@@ -93,7 +97,7 @@ namespace OpenDock
                         rr += S(src, sw, sh, sx - dx, sy - dy, 2) / 7.0; bb += S(src, sw, sh, sx - dx, sy - dy, 0) / 3.0;
                         c[0] = bb; c[1] = gg; c[2] = rr;
                     }
-                    else { c[0] = S(src, sw, sh, sx, sy, 0); c[1] = S(src, sw, sh, sx, sy, 1); c[2] = S(src, sw, sh, sx, sy, 2); }
+                    else Sample3(src, sw, sh, sx, sy, c);
                     // vibrancy: the library's colour matrix, luminance weights 0.213 / 0.715 / 0.072
                     double lum = 0.213 * c[2] + 0.715 * c[1] + 0.072 * c[0];
                     int o = (j * w + i) * 4;
@@ -143,9 +147,13 @@ namespace OpenDock
             // the glint where the curve catches the light, and the second light's softer one
             double k = Math.Max(0, Nx * KeyHalf[0] + Ny * KeyHalf[1] + Nz * KeyHalf[2]);
             double f = Math.Max(0, Nx * FillHalf[0] + Ny * FillHalf[1] + Nz * FillHalf[2]);
-            double spec = (Math.Pow(k, 60) * 0.7 + Math.Pow(f, 40) * 0.3) * glint;
+            // k^60 and f^40 by repeated squaring (and nothing at all where the light isn't near: 0.6^40 is 1e-9) -- the
+            // same numbers as Math.Pow without the cost, for every pixel of every rim
+            double k2 = k * k, k4 = k2 * k2, k8 = k4 * k4, k16 = k8 * k8, k32 = k16 * k16;
+            double f2 = f * f, f4 = f2 * f2, f8 = f4 * f4, f16 = f8 * f8, f32 = f16 * f16;
+            double spec = ((k < 0.6 ? 0 : k32 * k16 * k8 * k4) * 0.7 + (f < 0.6 ? 0 : f32 * f8) * 0.3) * glint;
             // the edge itself, seen edge-on through the glass, glows a little all round
-            double fresnel = Math.Pow(s, 6) * 0.22;
+            double s2 = s * s, fresnel = s2 * s2 * s2 * 0.22;
             add = (Math.Max(0, lit) * 0.45 + spec + fresnel) * 255;
             mul = 1 - Math.Max(0, -lit) * 0.45;                                  // the side turned from the light, in shade
         }
@@ -182,6 +190,25 @@ namespace OpenDock
             double period = 2.0 * n;
             v = v % period; if (v < 0) v += period;
             return v < n ? v : period - v;
+        }
+
+        // The three colour channels at once: one lookup of the four neighbouring pixels, not three.
+        static void Sample3(byte[] s, int w, int h, double x, double y, double[] c)
+        {
+            if (x < 0 || x > w) x = Mirror(x, w);
+            if (y < 0 || y > h) y = Mirror(y, h);
+            x -= 0.5; y -= 0.5;
+            int x0 = (int)Math.Floor(x), y0 = (int)Math.Floor(y);
+            double fx = x - x0, fy = y - y0;
+            int x1 = Math.Max(0, Math.Min(w - 1, x0 + 1)), y1 = Math.Max(0, Math.Min(h - 1, y0 + 1));
+            x0 = Math.Max(0, Math.Min(w - 1, x0)); y0 = Math.Max(0, Math.Min(h - 1, y0));
+            int i00 = (y0 * w + x0) * 4, i01 = (y0 * w + x1) * 4, i10 = (y1 * w + x0) * 4, i11 = (y1 * w + x1) * 4;
+            for (int k = 0; k < 3; k++)
+            {
+                double a = s[i00 + k], b = s[i01 + k], d = s[i10 + k], e = s[i11 + k];
+                double top = a + (b - a) * fx, bottom = d + (e - d) * fx;
+                c[k] = top + (bottom - top) * fy;
+            }
         }
 
         static double S(byte[] s, int w, int h, double x, double y, int c)
@@ -398,7 +425,7 @@ namespace OpenDock
                 Background = new LinearGradientBrush(new GradientStopCollection { new GradientStop(Color.FromArgb(26, 0, 0, 0), 0), new GradientStop(Color.FromArgb(0, 0, 0, 0), Math.Min(0.45, 14 / Math.Max(1, at.Height))) }, new Point(0, 0), new Point(0, 1)) };
             // the glass's thickness, as on GlassDock's icons: a band inside the edge, lit at the top, shadowed at the bottom
             var band = new Border { CornerRadius = inner, IsHitTestVisible = false, BorderThickness = new Thickness(Math.Max(2, Math.Min(at.Width, at.Height) * 0.045)),
-                BorderBrush = new LinearGradientBrush(new GradientStopCollection { new GradientStop(Color.FromArgb(90, 255, 255, 255), 0), new GradientStop(Color.FromArgb(0, 255, 255, 255), 0.35),
+                BorderBrush = new LinearGradientBrush(new GradientStopCollection { new GradientStop(Color.FromArgb(36, 255, 255, 255), 0), new GradientStop(Color.FromArgb(0, 255, 255, 255), 0.35),
                     new GradientStop(Color.FromArgb(0, 0, 0, 0), 0.7), new GradientStop(Color.FromArgb(46, 0, 0, 0), 1) }, new Point(0, 0), new Point(0, 1)) };
             // reflections: a soft glint of window light near the top-left corner, and a thin bright streak following
             // the curve of the top edge, as light catches on curved glass
@@ -410,8 +437,8 @@ namespace OpenDock
                 GradientStops = new GradientStopCollection { new GradientStop(Color.FromArgb(70, 255, 255, 255), 0), new GradientStop(Color.FromArgb(18, 255, 255, 255), 0.55), new GradientStop(Color.FromArgb(0, 255, 255, 255), 1) }
             } };
             var streak = new Border { CornerRadius = inner, IsHitTestVisible = false, BorderThickness = new Thickness(0, Math.Max(1.2, sw * 0.03), 0, 0), Margin = new Thickness(sw * 0.08, 1.5, sw * 0.08, 0),
-                BorderBrush = new LinearGradientBrush(new GradientStopCollection { new GradientStop(Color.FromArgb(0, 255, 255, 255), 0), new GradientStop(Color.FromArgb(150, 255, 255, 255), 0.25),
-                    new GradientStop(Color.FromArgb(60, 255, 255, 255), 0.6), new GradientStop(Color.FromArgb(0, 255, 255, 255), 1) }, new Point(0, 0), new Point(1, 0)) };
+                BorderBrush = new LinearGradientBrush(new GradientStopCollection { new GradientStop(Color.FromArgb(0, 255, 255, 255), 0), new GradientStop(Color.FromArgb(70, 255, 255, 255), 0.25),
+                    new GradientStop(Color.FromArgb(28, 255, 255, 255), 0.6), new GradientStop(Color.FromArgb(0, 255, 255, 255), 1) }, new Point(0, 0), new Point(1, 0)) };
             hover = new Border { CornerRadius = inner, Opacity = 0, IsHitTestVisible = false };
             hover.SetResourceReference(BackgroundProperty, "CcHover");
             // the interactive highlight: white 8% all over plus a 15% glow, 1.5x the tile's short side across, under the pointer
@@ -424,7 +451,8 @@ namespace OpenDock
             glowLayers.Children.Add(new Border { Background = light });
             glow = new Border { CornerRadius = inner, Opacity = 0, IsHitTestVisible = false, Child = glowLayers, ClipToBounds = true };
             var g = new Grid();
-            g.Children.Add(sheen); g.Children.Add(shade); g.Children.Add(glint); g.Children.Add(streak); g.Children.Add(hover); g.Children.Add(glow); g.Children.Add(Body);
+            // (no glint: the radial white glow near the top-left corner looked like a smudge; the rim light stays)
+            g.Children.Add(sheen); g.Children.Add(shade); g.Children.Add(streak); g.Children.Add(hover); g.Children.Add(glow); g.Children.Add(Body);
             Child = g;
             MouseEnter += delegate { hover.Opacity = 1; };
             MouseLeave += delegate { hover.Opacity = 0; Release(); };
@@ -639,8 +667,8 @@ namespace OpenDock
             light = bright;
             string[] keys = { "CcFg", "CcDim", "CcInner", "CcTrack", "CcFill", "CcHover", "CcTint", "CcRow" };
             // the tint (index 6) is light: macOS 26's Control Center lets the backdrop through nearly untouched
-            string[] dark = { "#F2FFFFFF", "#B3FFFFFF", "#33FFFFFF", "#40FFFFFF", "#F2FFFFFF", "#14FFFFFF", "#1FFFFFFF", "#1FFFFFFF" };
-            string[] pale = { "#E6000000", "#8C000000", "#17000000", "#21000000", "#80000000", "#0D000000", "#40FFFFFF", "#12000000" };   // light glass stays see-through
+            string[] dark = { "#F2FFFFFF", "#B3FFFFFF", "#33FFFFFF", "#40FFFFFF", "#F2FFFFFF", "#14FFFFFF", "#38000000", "#1FFFFFFF" };
+            string[] pale = { "#E6000000", "#8C000000", "#17000000", "#21000000", "#80000000", "#0D000000", "#26000000", "#12000000" };   // light glass stays see-through
             for (int i = 0; i < keys.Length; i++) Resources[keys[i]] = Theme.B(bright ? pale[i] : dark[i]);
             Resources["CcTint"] = Theme.Tint(bright ? pale[6] : dark[6]);   // the Liquid Glass slider
             // The rim catches light at the top-left and bottom-right corners; the sheen fades down from the top.
@@ -649,7 +677,7 @@ namespace OpenDock
                 : new[] { "#B3FFFFFF", "#40FFFFFF", "#05FFFFFF", "#40FFFFFF", "#A6FFFFFF" }, new[] { 0, 0.22, 0.5, 0.78, 1 });
             // a light sheen only along the top: a strong one washes clear glass milky
             Resources["CcSheen"] = Gradient(new Point(0, 0), new Point(0, 1), bright
-                ? new[] { "#80FFFFFF", "#1AFFFFFF", "#00FFFFFF" } : new[] { "#2EFFFFFF", "#0AFFFFFF", "#00FFFFFF" }, new[] { 0, 0.4, 1.0 });
+                ? new[] { "#33FFFFFF", "#0DFFFFFF", "#00FFFFFF" } : new[] { "#14FFFFFF", "#06FFFFFF", "#00FFFFFF" }, new[] { 0, 0.4, 1.0 });
             shadow.Opacity = bright ? 0.16 : 0.3;
         }
 

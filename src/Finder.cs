@@ -1092,6 +1092,7 @@ namespace OpenDock
                 if (en.Path != null)
                 {
                     add("Get Info", () => SHObjectProperties(new WindowInteropHelper(host??this).Handle, 2, en.Path, null), true);
+                    if (en.IsDir && en.Open == null) FolderIconItems(cm, en.Path);
                     add("Show in Explorer", () => Process.Start("explorer.exe", "/select,\"" + en.Path + "\""), true);
                     add("Share…", () => ShareSheet.Share(new WindowInteropHelper(host ?? this).Handle, Selected()), en.Open == null);
                     add("Copy", CopySelection, en.Open == null);
@@ -1604,6 +1605,15 @@ namespace OpenDock
             Grid.SetColumn(lgRight, 1);
             lg.Children.Add(lgRight);
             Row(look, lg);
+
+            body.Children.Add(Heading("Folder icons"));
+            var folderIcons = Group(body);
+            AddSwitch(folderIcons, "Show Finder's folder colours and symbols in Windows too", Settings.FolderIconsInWindows, v =>
+            {
+                Settings.FolderIconsInWindows = v;
+                if (!v) FolderIcons.ResetAll();   // every folder GlassDock changed goes back to Windows' own icon
+            });
+            Note(body, "On the desktop and in Explorer, folders you colour or give a symbol in Finder get the same icon. Or right-click any folder in Finder > Set Folder Icon to use a picture of your own. Windows' own icon comes back with Reset Folder Icon, or when you turn this off.");
 
             body.Children.Add(Heading("Windows"));
             var corners = Group(body);

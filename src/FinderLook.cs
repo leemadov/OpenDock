@@ -122,6 +122,20 @@ namespace OpenDock
             cm.IsOpen = true;
         }
 
+        // Right-click a folder: its own icon in Windows (desktop, Explorer), from a picture or from Finder's look.
+        void FolderIconItems(ContextMenu cm, string folder)
+        {
+            var owner = host ?? this;
+            Action<string, Action> add = (text, a) => { var mi = new MenuItem { Header = text }; mi.Click += delegate { try { a(); } catch (Exception ex) { App.Log(ex); Sheet.Tell(owner, "Folder Icon", ex.Message); } }; cm.Items.Add(mi); };
+            add("Set Folder Icon…", () =>
+            {
+                var dlg = new Microsoft.Win32.OpenFileDialog { Filter = "Pictures and icons|*.png;*.jpg;*.jpeg;*.bmp;*.ico;*.gif", Title = "Choose a picture for this folder" };
+                if (dlg.ShowDialog(owner) == true) { FolderIcons.SetImage(folder, dlg.FileName); Load(); }
+            });
+            add("Use Finder's Look in Windows", () => { FolderIcons.SetFinderLook(folder); Load(); });
+            if (FolderIcons.Has(folder)) add("Reset Folder Icon", () => { FolderIcons.Reset(folder); Load(); });
+        }
+
         // ---------- for developers (and anyone who likes a terminal) ----------
 
         void ToggleHidden() { Settings.ShowHiddenFiles = !Settings.ShowHiddenFiles; Settings.Save(); Load(); }
